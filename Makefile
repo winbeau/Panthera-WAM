@@ -3,11 +3,11 @@
 check: lint test smoke
 
 lint:
-	uv run --package panthera-armd --extra dev ruff check armd/src armd/tests
-	uv run --package panthera-armd --extra dev ruff format --check armd/src armd/tests
+	uv run --all-packages --all-extras ruff check armd/src armd/tests cli/src cli/tests
+	uv run --all-packages --all-extras ruff format --check armd/src armd/tests cli/src cli/tests
 
 test:
-	uv run --package panthera-armd --extra dev pytest -q armd/tests
+	uv run --all-packages --all-extras pytest -q armd/tests cli/tests
 
 smoke:
 	uv run --package panthera-armd armd --sim --check

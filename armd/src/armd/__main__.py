@@ -3,57 +3,72 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
-import time
+
+import grpc
+from panthera_arm import arm_pb2, arm_pb2_grpc
 
 from .backend import SimBackend
 from .hardware_loop import HardwareLoop
+from .server import ArmdServer
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Panthera-HT armd 守护服务")
     parser.add_argument("--sim", action="store_true", help="使用无需真机的仿真后端")
     parser.add_argument("--control-hz", type=float, default=200.0, help="控制循环频率（默认 200Hz）")
-    parser.add_argument("--check", action="store_true", help="启动后做一次仿真自检并退出")
+    parser.add_argument("--bind", default="127.0.0.1:50051", help="gRPC 监听地址")
+    parser.add_argument("--lease-timeout", type=float, default=2.0, help="控制权心跳超时秒数")
+    parser.add_argument("--check", action="store_true", help="启动后通过 gRPC 做一次仿真自检并退出")
     return parser
 
 
-def main() -> None:
-    args = build_parser().parse_args()
+async def run(args: argparse.Namespace) -> None:
     if not args.sim:
         raise SystemExit("真机后端尚未落地；当前请使用 armd --sim")
 
     loop = HardwareLoop(SimBackend, control_hz=args.control_hz)
+    bind = "127.0.0.1:0" if args.check else args.bind
+    server = ArmdServer(loop, bind=bind, lease_timeout_s=args.lease_timeout)
     loop.start()
     try:
+        await server.start()
         if args.check:
             if not loop.wait_for_cycles(3):
                 raise SystemExit("仿真控制循环未能按期推进")
-            state = loop.latest_state()
-            stats = loop.stats()
-            print(
-                json.dumps(
-                    {
-                        "sim": True,
-                        "motors": len(state.motors) if state is not None else 0,
-                        "cycles": stats.cycles,
-                        "actual_hz": round(stats.actual_hz, 2),
-                        "overruns": stats.overruns,
-                    },
-                    ensure_ascii=False,
+            async with grpc.aio.insecure_channel(f"127.0.0.1:{server.port}") as channel:
+                stub = arm_pb2_grpc.ArmServiceStub(channel)
+                status = await stub.GetDaemonStatus(arm_pb2.Empty())
+                stats = loop.stats()
+                print(
+                    json.dumps(
+                        {
+                            "sim": status.sim,
+                            "hardware_connected": status.hardware_connected,
+                            "grpc_port": server.port,
+                            "cycles": stats.cycles,
+                            "actual_hz": round(stats.actual_hz, 2),
+                            "overruns": stats.overruns,
+                        },
+                        ensure_ascii=False,
+                    )
                 )
-            )
             return
 
-        print(f"armd 仿真 HardwareLoop 已启动：{args.control_hz:g}Hz（Ctrl+C 停止）")
-        while loop.is_running:
-            time.sleep(0.5)
-            if loop.failure is not None:
-                raise RuntimeError("HardwareLoop 异常退出") from loop.failure
+        print(f"armd 仿真服务已启动：grpc://{args.bind}，HardwareLoop={args.control_hz:g}Hz")
+        await server.wait_for_termination()
+    finally:
+        await server.stop()
+        loop.stop()
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    try:
+        asyncio.run(run(args))
     except KeyboardInterrupt:
         pass
-    finally:
-        loop.stop()
 
 
 if __name__ == "__main__":

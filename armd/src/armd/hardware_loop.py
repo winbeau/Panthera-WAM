@@ -134,6 +134,15 @@ class HardwareLoop:
         with self._estop_lock:
             return self._estop_engaged
 
+    @property
+    def estop_applied(self) -> bool:
+        with self._estop_lock:
+            return self._estop_applied
+
+    @property
+    def has_active_motion(self) -> bool:
+        return self._active_motion is not None
+
     def start(self, timeout: float = 5.0) -> None:
         if self._thread is not None:
             raise RuntimeError("HardwareLoop 只能启动一次")

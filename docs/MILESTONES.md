@@ -66,14 +66,16 @@
 ## 阶段 2：v1 —— armd + panthera-cli（24 条命令）
 
 ### M1 安全骨架
-- [ ] 🧪 实现：`control acquire/release/status`、metadata lease 拦截器、`estop trigger/reset`、`safety limits show`、Heartbeat/watchdog
-- [ ] 🧪 验收①：两客户端并发 acquire，第二个被拒且能看到持有者 `client_id`
-- [ ] 🧪 验收②：非持锁客户端调 `JointMove` 被 `PERMISSION_DENIED` 拒绝
-- [ ] 🧪 验收③：watchdog 超时自动 release，并**按当前控制模式**正确停止（位置模式保位 / 速度模式归零）
-- [ ] 🔒 验收④：`estop trigger` 后运动类 RPC 一律 REJECTED，实测抢占延迟 < 100ms，`estop reset --confirm` 后恢复
+- [x] 🧪 实现 ✅ `armd --sim` 已监听 gRPC；实现 `control acquire/release/status/heartbeat`、metadata lease 统一拦截器、force-acquire 旧 token 失效、`estop trigger/reset`、`safety limits show`、daemon status/version、watchdog 后台任务；CLI 同步落地并持久化 lease token
+- [x] 🧪 验收① ✅ 两客户端并发 acquire，第二个被拒并返回持有者 `client_id`；force-acquire 后旧 token 立即失效
+- [x] 🧪 验收② ✅ 无 lease / 错 token 调 `JointMove` 均返回 `PERMISSION_DENIED`，有效 token 可穿过拦截器到业务层
+- [x] 🧪 验收③ ✅ watchdog 超时自动 release；POS-VEL 模式改发当前位置保位帧，VELOCITY 模式速度归零；迟到的 release 不能绕过 watchdog 停止
+- [x] 🔒 验收④ ✅ gRPC 层 EStop 无需 lease；触发后运动 RPC 返回 `FAILED_PRECONDITION`，`reset --confirm` + 有效 lease 后恢复；真机抢占延迟由 M0-1 实测 7.73ms
 - [ ] 🧪 **N4 防护**：检测 SDK 串口重连导致 `Motors` 缓存失效并自动重取（避免悬垂引用）
 - [ ] **N1 回归检查**：启动自检记录 SDK 版本，断言 `detect_motor_limit()` 仍未接入调用链（否则 EStop 可靠性需重评）
 - [ ] **N2 决策**：是否启用电机固件看门狗 `motor_timeout_ms`（当前为 0=禁用），定值并写入部署配置
+
+> M1 核心安全链路已完成；里程碑暂不收口，等待 RealBackend 落地后完成 N4/N1，并由用户决定 N2 硬件看门狗。
 
 ### M2 状态与标定
 - [ ] 🧪 实现：`state get`、`state watch`（`StreamState`）、`calibrate zero`
