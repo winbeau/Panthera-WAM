@@ -28,7 +28,7 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 | WSL2 主机 | wsl-host = `ssh -p <port> <wsl-user>@<WSL_HOST_IP>`（Ubuntu 22.04 + systemd，Tailscale）。**不要在 WSL 里跑 .exe**（interop 挂死），需要 Windows 命令直连下面这台 |
 | Windows 主机 | windows-host = `ssh <windows-user>@<WINDOWS_HOST_IP>`（usbipd / dotnet build / WPF 运行都在这） |
 | Windows 桌面 | `/mnt/c/Users/<windows-user>/Desktop`（视觉稿在 `Desktop/Panthera-Design/`） |
-| 官方 SDK | `git clone https://github.com/HighTorque-Robotics/Panthera-HT_SDK.git`（装 whl：`motor_whl/hightorque_robot-1.2.0-cp3XX-*-linux_x86_64.whl`；Python 库在 `panthera_python/scripts/Panthera_lib/`）。克隆到仓库外或 vendor/（勿提交） |
+| 官方 SDK | public fork `https://github.com/winbeau/Panthera-HT_SDK`，以 git submodule 固定在 `vendor/Panthera-HT_SDK`；上游为 `HighTorque-Robotics/Panthera-HT_SDK`。装 whl：`motor_whl/hightorque_robot-1.2.0-cp3XX-*-linux_x86_64.whl`；Python 库在 `panthera_python/scripts/Panthera_lib/` |
 
 判断你跑在哪：`/mnt/c` 存在 → 你就在 wsl-host 本地，直接操作硬件侧；否则你在 VPS，armd/CLI 的真机操作走 SSH（有 tmux-ssh-remote skill 就用它保持持久会话）。
 
@@ -43,7 +43,7 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 ## 开发约定
 
 - proto 是单一契约源：改 `proto/arm.proto` 后必须同步重新生成 Python 与 C# stub，两端一起提交。
-- SDK 是外部依赖：只封装、不修改、不复制其源码进本仓库（`_execute_trajectory` 等私有逻辑的等价重写除外，且必须与 SDK 单体调用对拍验证，见 FINAL_PLAN 风险 §5）。
+- SDK 是 `vendor/Panthera-HT_SDK` git submodule：主仓库只固定 gitlink，不直接修改或复制 SDK 源码；SDK 变更必须在 public fork 独立提交，再更新主仓库 gitlink（`_execute_trajectory` 等私有逻辑的等价重写除外，且必须与 SDK 单体调用对拍验证，见 FINAL_PLAN 风险 §5）。
 - armd/CLI：Python 3.10+，类型标注，pytest 全走 `--sim`；WPF：.NET 9，CommunityToolkit.Mvvm，csproj 压制 `WPF0001`（ThemeMode 实验性 API，已知已接受）。
 - 提交信息中文，前缀 `feat:/fix:/docs:/test:/chore:`，一个里程碑验收项一个 PR 粒度的 commit。
 - FINAL_PLAN「风险与开放问题」里列的"实现前必须核实"事项（pinocchio 双实例化、`set_reset_zero` 语义、继承层签名、MotorState 字段），在触及对应模块前先核实并把结论回写进 FINAL_PLAN。

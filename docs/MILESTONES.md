@@ -32,7 +32,7 @@
 ## 阶段 -1：前置准备 ✅
 
 - [x] 切出实施分支 `feat/foundation-m0`
-- [x] 克隆官方 SDK（wsl-host `~/Panthera-HT_SDK` + VPS 只读副本，均在仓库外）
+- [x] 官方 SDK public fork + vendor ✅ `winbeau/Panthera-HT_SDK` 为公开 fork（上游 `HighTorque-Robotics/Panthera-HT_SDK`），主仓库以 `vendor/Panthera-HT_SDK` git submodule 固定版本；wsl-host 旧 `~/Panthera-HT_SDK` 副本仍可兼容
 - [x] wsl-host 建 `uv` 环境 `~/panthera-wam-env`：`pin 2.7.0 / numpy 1.26.4 / scipy 1.15.3 / pyyaml 6.0.3 / hightorque_robot 1.2.0`，`import hightorque_robot` 通过
 - [x] §8「实现前必须核实」4 项全部结案，回写 FINAL_PLAN「SDK 源码核实结论」
 - [x] WPF USB/WSL 环境引导纳入计划（WPF_PLAN §3.7 + M-W0.5）

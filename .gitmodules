@@ -1,0 +1,4 @@
+[submodule "vendor/Panthera-HT_SDK"]
+	path = vendor/Panthera-HT_SDK
+	url = https://github.com/winbeau/Panthera-HT_SDK.git
+	branch = main

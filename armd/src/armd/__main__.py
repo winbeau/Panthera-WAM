@@ -16,12 +16,22 @@ from .hardware_loop import HardwareLoop
 from .server import ArmdServer
 
 
+def default_sdk_root() -> str:
+    configured = os.environ.get("PANTHERA_SDK_ROOT")
+    if configured:
+        return configured
+    repository_vendor = Path(__file__).resolve().parents[3] / "vendor" / "Panthera-HT_SDK"
+    if repository_vendor.is_dir():
+        return str(repository_vendor)
+    return str(Path.home() / "Panthera-HT_SDK")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Panthera-HT armd 守护服务")
     parser.add_argument("--sim", action="store_true", help="使用无需真机的仿真后端")
     parser.add_argument(
         "--sdk-root",
-        default=os.environ.get("PANTHERA_SDK_ROOT", str(Path.home() / "Panthera-HT_SDK")),
+        default=default_sdk_root(),
         help="官方 Panthera-HT_SDK 根目录",
     )
     parser.add_argument(
