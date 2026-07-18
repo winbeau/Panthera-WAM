@@ -211,6 +211,8 @@ class Backend(Protocol):
     n_joints: int
     is_sim: bool
     limits: BackendLimits
+    sdk_version: str
+    estop_latch_hazard_present: bool
 
     def refresh_state(self) -> None:
         """刷新电机状态缓存（真机上会发查询帧并 flush）。"""

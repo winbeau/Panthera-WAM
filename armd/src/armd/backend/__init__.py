@@ -14,6 +14,14 @@ from .base import (
     STALE_AFTER_S,
 )
 from .sim import SimBackend
+from .real import (
+    DEFAULT_MOTOR_TIMEOUT_MS,
+    MIN_SAFE_STATE_QUERY_FIRMWARE,
+    RealBackend,
+    SdkAuditError,
+    SdkAuditResult,
+    audit_sdk_source,
+)
 
 __all__ = [
     "Backend",
@@ -28,4 +36,10 @@ __all__ = [
     "MotorSnapshot",
     "STALE_AFTER_S",
     "SimBackend",
+    "DEFAULT_MOTOR_TIMEOUT_MS",
+    "MIN_SAFE_STATE_QUERY_FIRMWARE",
+    "RealBackend",
+    "SdkAuditError",
+    "SdkAuditResult",
+    "audit_sdk_source",
 ]

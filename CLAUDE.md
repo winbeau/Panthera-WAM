@@ -1,7 +1,7 @@
 # Panthera-WAM
 
 Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Action Model 数据平台。
-当前状态：**实施进行中。进度以 `docs/MILESTONES.md` 为准**（M0 与阶段 1 已完成；M1 核心安全链路已落地，剩余 RealBackend 的 N1/N4 防护与 N2 硬件看门狗决策）。
+当前状态：**实施进行中。进度以 `docs/MILESTONES.md` 为准**（M0、阶段 1 与 M1 已完成；RealBackend 已含 N1/N4/N5 防护，固件看门狗定为 150ms）。
 
 ## 必读文档（按顺序）
 

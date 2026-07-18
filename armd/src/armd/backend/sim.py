@@ -29,6 +29,8 @@ class SimBackend:
 
     n_joints = 6
     is_sim = True
+    sdk_version = "sim"
+    estop_latch_hazard_present = False
 
     def __init__(
         self,

@@ -28,4 +28,4 @@ docs/     设计文档与计划
 
 ## 状态
 
-计划已敲定（`docs/FINAL_PLAN.md`），WPF 视觉定稿为 C 稿驾驶舱（`docs/mockups/mockup-C-fluent-cockpit.html`）。M0 与阶段 1 已完成，控制周期锁定 200Hz；M1 的 lease/EStop/watchdog/gRPC/CLI 核心安全链路已落地，RealBackend 专项仍待实现。最新进度见 `docs/MILESTONES.md`，开发约定见 `CLAUDE.md`。
+计划已敲定（`docs/FINAL_PLAN.md`），WPF 视觉定稿为 C 稿驾驶舱（`docs/mockups/mockup-C-fluent-cockpit.html`）。M0、阶段 1 与 M1 已完成，控制周期锁定 200Hz；真实后端已具备 SDK 源码审计、串口重连换句柄、固件版本门槛和 150ms 电机看门狗。最新进度见 `docs/MILESTONES.md`，开发约定见 `CLAUDE.md`。

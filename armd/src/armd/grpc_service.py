@@ -204,15 +204,23 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
 
     async def GetDaemonStatus(self, request, context):
         del request, context
-        is_sim = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.is_sim))
+        is_sim, sdk_version, estop_latch_hazard_present = await asyncio.wrap_future(
+            self._hardware_loop.submit(
+                lambda backend: (
+                    backend.is_sim,
+                    backend.sdk_version,
+                    backend.estop_latch_hazard_present,
+                )
+            )
+        )
         state = self._hardware_loop.latest_state()
         return arm_pb2.DaemonStatus(
             version="0.1.0",
             sim=is_sim,
             control_hz=self._hardware_loop.stats().actual_hz,
             uptime_ms=round((time.monotonic() - self._started_at) * 1000),
-            sdk_version="sim" if is_sim else "unknown",
-            estop_latch_hazard_present=False,
+            sdk_version=sdk_version,
+            estop_latch_hazard_present=estop_latch_hazard_present,
             hardware_connected=state is not None and all(motor.valid for motor in state.motors),
         )
 
