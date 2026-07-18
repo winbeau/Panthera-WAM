@@ -21,7 +21,7 @@
 | 阶段 | 范围 | 进度 |
 |---|---|---|
 | 阶段 -1 | 前置准备（环境 + SDK 核实） | 5 / 5 ✅ |
-| 阶段 0 | M0 架构验证 spike（v1 硬前置） | 2 / 6 |
+| 阶段 0 | M0 架构验证 spike（v1 硬前置） | 3 / 6 |
 | 阶段 1 | 契约与仓库骨架 | 0 / 6 |
 | 阶段 2 | v1：armd + CLI（M1–M4） | 0 / 4 |
 | 阶段 3 | WPF v1（M-W0 – M-W3） | 0 / 5 |
@@ -44,7 +44,7 @@
 > **硬约束：M0 全过才允许开工 v1。** 其中 M0-1/M0-2 必须真机。
 
 - [x] 🧪 **N7 核实** ✅ **成立**：整帧单模式，切模式会把同端口其它电机槽位抹成 `0x8000`（无指令哨兵）。7 个电机同在一个 CANport，故**关节与夹爪不可跨模式共存于同一周期**。armd 规则：每周期用同一模式写满 7 槽再发一次；夹爪指令表达成关节当前模式。结论已回写 FINAL_PLAN §V6-N7
-- [ ] 🧪 **M0 spike 脚本**：`m0_common.py` ✅ + `m0_3_compute_split.py` ✅ 已完成；`m0_1_estop_preempt.py` / `m0_2_movel_loop.py` 待写（真机脚本须先打印动作再二次确认，走 `m0_common.confirm_motion()`）
+- [x] 🧪 **M0 spike 脚本** ✅ 三份齐备：`m0_common.py` / `m0_3_compute_split.py` / `m0_1_estop_preempt.py` / `m0_2_movel_loop.py`，已同步至 wsl-host `~/panthera-wam/spikes/m0/` 并通过 import 冒烟。两份真机脚本均走 `confirm_motion()`（先打印全部动作 → 要求输入 `YES`）、幅度硬上限（M0-1 ≤15°、M0-2 ≤10cm）、保守力矩、`finally` 无条件 `set_stop()`
 - [x] 🧪 **M0-3 计算/IO 分流实测** ✅ **通过**：双实例安全独立；IK 可达 p50=2.2ms、不可达最坏 170ms（超时预算 5s→**0.5s**）；**计算 worker 必须独立进程**——线程受 GIL 争用使 500Hz 周期 p95 2.00→3.43ms、最坏 13.22ms，进程方案与基线无异且 IK 吞吐高 2.6×。结论已回写 FINAL_PLAN §1.4 与 §V8
 - [ ] 🔒 **M0-1 非阻塞循环 + 可抢占 EStop**：逐周期步进 `joint move`，中途置 estop 标志，实测 `set_stop` 在下一周期生效、总延迟 < 100ms
 - [ ] 🔒 **M0-2 自建 moveL 执行循环**：`compute_cartesian_path` + 逐点 `pos_vel_tqe_kp_kd` 复现直线，`fraction` 单调、中途可取消，末端误差与 SDK `moveL()` 对拍一致
