@@ -22,7 +22,7 @@
 |---|---|---|
 | 阶段 -1 | 前置准备（环境 + SDK 核实） | 5 / 5 ✅ |
 | 阶段 0 | M0 架构验证 spike（v1 硬前置） | 3 / 6 |
-| 阶段 1 | 契约与仓库骨架 | 0 / 6 |
+| 阶段 1 | 契约与仓库骨架 | 3 / 6 |
 | 阶段 2 | v1：armd + CLI（M1–M4） | 0 / 4 |
 | 阶段 3 | WPF v1（M-W0 – M-W3） | 0 / 5 |
 | 阶段 4 | v2（M5–M9） | 0 / 5 |
@@ -54,9 +54,9 @@
 
 ## 阶段 1：契约与仓库骨架
 
-- [ ] 🧪 **`proto/arm.proto`**：按 FINAL_PLAN §7 + 核实结论落地。必须包含的修正：`MotorState` 删 `online`、补 `fault`/`mode`/`time`；IK optional 默认值保持不变（已核实正确）；`avoid_collisions` 标注未实现
-- [ ] 🧪 **codegen**：Python stub（armd/cli）+ C# stub（wpf）生成脚本，两端同源、一起提交
-- [ ] 🧪 **仓库骨架**：`proto/ armd/ cli/ wpf/ deploy/`，armd 与 cli 建为 `uv` 工程（Python 3.10+，类型标注）
+- [x] 🧪 **`proto/arm.proto`** ✅ 40 个 rpc（7 个流式）。已焊入核实修正：`MotorState` 删 `online`、补 `fault`/`mode`/`motor_time`/`pos_limit_flag`/`tor_limit_flag`/`valid`；IK 默认值经核实无需改并新增 `timeout_s`（默认 0.5s）；`avoid_collisions` 标 `deprecated` 并注明恒不生效；新增 `SetZero.persisted`、`SoftLimits.hardware_limits_enabled`、`DaemonStatus.estop_latch_hazard_present` 三个由核实结论倒逼出的字段
+- [x] 🧪 **codegen** ✅ `proto/gen.sh` 生成 Python stub 到 `proto/gen/python/panthera_arm/`（含 `.pyi`，并修正 grpc 生成物的顶层 import 为包内相对 import）。C# 侧不重复生成物：由 Grpc.Tools 在 `dotnet build` 时按 csproj 引用同一份 `arm.proto` 生成
+- [x] 🧪 **仓库骨架** ✅ `proto/ armd/ cli/ wpf/ deploy/` 就位；根 `pyproject.toml` 为 uv workspace（成员 armd / cli / proto/gen/python），`panthera-arm-proto` 以 workspace 依赖被两端共享，已 `uv` 解析构建通过
 - [ ] 🧪 **`armd --sim` 仿真后端**：不依赖真机的 `Panthera` 替身，支持全部只读 + 运动语义，供全部 pytest 使用
 - [ ] 🧪 **HardwareLoop 骨架**：单线程独占、逐周期非阻塞步进、estop/cancel 标志优先检查（按 N7 结论确定下发编排）
 - [ ] 🧪 **测试与 CI**：pytest 全走 `--sim`；`make`/脚本一键跑通

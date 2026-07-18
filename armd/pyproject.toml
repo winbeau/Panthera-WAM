@@ -1,0 +1,26 @@
+[project]
+name = "panthera-armd"
+version = "0.1.0"
+description = "Panthera-HT 机械臂守护服务：独占硬件，对外只暴露 gRPC"
+requires-python = ">=3.10"
+dependencies = [
+    "panthera-arm-proto",
+    "grpcio>=1.60",
+    "protobuf>=4.25",
+    "numpy>=1.19,<2",     # 与 SDK whl 的 numpy<2 约束一致
+    "pyyaml>=6.0,<7.0",
+    "pin>=2.6.0",         # 注意 PyPI 包名是 pin，import 名是 pinocchio
+]
+
+[project.scripts]
+armd = "armd.__main__:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/armd"]

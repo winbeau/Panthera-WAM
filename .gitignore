@@ -1,7 +1,19 @@
 __pycache__/
 *.pyc
 .venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# .NET / WPF
 bin/
 obj/
 .vs/
 *.user
+
+# 官方 SDK 属外部依赖，只克隆到仓库外，绝不入库（CLAUDE.md 开发约定）
+Panthera-HT_SDK/
+vendor/
+
+# 注意：proto/gen/ 下的生成 stub **故意入库**——CLAUDE.md 要求 proto 改动后
+# 两端 stub 一起提交，便于 review 契约变更的实际影响面。
