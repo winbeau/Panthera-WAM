@@ -637,7 +637,24 @@ C++ `motor_back_t`（`serial_struct.hpp:212-222`）+ pybind 暴露面（`binding
 
 **N6（拓扑）**：实际为 **1 CANboard / 1 CANport / 7 电机**（`joint1..joint7`，波特率 4,000,000），`joint7` 即夹爪（`Panthera.gripper_id = len(Motors) = 7`，`motor_count = 6`）。CLAUDE.md 记的「7×虚拟串口」应理解为 USB 复合设备暴露多个 ttyACM，SDK 只用 `serial_id=1`；`check_serial_dev_exist` 要求 `/dev/ttyACM0..7` 中至少 4 个存在。部署需 udev 规则 `KERNEL=="ttyACM*", MODE="0777"`。
 
-**N7（待核实，影响 HardwareLoop 设计）**：`motor::stop/brake/reset` 等是写入**每个 CAN 端口共享的一帧 `cdc_tr_message_s`**，且帧头 `head.s.cmd` 是**整帧一个模式**（`motor.cpp:471-511`）。若确如此，则同一端口上的 6 关节与夹爪**无法在同一次 `motor_send_cmd()` 里使用不同控制模式**（例如关节走 MIT、夹爪走 pos-vel 会互相覆盖帧模式）。这直接约束 §1.1 步骤 4 的逐周期下发编排。**尚未逐行核实 `canport.cpp` 的组帧/发送逻辑，实现 HardwareLoop 前必须确认。**
+**N7（已核实成立，直接改写 HardwareLoop 下发编排）—— 整帧单模式，切模式会抹掉其它电机指令**
+
+证据链：
+- `canport` 只持有**一帧** `cdc_tr_message`，`canport::motor_send_cmd()` 就是 `ser->send_2(&cdc_tr_message)` 一次整帧发送（`canport.cpp:422-425`）。
+- 同端口所有电机共享该帧指针 `p_cdc_tx_message`，各自只写 `data.<union>[MEM_INDEX_ID(id)]`（`id-1` 槽位）。
+- **每个控制方法都带同一段逻辑**（`motor.cpp:396-539`）：若 `head.s.cmd != MODE_X`，则改写帧头为 `MODE_X` 并**把整个数据区清成 `0x8000`**（int16 模式）或 `0`（字节模式），随后只填自己那一格。
+
+结论：
+1. **一帧只有一个控制模式**，`0x8000` 是「本电机无指令」哨兵（**不是零位置**）。
+2. **跨模式写入会静默抹掉同端口其它电机已写好的槽位**。本机 7 个电机（6 关节 + 夹爪）全部挂在同一个 CANport 上，因此「关节走 MIT + 夹爪走 pos-vel」在同一周期内**不可能共存**：后写的一方会把先写的一方清空，`motor_send_cmd()` 发出去的帧里先写方无指令。
+3. SDK 自身示例之所以没暴露这个坑，是因为配对恰好同模式（`Recorder.play` 用 `pos_vel_tqe_kp_kd` + `gripper_control_MIT` 同为 5 参数模式；`Joint_Pos_Vel` + `gripper_control` 同为 `pos_vel_MAXtqe`）——**属于巧合而非机制保证**。
+
+**对 armd 的硬性约束（写入 §1.1 步骤 4）**：
+- HardwareLoop 必须维护「本端口当前帧模式」这一单一状态；**每个控制周期用同一模式写满全部 7 个槽位（含夹爪），然后只调一次 `motor_send_cmd()`**。
+- 夹爪指令**必须表达成关节当前所处的模式**（pos-vel 时用 `gripper_control`，MIT 时用 `gripper_control_MIT`）——两种表达都存在，故总是可达，不需要拒绝夹爪操作。
+- 反过来，**禁止**在一个周期内混用 `Joint_Pos_Vel` 与 `pos_vel_tqe_kp_kd`，也禁止在关节 MIT 执行期间直接调 `gripper_control`。
+- `set_stop()` 把帧切到 `MODE_STOP` 并清空数据区，**恰好构成一次干净的整帧抢占**——这从组帧层面进一步支撑 §1.3 的 EStop 延迟模型。
+- 该共享帧**无任何锁**。这独立验证了「HardwareLoop 单线程独占 `Panthera` 对象」不是风格选择而是**正确性要求**：任何第二个线程碰电机都会撕裂这一帧。
 
 **N8（示例脚本陷阱）**：多个官方示例在 `KeyboardInterrupt` 分支里把 `robot.set_stop()` **注释掉了**却仍打印「所有电机已停止」（`2_gravity_friction_compensation_control.py:96,100`；`3_interpolation_control_zeroVel.py:95`）。即中断后电机保持最后指令。**不可照抄示例的收尾逻辑**。
 
