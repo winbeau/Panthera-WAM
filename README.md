@@ -63,7 +63,7 @@ systemctl --user status armd --no-pager
 wpf\tools\run-tests.cmd
 ```
 
-该脚本执行 Release 构建、单元测试和 FlaUI 三主题界面测试，并把截图写入
+该脚本执行 Release 构建、单元测试，以及 FlaUI 的三种可选主题与强制高对比界面测试，并把截图写入
 `%USERPROFILE%\Desktop\Panthera-Design\ui-artifacts`。WPF build 与非 UI 单元测试也已纳入 GitHub Actions。
 
 ## 安全红线

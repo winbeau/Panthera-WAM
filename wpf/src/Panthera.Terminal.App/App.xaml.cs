@@ -104,6 +104,10 @@ public partial class App : Application
         {
             return ApplicationTheme.Dark;
         }
+        if (theme.Equals("highcontrast", StringComparison.OrdinalIgnoreCase))
+        {
+            return ApplicationTheme.HighContrast;
+        }
         return ApplicationThemeManager.GetSystemTheme() switch
         {
             SystemTheme.Dark or SystemTheme.Glow or SystemTheme.CapturedMotion => ApplicationTheme.Dark,

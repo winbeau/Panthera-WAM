@@ -26,6 +26,14 @@ public partial class MainWindow : FluentWindow
         _viewModel = viewModel;
         _stateSlot = stateSlot;
         DataContext = viewModel;
+        if (App.IsScreenshotMode)
+        {
+            Width = 1240;
+            Height = 800;
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = 20;
+            Top = 20;
+        }
         _renderTimer = new DispatcherTimer(DispatcherPriority.Render)
         {
             Interval = TimeSpan.FromMilliseconds(1000.0 / 30.0),
@@ -126,9 +134,12 @@ public partial class MainWindow : FluentWindow
             SystemThemeWatcher.Watch(this, backdrop, updateAccents: true);
             return;
         }
-        var applicationTheme = theme.Equals("dark", StringComparison.OrdinalIgnoreCase)
-            ? ApplicationTheme.Dark
-            : ApplicationTheme.Light;
+        var applicationTheme = theme.ToLowerInvariant() switch
+        {
+            "dark" => ApplicationTheme.Dark,
+            "highcontrast" => ApplicationTheme.HighContrast,
+            _ => ApplicationTheme.Light,
+        };
         ApplicationThemeManager.Apply(applicationTheme, backdrop, updateAccent: true);
     }
 

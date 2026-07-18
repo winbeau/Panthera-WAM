@@ -22,8 +22,8 @@ wpf\tools\run-tests.cmd
 ```
 
 通过标准：Release 构建 0 warning、单元测试通过、FlaUI 在 System/Light/Dark
-三种主题下通过，并生成三张 cockpit 截图。另在 Windows 高对比模式下手动启动一次，
-确认文字、速度值、告警和焦点框均清晰可见。
+三种可选主题和强制 HighContrast 主题下通过，并生成四张完整 cockpit 截图。
+发布签字前仍需在 Windows 系统高对比设置下手动启动一次，确认系统设置切换与焦点框清晰可见。
 
 键盘验收：
 

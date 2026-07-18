@@ -13,6 +13,7 @@ public sealed class CockpitUiTests
     [InlineData("System")]
     [InlineData("Light")]
     [InlineData("Dark")]
+    [InlineData("HighContrast")]
     public void Cockpit_exposes_the_safety_and_control_surface(string theme)
     {
         if (Environment.GetEnvironmentVariable("PANTHERA_RUN_UI_TESTS") != "1")

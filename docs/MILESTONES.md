@@ -110,7 +110,7 @@
 - [x] **M-W1 只读监控** ✅ 6 关节卡片、速度/力矩纵向 bar、俯视/侧视/主视三视图与 30fps latest-slot 渲染；Windows 侧改用 `GetRobotState` 短请求轮询以规避 mirrored 长流断线
 - [x] **M-W2 控制闭环** ✅ 获取/释放控制权、关节点动、MoveJ、MoveL、夹爪、EStop 与取消均已接线；点动异常被后台监控并安全清理，不再从 `AsyncRelayCommand` 冒泡杀死进程；`%LOCALAPPDATA%/Panthera/terminal-failures.log` 持久记录未处理异常
 - [x] **M-W2.5 WSL 控制桥** ✅ 桌面端常驻 `127.0.0.1:50050`，通过 `wsl.exe + nc` 标准流桥接 WSL 内 `50051`，完全绕开 WSL 2.5.7 mirrored 的不稳定 localhost 转发；15s 零速度控制压力测试与 J1 5s+5s 往返真机测试均通过
-- [ ] **M-W3 主题打磨**：系统/浅色/深色三态与 FlaUI 三主题截图已实现；固定颜色已移除，jog 失焦/禁用自动停止，F12/Esc 安全快捷键已接入；待原生 Windows 完成高对比与完整 Tab 顺序签字
+- [ ] **M-W3 主题打磨**：系统/浅色/深色三态与 FlaUI 截图已实现，CI 另强制运行 HighContrast 主题；固定颜色已移除，jog 失焦/禁用自动停止，F12/Esc 安全快捷键已接入；待 Windows 系统高对比设置与完整 Tab 顺序人工签字
 
 ---
 
