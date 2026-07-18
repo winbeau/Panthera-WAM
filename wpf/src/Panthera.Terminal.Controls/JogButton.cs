@@ -14,6 +14,11 @@ public sealed class JogButton : Button
         nameof(JogParameter), typeof(object), typeof(JogButton));
     private bool _pressed;
 
+    public JogButton()
+    {
+        IsEnabledChanged += HandleIsEnabledChanged;
+    }
+
     public ICommand? PressCommand { get => (ICommand?)GetValue(PressCommandProperty); set => SetValue(PressCommandProperty, value); }
     public ICommand? ReleaseCommand { get => (ICommand?)GetValue(ReleaseCommandProperty); set => SetValue(ReleaseCommandProperty, value); }
     public object? JogParameter { get => GetValue(JogParameterProperty); set => SetValue(JogParameterProperty, value); }
@@ -67,6 +72,20 @@ public sealed class JogButton : Button
             eventArgs.Handled = true;
         }
         base.OnPreviewKeyUp(eventArgs);
+    }
+
+    protected override void OnLostKeyboardFocus(KeyboardFocusChangedEventArgs eventArgs)
+    {
+        EndJog();
+        base.OnLostKeyboardFocus(eventArgs);
+    }
+
+    private void HandleIsEnabledChanged(object sender, DependencyPropertyChangedEventArgs eventArgs)
+    {
+        if (eventArgs.NewValue is false)
+        {
+            EndJog();
+        }
     }
 
     private void BeginJog()

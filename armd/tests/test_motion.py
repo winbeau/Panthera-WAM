@@ -6,7 +6,7 @@ import numpy as np
 
 from armd.backend import SimBackend
 from armd.hardware_loop import CancelReason, MotionStepResult
-from armd.motion import JOG_FRESHNESS_S, JointJogMotion, JointPositionMotion
+from armd.motion import CartesianTrajectoryMotion, JOG_FRESHNESS_S, JointJogMotion, JointPositionMotion
 
 
 @dataclass
@@ -100,3 +100,26 @@ def test_jog_blocks_velocity_toward_nearby_soft_limit() -> None:
     assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
     assert motion.limit_hit[0]
     assert backend.read_all()[0].velocity == 0.0
+
+
+def test_cartesian_cancel_uses_twelve_control_steps() -> None:
+    clock = FakeClock()
+    backend = SimBackend(clock=clock)
+    motion = CartesianTrajectoryMotion(
+        positions=[np.zeros(6), np.full(6, 0.1)],
+        velocities=[np.full(6, 0.2), np.full(6, 0.2)],
+        timestamps=[0.0, 1.0],
+        max_torque=backend.limits.joint_torque,
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    motion.request_cancel(CancelReason.CLIENT)
+    for _ in range(11):
+        clock.advance(0.005)
+        backend.refresh_state()
+        assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.CANCELLED
+    assert motion.reject_reason == "运动已取消: client"

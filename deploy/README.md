@@ -1,0 +1,44 @@
+# WSL 部署
+
+`armd` 以 systemd user service 运行，与 WPF 环境引导中的
+`systemctl --user start armd` 保持一致。
+
+## 首次安装
+
+```bash
+git submodule update --init --recursive
+uv sync --all-packages --all-extras
+./deploy/install-wsl.sh
+sudo install -m 0644 deploy/99-panthera-ht.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+检查 `~/.config/panthera-wam/armd.env` 中的 SDK 与机器人配置路径，然后执行：
+
+```bash
+systemctl --user start armd
+systemctl --user status armd --no-pager
+uv run panthera daemon status
+```
+
+安装脚本默认不启动服务，避免在机械臂尚未完成 USB 挂载或现场检查时访问硬件。
+如环境已经就绪，可使用 `./deploy/install-wsl.sh --start`。
+
+## 日常操作
+
+```bash
+systemctl --user restart armd
+journalctl --user -u armd -f
+systemctl --user stop armd
+```
+
+Windows 侧先用 WPF 一键引导，或以管理员 PowerShell 执行
+`usbipd attach --wsl --busid <BUSID>`。程序按 VID/PID 与序列号发现设备，
+不应把当前 busid 写进长期配置。
+
+## 安全约束
+
+- 服务启动和状态读取不代表获准执行运动。
+- 任何真机 jog、MoveJ、MoveL、夹爪或归零验收，都需要操作员当次在场确认。
+- 固件 watchdog 默认是 150ms；除非重新完成安全评估，不要设为 0。

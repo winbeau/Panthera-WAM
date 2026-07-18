@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -16,3 +18,35 @@ jobs:
         run: python -m pip install uv
       - name: Run checks
         run: make check
+
+  wpf:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - name: Restore WPF solution
+        run: dotnet restore wpf/Panthera.Terminal.sln
+      - name: Build WPF release
+        run: dotnet build wpf/Panthera.Terminal.sln --configuration Release --no-restore
+      - name: Run WPF unit tests
+        run: >-
+          dotnet test wpf/tests/Panthera.Terminal.Tests/Panthera.Terminal.Tests.csproj
+          --configuration Release --no-build
+      - name: Run WPF UI tests
+        env:
+          PANTHERA_RUN_UI_TESTS: "1"
+          PANTHERA_UI_ARTIFACTS: ${{ runner.temp }}\ui-artifacts
+        run: >-
+          dotnet test wpf/tests/Panthera.Terminal.UiTests/Panthera.Terminal.UiTests.csproj
+          --configuration Release --no-build
+      - name: Upload WPF UI artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpf-ui-artifacts
+          path: ${{ runner.temp }}\ui-artifacts
+          if-no-files-found: error

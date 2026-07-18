@@ -59,11 +59,11 @@
 - [x] 🧪 **仓库骨架** ✅ `proto/ armd/ cli/ wpf/ deploy/` 就位；根 `pyproject.toml` 为 uv workspace（成员 armd / cli / proto/gen/python），`panthera-arm-proto` 以 workspace 依赖被两端共享，已 `uv` 解析构建通过
 - [x] 🧪 **`armd --sim` 仿真后端** ✅ 6 关节 + 1 夹爪一阶电机模型；支持 POS-VEL / VELOCITY / MIT 整帧同模式下发、软限位、999.0 未连接哨兵、fault 注入、EStop 冻结、全体/逐电机归零持久化语义；`armd --sim --check` 可独立自检
 - [x] 🧪 **HardwareLoop 骨架** ✅ 后端对象在线程内创建并独占；固定周期绝对时间基调度；每周期按 estop → cancel → 状态刷新 → 有界命令队列 → 非阻塞 motion step 顺序推进；N7 由 `JointFrame` 完整 7 槽同模式校验强制；EStop latch 与提交后立即 cancel 的竞态已覆盖
-- [x] 🧪 **测试与 CI** ✅ 54 项 pytest 默认不碰真机，覆盖 Sim/Real fake 后端整帧三模式、限位、归零、断连重连、线程独占、lease/cancel/EStop/watchdog/gRPC/CLI/运动学/笛卡尔执行；根 `make check` 一键执行 ruff + pytest + `armd --sim --check`；GitHub Actions 已接入
+- [x] 🧪 **测试与 CI** ✅ 57 项 pytest 默认不碰真机，覆盖 Sim/Real fake 后端整帧三模式、限位、归零、断连重连、线程独占、lease/cancel/EStop/watchdog/gRPC/CLI/运动学/笛卡尔执行；根 `make check` 一键执行 ruff + pytest + `armd --sim --check`；GitHub Actions 已接入 Python、Windows WPF Release/单测、FlaUI 四主题启动与截图产物
 
 ---
 
-## 阶段 2：v1 —— armd + panthera-cli（24 条命令）
+## 阶段 2：v1 —— armd + panthera-cli（27 条命令）
 
 ### M1 安全骨架
 - [x] 🧪 实现 ✅ `armd --sim` 已监听 gRPC；实现 `control acquire/release/status/heartbeat`、metadata lease 统一拦截器、force-acquire 旧 token 失效、`estop trigger/reset`、`safety limits show`、daemon status/version、watchdog 后台任务；CLI 同步落地并持久化 lease token
@@ -99,7 +99,7 @@
 - [x] 🧪 验收 ✅ `ik` 不可达返回 `found=false`，超时结构化返回 `timeout=true`，worker 异常不穿透服务进程
 - [x] **安全收尾算法定案** ✅ `CancelExecution` 用 12 个控制周期按比例减速，watchdog 取消后切入柔顺阻尼；速度/加速度超限在轨迹入队前拒绝
 - [ ] 🔒 验收：`movel` 期间 `StreamExecution` 见 `fraction` 单调递增，`DONE/FAILED/CANCELLED` 三态清晰，取消能减速收尾
-- [ ] **v1 完成口径**：24 条命令可用 + M1–M4 场景全过
+- [ ] **v1 完成口径**：27 条命令可用 + M1–M4 场景全过
 
 ---
 
@@ -110,7 +110,7 @@
 - [x] **M-W1 只读监控** ✅ 6 关节卡片、速度/力矩纵向 bar、俯视/侧视/主视三视图与 30fps latest-slot 渲染；Windows 侧改用 `GetRobotState` 短请求轮询以规避 mirrored 长流断线
 - [x] **M-W2 控制闭环** ✅ 获取/释放控制权、关节点动、MoveJ、MoveL、夹爪、EStop 与取消均已接线；点动异常被后台监控并安全清理，不再从 `AsyncRelayCommand` 冒泡杀死进程；`%LOCALAPPDATA%/Panthera/terminal-failures.log` 持久记录未处理异常
 - [x] **M-W2.5 WSL 控制桥** ✅ 桌面端常驻 `127.0.0.1:50050`，通过 `wsl.exe + nc` 标准流桥接 WSL 内 `50051`，完全绕开 WSL 2.5.7 mirrored 的不稳定 localhost 转发；15s 零速度控制压力测试与 J1 5s+5s 往返真机测试均通过
-- [ ] **M-W3 主题打磨**：系统/浅色/深色三态 + 高对比校验；扫描线/发光等装饰；键盘可达性
+- [ ] **M-W3 主题打磨**：系统/浅色/深色三态与 FlaUI 截图已实现，CI 另强制运行 HighContrast 主题；固定颜色已移除，jog 失焦/禁用自动停止，F12/Esc 安全快捷键已接入；待 Windows 系统高对比设置与完整 Tab 顺序人工签字
 
 ---
 
@@ -124,10 +124,13 @@
 
 ---
 
-## 待用户决策 / 需真机的挂起项
+## v1 剩余验收项
 
 | 项 | 需要什么 |
 |---|---|
-| M0-1 / M0-2 | 机械臂挂进 WSL（`usbipd attach --wsl --busid 3-2`，管理员 PowerShell）+ 用户在场 |
-| 所有 🔒 验收项 | 用户当次明确确认 |
-| WPF 构建与运行 | Windows 主机 `windows-host`（`ssh <windows-user>@<WINDOWS_HOST_IP>`），不可在 WSL 内跑 exe |
+| M2 全体非持久化归零 | 用户在场；放在所有运动验收之后，完成断电恢复 |
+| M3 夹爪限位拒绝 | 用户在场；只发送预期被软件层拒绝的越限目标 |
+| M4 MoveL 完成/取消 | 用户在场；小幅低速路径，先 preview 后执行 |
+| M-W3 Windows 签字 | 原生 Windows 运行 Release、FlaUI、高对比和键盘验收 |
+
+逐项命令、顺序和恢复要求见 `docs/V1_ACCEPTANCE.md`。

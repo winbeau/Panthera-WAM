@@ -26,7 +26,7 @@ async def kinematics_stack():
     acquired = await stub.AcquireControl(arm_pb2.AcquireControlRequest(client_id="kinematics-test"))
     metadata = ((LEASE_METADATA_KEY, acquired.lease_token),)
     try:
-        yield stub, metadata
+        yield loop, stub, metadata
     finally:
         await channel.close()
         await server.stop()
@@ -35,7 +35,7 @@ async def kinematics_stack():
 
 @pytest.mark.asyncio
 async def test_kinematics_rpcs_and_ik_timeout(kinematics_stack) -> None:
-    stub, _ = kinematics_stack
+    _, stub, _ = kinematics_stack
     reference = [0.2, 0.6, 0.8, 0.1, -0.2, 0.1]
     fk = await stub.GetForwardKinematics(arm_pb2.JointAnglesOptional(joint_angles=reference))
     jacobian = await stub.GetJacobian(arm_pb2.JointAnglesOptional(joint_angles=reference))
@@ -73,7 +73,7 @@ async def test_kinematics_rpcs_and_ik_timeout(kinematics_stack) -> None:
 
 @pytest.mark.asyncio
 async def test_plan_movel_stream_and_cancel(kinematics_stack) -> None:
-    stub, metadata = kinematics_stack
+    _, stub, metadata = kinematics_stack
     current_fk = await stub.GetForwardKinematics(arm_pb2.JointAnglesOptional())
     target_position = np.asarray(current_fk.position)
     target_position[2] += 0.004
@@ -134,8 +134,40 @@ async def test_plan_movel_stream_and_cancel(kinematics_stack) -> None:
 
 
 @pytest.mark.asyncio
+async def test_movel_stream_reports_failed_after_motor_disconnect(kinematics_stack) -> None:
+    loop, stub, metadata = kinematics_stack
+    current_fk = await stub.GetForwardKinematics(arm_pb2.JointAnglesOptional())
+    target_position = np.asarray(current_fk.position)
+    target_position[2] += 0.006
+    accepted = await stub.MoveL(
+        arm_pb2.MoveLRequest(
+            target=arm_pb2.CartesianPose(
+                position=target_position.tolist(),
+                matrix=arm_pb2.RotationMatrix(values=current_fk.rotation_matrix),
+            ),
+            duration_s=1.0,
+        ),
+        metadata=metadata,
+        timeout=5.0,
+    )
+
+    await asyncio.sleep(0.1)
+    await asyncio.wrap_future(loop.submit(lambda backend: backend.set_motor_connected(1, False)))
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+    assert final is not None
+    assert final.state == arm_pb2.EXEC_STATE_FAILED
+    assert "状态无效" in final.error_message
+
+    await asyncio.wrap_future(loop.submit(lambda backend: backend.set_motor_connected(1, True)))
+
+
+@pytest.mark.asyncio
 async def test_check_reached_uses_fresh_joint_state(kinematics_stack) -> None:
-    stub, _ = kinematics_stack
+    _, stub, _ = kinematics_stack
     response = await stub.CheckReached(
         arm_pb2.CheckReachedRequest(target_positions=[0.0] * 6, tolerance=0.001)
     )
@@ -145,7 +177,7 @@ async def test_check_reached_uses_fresh_joint_state(kinematics_stack) -> None:
 
 @pytest.mark.asyncio
 async def test_movel_rejects_duration_that_breaks_trajectory_limits(kinematics_stack) -> None:
-    stub, metadata = kinematics_stack
+    _, stub, metadata = kinematics_stack
     current_fk = await stub.GetForwardKinematics(arm_pb2.JointAnglesOptional())
     target_position = np.asarray(current_fk.position)
     target_position[2] += 0.004

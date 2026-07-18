@@ -120,7 +120,7 @@
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     </Grid>
                     <ProgressBar Margin="0,3,0,0" Maximum="3"
-                                 Foreground="{DynamicResource CockpitVelocityBrush}"
+                                 Foreground="{DynamicResource AccentFillColorDefaultBrush}"
                                  Value="{Binding SpeedMagnitude, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}}" />
                 </StackPanel>
                 <StackPanel Grid.Column="2">
