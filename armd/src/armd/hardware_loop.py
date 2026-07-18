@@ -214,8 +214,8 @@ class HardwareLoop:
 
     def _run(self) -> None:
         backend: Backend | None = None
-        started_at = self._clock()
-        next_tick = started_at
+        started_at = 0.0
+        next_tick = 0.0
         cycles = 0
         overruns = 0
         max_cycle_s = 0.0
@@ -224,6 +224,8 @@ class HardwareLoop:
             self._thread_id = threading.get_ident()
             backend.refresh_state()
             self._cache_state(backend, self._clock())
+            started_at = self._clock()
+            next_tick = started_at
             self._started.set()
 
             while not self._stop_requested.is_set():

@@ -636,7 +636,7 @@ C++ `motor_back_t`（`serial_struct.hpp:212-222`）+ pybind 暴露面（`binding
 
 **N4（24/7 守护鲁棒性缺陷）**：`robot` 构造时起了后台 `check_error` 线程（1s 轮询，`robot.cpp:429-545`）；串口异常时会 `CANboards.clear() / CANPorts.clear() / Motors.clear()` 并 `delete` 串口对象，随后重建全新 motor 对象（`robot.cpp:457-526`）。
 → 而 `Panthera.__init__` 只在初始化时缓存一次 `self.Motors = self.get_motors()`（`Panthera.py:54`）。**重连后 Python 侧持有的是已析构对象的悬垂引用**——对短脚本无感，对常驻 armd 是致命的 use-after-free。
-→ **处置已落地**：`RealBackend` 不跨周期缓存 SDK 的 motor 指针；每次刷新、读状态和写帧前都重新 `get_motors()`。重连窗口内电机数不为 7 时返回 7 个 `999.0` 无效快照并拒绝控制，恢复后自动换用新句柄，避免继续解引用已析构对象。
+→ **处置已落地**：`RealBackend` 不跨控制周期缓存 SDK 的 motor 指针；每周期刷新状态和每次写帧前重新 `get_motors()`，固件版本每秒复核。重连窗口内电机数不为 7 时返回 7 个 `999.0` 无效快照并拒绝控制，恢复后自动换用新句柄，避免继续解引用已析构对象。
 
 **N5**：`send_get_motor_state_cmd()` 在旧固件（`fun_v < fun_v2`）分支下会 **给所有电机下发 `velocity(0.0)` 再 flush**（`robot.cpp:599-606`）——「读状态」在旧固件上是**带副作用的写**。`RealBackend` 读取 7 个 `Motor.get_version()`，最低版本低于 4.2.0 时拒绝启动/控制；版本尚未读全时不发状态查询并对外返回无效快照。
 

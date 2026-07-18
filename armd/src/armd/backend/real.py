@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import re
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,6 +98,7 @@ class RealBackend:
         sdk_module: ModuleType | Any | None = None,
         source_audit: SdkAuditResult | None = None,
         run_source_audit: bool = True,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not 0 <= motor_timeout_ms <= 32760:
             raise ValueError("motor_timeout_ms 必须位于 0..32760")
@@ -106,6 +108,8 @@ class RealBackend:
         self._motors: tuple[Any, ...] = ()
         self._motor_firmware_versions: tuple[str, ...] = ()
         self._state_query_safe = False
+        self._clock = clock
+        self._next_version_check_at = 0.0
         self.motor_timeout_ms = motor_timeout_ms
 
         if source_audit is None and run_source_audit:
@@ -127,7 +131,7 @@ class RealBackend:
         config = str(Path(config_path).expanduser().resolve()) if config_path is not None else None
         try:
             self._robot = robot_factory(config)
-            self._replace_motor_handles()
+            self._replace_motor_handles(force_version_check=True)
             self.limits = limits or _limits_from_robot(self._robot)
             if motor_timeout_ms > 0:
                 self._robot.set_timeout(motor_timeout_ms)
@@ -157,7 +161,6 @@ class RealBackend:
 
     def read_all(self) -> list[MotorSnapshot]:
         self._require_open()
-        self._replace_motor_handles()
         if len(self._motors) != EXPECTED_MOTOR_COUNT or not self._state_query_safe:
             return _disconnected_snapshots()
 
@@ -260,7 +263,7 @@ class RealBackend:
         else:
             robot.set_reset_zero_motors([motor_id - 1 for motor_id in ids])
             persisted = True
-        self._replace_motor_handles()
+        self._replace_motor_handles(force_version_check=True)
         return True, persisted, ""
 
     def close(self) -> None:
@@ -270,15 +273,21 @@ class RealBackend:
         self._motors = ()
         self._robot = None
 
-    def _replace_motor_handles(self) -> None:
+    def _replace_motor_handles(self, *, force_version_check: bool = False) -> None:
         robot = self._require_robot()
         motors = tuple(robot.get_motors())
         if len(motors) != EXPECTED_MOTOR_COUNT:
             self._motors = ()
             self._motor_firmware_versions = ()
             self._state_query_safe = False
+            self._next_version_check_at = 0.0
             if hasattr(self, "_sdk_base_version"):
                 self.sdk_version = self._format_sdk_version()
+            return
+
+        now = self._clock()
+        if not force_version_check and self._state_query_safe and now < self._next_version_check_at:
+            self._motors = motors
             return
 
         versions = tuple(_motor_version(motor) for motor in motors)
@@ -290,6 +299,7 @@ class RealBackend:
         self._motors = motors
         self._state_query_safe = len(known_versions) == EXPECTED_MOTOR_COUNT
         self._motor_firmware_versions = tuple(".".join(str(part) for part in version) for version in versions)
+        self._next_version_check_at = now + 1.0
         if hasattr(self, "_sdk_base_version"):
             self.sdk_version = self._format_sdk_version()
 

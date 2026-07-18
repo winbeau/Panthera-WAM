@@ -4,6 +4,7 @@ import threading
 import time
 
 import numpy as np
+import pytest
 
 from armd.backend import Backend, FrameMode, JointFrame, SimBackend
 from armd.hardware_loop import CancelReason, HardwareLoop, MotionStepResult
@@ -152,5 +153,32 @@ def test_state_cache_and_cycle_stats_keep_advancing() -> None:
         assert state.age_s(time.monotonic()) < 0.1
         assert stats.cycles >= 5
         assert stats.actual_hz > 0
+    finally:
+        loop.stop()
+
+
+def test_cycle_rate_excludes_slow_backend_initialization() -> None:
+    class FakeClock:
+        def __init__(self) -> None:
+            self.now = 0.0
+
+        def __call__(self) -> float:
+            return self.now
+
+        def advance(self, seconds: float) -> None:
+            self.now += seconds
+            time.sleep(0)
+
+    clock = FakeClock()
+
+    def factory() -> SimBackend:
+        clock.advance(3.0)
+        return SimBackend(clock=clock)
+
+    loop = HardwareLoop(factory, control_hz=100.0, clock=clock, sleeper=clock.advance)
+    loop.start()
+    try:
+        assert loop.wait_for_cycles(20)
+        assert loop.stats().actual_hz == pytest.approx(100.0, rel=0.02)
     finally:
         loop.stop()

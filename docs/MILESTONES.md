@@ -59,7 +59,7 @@
 - [x] 🧪 **仓库骨架** ✅ `proto/ armd/ cli/ wpf/ deploy/` 就位；根 `pyproject.toml` 为 uv workspace（成员 armd / cli / proto/gen/python），`panthera-arm-proto` 以 workspace 依赖被两端共享，已 `uv` 解析构建通过
 - [x] 🧪 **`armd --sim` 仿真后端** ✅ 6 关节 + 1 夹爪一阶电机模型；支持 POS-VEL / VELOCITY / MIT 整帧同模式下发、软限位、999.0 未连接哨兵、fault 注入、EStop 冻结、全体/逐电机归零持久化语义；`armd --sim --check` 可独立自检
 - [x] 🧪 **HardwareLoop 骨架** ✅ 后端对象在线程内创建并独占；固定周期绝对时间基调度；每周期按 estop → cancel → 状态刷新 → 有界命令队列 → 非阻塞 motion step 顺序推进；N7 由 `JointFrame` 完整 7 槽同模式校验强制；EStop latch 与提交后立即 cancel 的竞态已覆盖
-- [x] 🧪 **测试与 CI** ✅ 35 项 pytest 默认不碰真机，覆盖 Sim/Real fake 后端整帧三模式、限位、归零、断连重连、线程独占、lease/cancel/EStop/watchdog/gRPC/CLI；根 `make check` 一键执行 ruff + pytest + `armd --sim --check`；GitHub Actions 已接入
+- [x] 🧪 **测试与 CI** ✅ 37 项 pytest 默认不碰真机，覆盖 Sim/Real fake 后端整帧三模式、限位、归零、断连重连、线程独占、lease/cancel/EStop/watchdog/gRPC/CLI；根 `make check` 一键执行 ruff + pytest + `armd --sim --check`；GitHub Actions 已接入
 
 ---
 
@@ -71,10 +71,11 @@
 - [x] 🧪 验收② ✅ 无 lease / 错 token 调 `JointMove` 均返回 `PERMISSION_DENIED`，有效 token 可穿过拦截器到业务层
 - [x] 🧪 验收③ ✅ watchdog 超时自动 release；POS-VEL 模式改发当前位置保位帧，VELOCITY 模式速度归零；迟到的 release 不能绕过 watchdog 停止
 - [x] 🔒 验收④ ✅ gRPC 层 EStop 无需 lease；触发后运动 RPC 返回 `FAILED_PRECONDITION`，`reset --confirm` + 有效 lease 后恢复；真机抢占延迟由 M0-1 实测 7.73ms
-- [x] 🧪 **N4 防护** ✅ `RealBackend` 每次状态刷新/读取/写帧前重新 `get_motors()`，不跨周期保存 SDK 悬垂指针；重连窗口返回 7 个无效快照并拒绝控制，fake 断开→重建句柄测试通过
+- [x] 🧪 **N4 防护** ✅ `RealBackend` 每个状态周期及每次写帧前重新 `get_motors()`，不跨周期保存 SDK 悬垂指针；重连窗口返回 7 个无效快照并拒绝控制，fake 断开→重建句柄测试通过
 - [x] 🧪 **N1 回归检查** ✅ 启动前扫描 SDK 自有 C++ 源码，`detect_motor_limit()` 除声明/定义外出现任何引用即拒绝启动；当前 SDK 记录为 Python 1.0.0 / C++ binding 4.4.7 / 电机 4.7.3，源码仍为零调用点
 - [x] **N2 决策** ✅ 用户确认启用 **150ms** 固件看门狗；`RealBackend` 仅初始化期调用 `set_timeout(150)`，部署默认写入 `deploy/armd.env.example`
 - [x] 🧪 **N5 固件门槛** ✅ 电机最低固件 <4.2.0 时拒绝状态查询和控制，避免“读状态”退化为 `velocity(0)` 写操作
+- [x] 🔒 **RealBackend 真机验收** ✅ 7/7 电机在线，CANboard v4.8.6，电机均为 v4.7.3（`fun_v=5`）；gRPC `hardware_connected=true`、N1 hazard=false；200Hz 目标下含逐周期状态刷新的实测频率约 **191Hz**。同时修复控制频率统计误把约 3s SDK 初始化计入分母的问题
 
 > M1 已收口：lease/EStop/watchdog、RealBackend、N1/N4/N5 防护与 150ms 固件看门狗均已落地；真机运行仍遵守逐次确认红线。
 
@@ -128,4 +129,3 @@
 | M0-1 / M0-2 | 机械臂挂进 WSL（`usbipd attach --wsl --busid 3-2`，管理员 PowerShell）+ 用户在场 |
 | 所有 🔒 验收项 | 用户当次明确确认 |
 | WPF 构建与运行 | Windows 主机 `windows-host`（`ssh <windows-user>@<WINDOWS_HOST_IP>`），不可在 WSL 内跑 exe |
-| RealBackend 真机验收 | 启动会设置 150ms 固件看门狗；需用户在场确认后执行 |

@@ -50,6 +50,7 @@ class FakeMotor:
         self.events = events
         self.state = FakeState(ID=motor_id, position=position)
         self.version = version or FakeVersion()
+        self.version_reads = 0
         self.pos_limit_flag = 0
         self.tor_limit_flag = 0
 
@@ -60,6 +61,7 @@ class FakeMotor:
         return self.state
 
     def get_version(self) -> FakeVersion:
+        self.version_reads += 1
         return self.version
 
     def velocity(self, velocity: float) -> None:
@@ -87,6 +89,7 @@ class FakeRobot:
         self.events: list[tuple] = []
         self.motors = [FakeMotor(index, self.events, version=version) for index in range(1, 8)]
         self.timeout_calls: list[int] = []
+        self.get_motors_calls = 0
         self.flushes = 0
         self.state_queries = 0
         self.stop_calls = 0
@@ -101,6 +104,7 @@ class FakeRobot:
         self.max_torque = np.array([21.0, 36.0, 36.0, 21.0, 10.0, 10.0])
 
     def get_motors(self):
+        self.get_motors_calls += 1
         return list(self.motors)
 
     def set_timeout(self, timeout_ms: int) -> None:
@@ -239,6 +243,19 @@ def test_refresh_replaces_stale_motor_handles_after_reconnect() -> None:
     assert states[6].position == pytest.approx(0.7)
     assert robot.state_queries == 1
     assert robot.flushes == 1
+
+
+def test_each_state_cycle_refreshes_handles_once_and_versions_at_low_rate() -> None:
+    robot = FakeRobot()
+    backend = make_backend(robot)
+    initial_get_motors_calls = robot.get_motors_calls
+    initial_version_reads = sum(motor.version_reads for motor in robot.motors)
+
+    backend.refresh_state()
+    backend.read_all()
+
+    assert robot.get_motors_calls == initial_get_motors_calls + 1
+    assert sum(motor.version_reads for motor in robot.motors) == initial_version_reads
 
 
 def test_state_mapping_preserves_sdk_fields_and_disconnected_sentinel() -> None:
