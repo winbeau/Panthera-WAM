@@ -17,13 +17,20 @@ public sealed class CockpitUiTests
             return;
         }
 
-        var executable = Path.Combine(AppContext.BaseDirectory, "Panthera.Terminal.App.exe");
-        Assert.True(File.Exists(executable), $"WPF app executable was not copied to {executable}");
-        var startInfo = new ProcessStartInfo(executable)
+        var applicationAssembly = Path.Combine(AppContext.BaseDirectory, "Panthera.Terminal.App.dll");
+        Assert.True(File.Exists(applicationAssembly), $"WPF app assembly was not copied to {applicationAssembly}");
+
+        var dotnetRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet");
+        var dotnetHost = Path.Combine(dotnetRoot, "dotnet.exe");
+        Assert.True(File.Exists(dotnetHost), $".NET host was not found at {dotnetHost}");
+
+        var startInfo = new ProcessStartInfo(dotnetHost)
         {
             UseShellExecute = false,
             WorkingDirectory = AppContext.BaseDirectory,
         };
+        startInfo.ArgumentList.Add(applicationAssembly);
         startInfo.Environment["PANTHERA_UI_TEST"] = "1";
         startInfo.Environment["PANTHERA_SCREENSHOT_THEME"] = "Dark";
 
