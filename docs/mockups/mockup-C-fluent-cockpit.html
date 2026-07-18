@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panthera-HT 控制终端 — Fluent 驾驶舱</title>
+<style>
+/* ============================================================
+   Panthera-HT 控制终端 · 变体 C · 驾驶舱 (Cockpit)
+   Microsoft Fluent 2 · 三主题 · 自包含无外部资源
+   中央俯视示意图 (SVG radar) + 环绕关节仪表 + jog 为视觉中心
+   ============================================================ */
+
+/* ---------- 主题变量：浅色为基线 ---------- */
+:root{
+  --font-ui: "Segoe UI Variable","Segoe UI","Microsoft YaHei UI",system-ui,-apple-system,sans-serif;
+  --font-mono: "Cascadia Mono","Consolas","SFMono-Regular",ui-monospace,"Segoe UI Variable",monospace;
+
+  --bg-app: #e6e6e6;
+  --bg-window: #f3f3f3;
+  --bg-layer: #ffffff;
+  --bg-layer-alt: #fafafa;
+  --bg-subtle: #f4f4f4;
+
+  --stroke-card: #e4e4e4;
+  --stroke-divider: rgba(0,0,0,0.08);
+  --stroke-control: rgba(0,0,0,0.13);
+  --stroke-control-strong: rgba(0,0,0,0.42);
+
+  --fill-control: #ffffff;
+  --fill-control-hover: #f6f6f6;
+  --fill-control-pressed: #f0f0f0;
+  --fill-control-disabled: #f5f5f5;
+  --fill-subtle-hover: rgba(0,0,0,0.037);
+  --fill-subtle-pressed: rgba(0,0,0,0.058);
+  --fill-selected: rgba(0,103,192,0.09);
+
+  --text-primary: #1a1a1a;
+  --text-secondary: #5c5c5c;
+  --text-tertiary: #868686;
+  --text-disabled: #a6a6a6;
+  --text-on-accent: #ffffff;
+
+  --accent: #0067c0;
+  --accent-hover: #005ba1;
+  --accent-pressed: #004e88;
+  --accent-tint: #cfe4f7;
+  --accent-text: #0067c0;
+
+  --ok: #0f7b34;
+  --ok-bg: rgba(15,123,52,0.10);
+  --warn: #9d5d00;
+  --warn-fill: #c78100;
+  --warn-bg: rgba(157,93,0,0.10);
+  --danger: #c42b1c;
+  --danger-hover: #b12719;
+  --danger-pressed: #9c2117;
+  --danger-bg: rgba(196,43,28,0.10);
+
+  /* 仪表 / 遥测 */
+  --dial-face: rgba(0,0,0,0.015);
+  --dial-track: rgba(0,0,0,0.09);
+  --dial-tick: rgba(0,0,0,0.24);
+  --dial-arc: #0067c0;
+  --dial-needle: #2a2a2a;
+  --dial-hub: #ffffff;
+  --bar-vel: #0a7d94;
+  --bar-track: rgba(0,0,0,0.08);
+
+  /* 雷达俯视图 */
+  --radar-bg-a: #f7f9fb;
+  --radar-bg-b: #eef2f6;
+  --radar-ring: rgba(0,0,0,0.10);
+  --radar-ring-hi: rgba(0,0,0,0.18);
+  --radar-label: #8a8a8a;
+  --radar-limit: rgba(0,103,192,0.07);
+  --radar-sweep: rgba(0,103,192,0.20);
+  --arm-link: #0067c0;
+  --arm-joint: #ffffff;
+  --arm-joint-ring: #0067c0;
+  --tcp: #c42b1c;
+
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.055), 0 1.5px 5px rgba(0,0,0,0.045);
+  --shadow-flyout: 0 4px 12px rgba(0,0,0,0.14);
+  --shadow-window: 0 18px 50px rgba(0,0,0,0.22), 0 2px 6px rgba(0,0,0,0.12);
+  --focus-ring: #0067c0;
+}
+
+/* 系统深色（跟随 prefers-color-scheme，未显式选主题时生效） */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg-app: #1a1a1a;
+    --bg-window: #202020;
+    --bg-layer: #2b2b2b;
+    --bg-layer-alt: #262626;
+    --bg-subtle: #2f2f2f;
+
+    --stroke-card: #191919;
+    --stroke-divider: rgba(255,255,255,0.07);
+    --stroke-control: rgba(255,255,255,0.10);
+    --stroke-control-strong: rgba(255,255,255,0.54);
+
+    --fill-control: rgba(255,255,255,0.055);
+    --fill-control-hover: rgba(255,255,255,0.085);
+    --fill-control-pressed: rgba(255,255,255,0.033);
+    --fill-control-disabled: rgba(255,255,255,0.03);
+    --fill-subtle-hover: rgba(255,255,255,0.06);
+    --fill-subtle-pressed: rgba(255,255,255,0.036);
+    --fill-selected: rgba(71,158,245,0.16);
+
+    --text-primary: #ffffff;
+    --text-secondary: #cfcfcf;
+    --text-tertiary: #969696;
+    --text-disabled: #6f6f6f;
+    --text-on-accent: #ffffff;
+
+    --accent: #479ef5;
+    --accent-hover: #62a9f6;
+    --accent-pressed: #3d8be0;
+    --accent-tint: #12385e;
+    --accent-text: #6cb2f7;
+
+    --ok: #5ec06a;
+    --ok-bg: rgba(94,192,106,0.14);
+    --warn: #e2a336;
+    --warn-fill: #e2a336;
+    --warn-bg: rgba(226,163,54,0.15);
+    --danger: #f26057;
+    --danger-hover: #f4726a;
+    --danger-pressed: #d8534b;
+    --danger-bg: rgba(242,96,87,0.16);
+
+    --dial-face: rgba(255,255,255,0.02);
+    --dial-track: rgba(255,255,255,0.11);
+    --dial-tick: rgba(255,255,255,0.30);
+    --dial-arc: #479ef5;
+    --dial-needle: #e8e8e8;
+    --dial-hub: #2b2b2b;
+    --bar-vel: #38b6cf;
+    --bar-track: rgba(255,255,255,0.10);
+
+    --radar-bg-a: #232a31;
+    --radar-bg-b: #1c2228;
+    --radar-ring: rgba(255,255,255,0.10);
+    --radar-ring-hi: rgba(255,255,255,0.20);
+    --radar-label: #8a8a8a;
+    --radar-limit: rgba(71,158,245,0.10);
+    --radar-sweep: rgba(71,158,245,0.24);
+    --arm-link: #479ef5;
+    --arm-joint: #14202c;
+    --arm-joint-ring: #6cb2f7;
+    --tcp: #f26057;
+
+    --shadow-card: 0 1px 2px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.30);
+    --shadow-flyout: 0 6px 16px rgba(0,0,0,0.5);
+    --shadow-window: 0 20px 56px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4);
+    --focus-ring: #62a9f6;
+  }
+}
+
+/* 显式浅色（与基线一致，供“系统=深色”时强制浅色） */
+:root[data-theme="light"]{ color-scheme: light; }
+
+/* 显式深色 */
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg-app: #1a1a1a;
+  --bg-window: #202020;
+  --bg-layer: #2b2b2b;
+  --bg-layer-alt: #262626;
+  --bg-subtle: #2f2f2f;
+
+  --stroke-card: #191919;
+  --stroke-divider: rgba(255,255,255,0.07);
+  --stroke-control: rgba(255,255,255,0.10);
+  --stroke-control-strong: rgba(255,255,255,0.54);
+
+  --fill-control: rgba(255,255,255,0.055);
+  --fill-control-hover: rgba(255,255,255,0.085);
+  --fill-control-pressed: rgba(255,255,255,0.033);
+  --fill-control-disabled: rgba(255,255,255,0.03);
+  --fill-subtle-hover: rgba(255,255,255,0.06);
+  --fill-subtle-pressed: rgba(255,255,255,0.036);
+  --fill-selected: rgba(71,158,245,0.16);
+
+  --text-primary: #ffffff;
+  --text-secondary: #cfcfcf;
+  --text-tertiary: #969696;
+  --text-disabled: #6f6f6f;
+  --text-on-accent: #ffffff;
+
+  --accent: #479ef5;
+  --accent-hover: #62a9f6;
+  --accent-pressed: #3d8be0;
+  --accent-tint: #12385e;
+  --accent-text: #6cb2f7;
+
+  --ok: #5ec06a;
+  --ok-bg: rgba(94,192,106,0.14);
+  --warn: #e2a336;
+  --warn-fill: #e2a336;
+  --warn-bg: rgba(226,163,54,0.15);
+  --danger: #f26057;
+  --danger-hover: #f4726a;
+  --danger-pressed: #d8534b;
+  --danger-bg: rgba(242,96,87,0.16);
+
+  --dial-face: rgba(255,255,255,0.02);
+  --dial-track: rgba(255,255,255,0.11);
+  --dial-tick: rgba(255,255,255,0.30);
+  --dial-arc: #479ef5;
+  --dial-needle: #e8e8e8;
+  --dial-hub: #2b2b2b;
+  --bar-vel: #38b6cf;
+  --bar-track: rgba(255,255,255,0.10);
+
+  --radar-bg-a: #232a31;
+  --radar-bg-b: #1c2228;
+  --radar-ring: rgba(255,255,255,0.10);
+  --radar-ring-hi: rgba(255,255,255,0.20);
+  --radar-label: #8a8a8a;
+  --radar-limit: rgba(71,158,245,0.10);
+  --radar-sweep: rgba(71,158,245,0.24);
+  --arm-link: #479ef5;
+  --arm-joint: #14202c;
+  --arm-joint-ring: #6cb2f7;
+  --tcp: #f26057;
+
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.30);
+  --shadow-flyout: 0 6px 16px rgba(0,0,0,0.5);
+  --shadow-window: 0 20px 56px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4);
+  --focus-ring: #62a9f6;
+}
+
+/* ---------- 基础 ---------- */
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;overflow-x:hidden;}
+body{
+  font-family:var(--font-ui);
+  background:var(--bg-app);
+  color:var(--text-primary);
+  font-size:13px;
+  line-height:1.35;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  min-height:100vh;
+  display:grid;
+  place-items:center;
+  padding:16px;
+}
+button{font-family:inherit;color:inherit;cursor:pointer;}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;border-radius:4px;}
+button:disabled{cursor:not-allowed;}
+
+/* 滚动条 */
+*::-webkit-scrollbar{width:10px;height:10px;}
+*::-webkit-scrollbar-thumb{background:var(--stroke-control-strong);border-radius:6px;border:3px solid transparent;background-clip:padding-box;}
+*::-webkit-scrollbar-thumb:hover{background:var(--text-tertiary);background-clip:padding-box;}
+*::-webkit-scrollbar-track{background:transparent;}
+
+/* ---------- 窗口外壳 ---------- */
+.window{
+  width:min(1280px, 100%);
+  height:min(800px, calc(100vh - 32px));
+  min-height:640px;
+  background:var(--bg-window);
+  border:1px solid var(--stroke-card);
+  border-radius:8px;
+  box-shadow:var(--shadow-window);
+  display:grid;
+  grid-template-rows:auto 1fr auto;
+  overflow:hidden;
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar{
+  height:56px;
+  display:flex;
+  align-items:center;
+  gap:14px;
+  padding:0 8px 0 14px;
+  background:var(--bg-layer);
+  border-bottom:1px solid var(--stroke-divider);
+}
+.brand{display:flex;align-items:center;gap:10px;min-width:0;padding-right:4px;}
+.brand-mark{
+  width:30px;height:30px;border-radius:7px;flex:none;
+  background:var(--accent);color:var(--text-on-accent);
+  display:grid;place-items:center;
+}
+.brand-mark svg{width:18px;height:18px;}
+.brand-txt{display:flex;flex-direction:column;line-height:1.15;min-width:0;}
+.brand-txt b{font-size:13px;font-weight:600;letter-spacing:.1px;white-space:nowrap;}
+.brand-txt span{font-size:11px;color:var(--text-tertiary);white-space:nowrap;}
+.brand{flex:none;}
+
+.topdiv{width:1px;height:26px;background:var(--stroke-divider);flex:none;}
+
+/* 连接 / 控制权 徽标 */
+.badge{
+  display:inline-flex;align-items:center;gap:7px;
+  height:30px;padding:0 11px;border-radius:6px;
+  background:var(--bg-subtle);border:1px solid var(--stroke-divider);
+  font-size:12px;color:var(--text-secondary);white-space:nowrap;
+}
+.badge b{color:var(--text-primary);font-weight:600;font-family:var(--font-mono);font-size:11.5px;}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--text-tertiary);}
+.dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg);}
+.dot.live{background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg);animation:pulse 2.4s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+
+.spacer{flex:1;}
+
+/* 通用按钮 */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  height:30px;padding:0 13px;border-radius:4px;
+  background:var(--fill-control);border:1px solid var(--stroke-control);
+  color:var(--text-primary);font-size:12.5px;font-weight:600;
+  box-shadow:0 1px 0 rgba(0,0,0,0.03);
+  transition:background .09s, border-color .09s, transform .04s;
+  white-space:nowrap;
+}
+.btn svg{width:15px;height:15px;flex:none;}
+.btn:hover{background:var(--fill-control-hover);}
+.btn:active{background:var(--fill-control-pressed);transform:translateY(.5px);}
+.btn:disabled{background:var(--fill-control-disabled);color:var(--text-disabled);border-color:var(--stroke-divider);box-shadow:none;}
+.btn-accent{background:var(--accent);border-color:transparent;color:var(--text-on-accent);box-shadow:none;}
+.btn-accent:hover{background:var(--accent-hover);}
+.btn-accent:active{background:var(--accent-pressed);}
+.btn-accent:disabled{background:var(--fill-control-disabled);color:var(--text-disabled);}
+.btn-ghost{background:transparent;border-color:transparent;box-shadow:none;color:var(--text-secondary);}
+.btn-ghost:hover{background:var(--fill-subtle-hover);color:var(--text-primary);}
+.btn-ghost:active{background:var(--fill-subtle-pressed);}
+
+/* 急停 */
+.estop{
+  display:inline-flex;align-items:center;gap:9px;
+  height:38px;padding:0 16px 0 13px;border-radius:6px;
+  background:var(--danger);color:#fff;border:1px solid transparent;
+  font-size:13px;font-weight:700;letter-spacing:.4px;
+  box-shadow:0 2px 5px var(--danger-bg), inset 0 0 0 1px rgba(255,255,255,0.14);
+  transition:background .1s, transform .04s;
+}
+.estop svg{width:19px;height:19px;}
+.estop:hover{background:var(--danger-hover);}
+.estop:active{background:var(--danger-pressed);transform:translateY(1px);}
+.estop.engaged{animation:estopFlash 1s steps(1) infinite;}
+@keyframes estopFlash{0%,100%{background:var(--danger)}50%{background:var(--danger-pressed)}}
+
+/* 主题切换段控件 */
+.theme-seg{display:inline-flex;background:var(--bg-subtle);border:1px solid var(--stroke-divider);border-radius:6px;padding:2px;gap:2px;}
+.theme-seg button{
+  width:30px;height:26px;border:none;background:transparent;border-radius:4px;
+  display:grid;place-items:center;color:var(--text-tertiary);transition:background .09s,color .09s;
+}
+.theme-seg button svg{width:15px;height:15px;}
+.theme-seg button:hover{background:var(--fill-subtle-hover);color:var(--text-secondary);}
+.theme-seg button[aria-pressed="true"]{background:var(--fill-control);color:var(--accent-text);box-shadow:var(--shadow-card);}
+
+/* 窗口按钮 */
+.wincaps{display:flex;gap:1px;margin-left:2px;}
+.wincaps button{width:30px;height:34px;border:none;background:transparent;border-radius:4px;display:grid;place-items:center;color:var(--text-tertiary);}
+.wincaps button:hover{background:var(--fill-subtle-hover);color:var(--text-secondary);}
+.wincaps button.close:hover{background:var(--danger);color:#fff;}
+.wincaps button svg{width:11px;height:11px;}
+
+/* ---------- 主区：左仪表 · 中控 · 右仪表 ---------- */
+.stage{
+  display:grid;
+  grid-template-columns:230px minmax(0,1fr) 230px;
+  gap:10px;
+  padding:10px;
+  min-height:0;
+}
+.rail{display:flex;flex-direction:column;gap:9px;min-height:0;}
+
+/* 关节仪表盘（环绕） */
+.gauge{
+  flex:1;min-height:0;
+  background:var(--bg-layer);border:1px solid var(--stroke-card);border-radius:8px;
+  box-shadow:var(--shadow-card);
+  padding:9px 11px 8px;
+  display:flex;flex-direction:column;
+  position:relative;
+}
+.gauge-hd{display:flex;align-items:baseline;gap:7px;}
+.gauge-hd .jn{font-family:var(--font-mono);font-size:14px;font-weight:700;letter-spacing:.3px;}
+.gauge-hd .jz{font-size:11px;color:var(--text-secondary);}
+.gauge-hd .wdot{width:7px;height:7px;border-radius:50%;margin-left:auto;background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg);flex:none;}
+.gauge-hd .wdot.warn{background:var(--warn-fill);box-shadow:0 0 0 3px var(--warn-bg);}
+.gauge-dial{flex:1;min-height:0;display:grid;place-items:center;position:relative;margin:1px 0;}
+.gauge-dial svg{width:100%;height:100%;max-height:112px;display:block;overflow:visible;}
+.g-track{fill:none;stroke:var(--dial-track);stroke-width:6;stroke-linecap:round;}
+.g-arc{fill:none;stroke:var(--dial-arc);stroke-width:6;stroke-linecap:round;transition:d .12s linear;}
+.g-arc.warn{stroke:var(--warn-fill);}
+.g-tick{stroke:var(--dial-tick);stroke-width:1.4;stroke-linecap:round;}
+.g-needle{stroke:var(--dial-needle);stroke-width:2.2;stroke-linecap:round;transition:transform .12s linear;transform-origin:60px 56px;}
+.g-hub{fill:var(--dial-needle);}
+.g-hub-in{fill:var(--dial-hub);}
+.g-val{fill:var(--text-primary);font-family:var(--font-mono);font-size:16px;font-weight:700;text-anchor:middle;}
+.g-unit{fill:var(--text-tertiary);font-size:8px;text-anchor:middle;letter-spacing:.4px;}
+.g-end{fill:var(--radar-label);font-size:7.5px;font-family:var(--font-mono);}
+.gauge-ft{display:flex;gap:8px;padding-top:2px;}
+.gstat{flex:1;min-width:0;}
+.gstat .gl{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;color:var(--text-tertiary);margin-bottom:3px;}
+.gstat .gl b{font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);font-weight:600;}
+.gbar{height:3px;border-radius:2px;background:var(--bar-track);overflow:hidden;}
+.gbar i{display:block;height:100%;border-radius:2px;background:var(--bar-vel);width:0;transition:width .15s linear;}
+.gbar.tq i{background:var(--accent);}
+.gbar.tq i.warn{background:var(--warn-fill);}
+
+/* ---------- 中控台 ---------- */
+.console{
+  display:grid;
+  grid-template-columns:1.18fr 0.92fr;
+  grid-template-rows:minmax(0,1.28fr) minmax(0,1fr);
+  grid-template-areas:"radar pose" "jog grip";
+  gap:10px;
+  min-height:0;
+}
+.card{
+  background:var(--bg-layer);border:1px solid var(--stroke-card);border-radius:8px;
+  box-shadow:var(--shadow-card);display:flex;flex-direction:column;min-height:0;
+}
+.card-hd{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 12px;border-bottom:1px solid var(--stroke-divider);flex:none;
+}
+.card-hd .ct{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;}
+.card-hd .ct svg{width:15px;height:15px;color:var(--accent-text);}
+.card-hd .cm{margin-left:auto;font-size:11px;color:var(--text-tertiary);font-family:var(--font-mono);}
+
+/* 雷达俯视 */
+.radar{grid-area:radar;}
+.radar-body{flex:1;min-height:0;position:relative;padding:6px;}
+.radar-body svg{width:100%;height:100%;display:block;}
+.rr-face{fill:url(#radarGrad);}
+.rr-ring{fill:none;stroke:var(--radar-ring);stroke-width:1;}
+.rr-ring.hi{stroke:var(--radar-ring-hi);}
+.rr-cross{stroke:var(--radar-ring);stroke-width:1;stroke-dasharray:2 5;}
+.rr-limit{fill:var(--radar-limit);}
+.rr-tick{stroke:var(--radar-ring-hi);stroke-width:1.2;}
+.rr-lbl{fill:var(--radar-label);font-size:8.5px;font-family:var(--font-mono);}
+.rr-lbl.az{text-anchor:middle;}
+.rr-sweep{fill:url(#sweepGrad);transform-origin:200px 172px;animation:sweep 7s linear infinite;}
+@keyframes sweep{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.arm{transition:transform .18s ease-out;}
+.arm-link{stroke:var(--arm-link);stroke-linecap:round;fill:none;}
+.arm-joint{fill:var(--arm-joint);stroke:var(--arm-joint-ring);stroke-width:2;}
+.arm-base{fill:var(--arm-link);opacity:.16;}
+.arm-base-ring{fill:none;stroke:var(--arm-link);stroke-width:1.5;}
+.tcp-dot{fill:var(--tcp);}
+.tcp-ring{fill:none;stroke:var(--tcp);stroke-width:1.4;}
+.tcp-cross{stroke:var(--tcp);stroke-width:1.2;}
+.gripper-jaw{stroke:var(--arm-link);stroke-width:3;stroke-linecap:round;fill:none;}
+.rr-callout-bx{fill:var(--bg-layer);stroke:var(--stroke-control);stroke-width:1;}
+.rr-callout-t{fill:var(--text-secondary);font-family:var(--font-mono);font-size:9px;}
+.rr-callout-v{fill:var(--text-primary);font-family:var(--font-mono);font-size:9px;font-weight:700;}
+.radar.idle .arm,.radar.idle .tcp-dot,.radar.idle .tcp-ring,.radar.idle .tcp-cross,.radar.idle .gripper-jaw{opacity:.3;filter:grayscale(1);}
+.radar.idle .rr-sweep{display:none;}
+
+/* 位姿 + 笛卡尔 */
+.pose{grid-area:pose;}
+.pose-body{flex:1;min-height:0;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:9px;}
+.sub-lbl{font-size:11px;font-weight:600;color:var(--text-secondary);letter-spacing:.2px;display:flex;align-items:center;gap:6px;}
+.sub-lbl::after{content:"";flex:1;height:1px;background:var(--stroke-divider);}
+.pose-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.pcell{background:var(--bg-subtle);border:1px solid var(--stroke-divider);border-radius:5px;padding:6px 8px;}
+.pcell .pl{font-size:10px;color:var(--text-tertiary);display:flex;justify-content:space-between;}
+.pcell .pl u{text-decoration:none;font-family:var(--font-mono);font-size:9px;opacity:.8;}
+.pcell .pv{font-family:var(--font-mono);font-size:14px;font-weight:700;margin-top:2px;letter-spacing:.2px;}
+.tgt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.inp{display:flex;flex-direction:column;gap:3px;}
+.inp label{font-size:10px;color:var(--text-tertiary);display:flex;justify-content:space-between;}
+.inp label u{text-decoration:none;font-family:var(--font-mono);font-size:9px;opacity:.8;}
+.inp input{
+  width:100%;height:28px;padding:0 8px;border-radius:4px;
+  background:var(--fill-control);border:1px solid var(--stroke-control);
+  color:var(--text-primary);font-family:var(--font-mono);font-size:12.5px;font-weight:600;
+  transition:border-color .09s;
+}
+.inp input:hover{border-color:var(--stroke-control-strong);}
+.inp input:focus{outline:none;border-color:var(--accent);box-shadow:0 1px 0 0 var(--accent);}
+.pose-actions{display:flex;gap:7px;align-items:center;margin-top:1px;}
+.pose-actions .btn{height:32px;flex:1;}
+.speed-inline{margin-left:auto;font-size:11px;color:var(--text-tertiary);white-space:nowrap;}
+.speed-inline b{color:var(--text-secondary);font-family:var(--font-mono);}
+
+/* JOG —— 视觉中心 */
+.jog{grid-area:jog;border-color:var(--accent-tint);}
+.jog .card-hd{border-bottom-color:var(--stroke-divider);}
+.jog .card-hd .ct svg{color:var(--accent-text);}
+.jog-body{flex:1;min-height:0;padding:9px;display:flex;flex-direction:column;gap:8px;}
+.jog-grid{flex:1;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:8px;min-height:0;}
+.jpod{
+  background:var(--bg-subtle);border:1px solid var(--stroke-divider);border-radius:7px;
+  padding:7px 8px;display:flex;flex-direction:column;gap:5px;min-height:0;
+}
+.jpod-hd{display:flex;align-items:baseline;gap:6px;}
+.jpod-hd b{font-family:var(--font-mono);font-size:13px;font-weight:700;}
+.jpod-hd span{font-size:10.5px;color:var(--text-tertiary);}
+.jpod-hd em{margin-left:auto;font-family:var(--font-mono);font-size:12.5px;font-weight:700;font-style:normal;color:var(--text-primary);}
+.jpod-hd em u{text-decoration:none;font-size:9px;color:var(--text-tertiary);font-weight:400;margin-left:2px;}
+.rocker{display:flex;gap:6px;}
+.rk{
+  flex:1;height:34px;border-radius:5px;
+  background:var(--fill-control);border:1px solid var(--stroke-control);
+  display:grid;place-items:center;color:var(--text-primary);
+  transition:background .08s,border-color .08s,transform .04s;
+  box-shadow:0 1px 0 rgba(0,0,0,0.03);
+}
+.rk svg{width:17px;height:17px;}
+.rk:hover{background:var(--fill-control-hover);border-color:var(--stroke-control-strong);}
+.rk:active,.rk.holding{background:var(--accent);border-color:transparent;color:var(--text-on-accent);transform:translateY(1px);box-shadow:none;}
+.rk:disabled{background:var(--fill-control-disabled);color:var(--text-disabled);border-color:var(--stroke-divider);box-shadow:none;transform:none;}
+.jog-ft{display:flex;align-items:center;gap:10px;flex:none;padding:2px 2px 0;}
+.step-seg{display:inline-flex;background:var(--bg-subtle);border:1px solid var(--stroke-divider);border-radius:5px;padding:2px;gap:2px;}
+.step-seg button{
+  height:24px;padding:0 9px;border:none;background:transparent;border-radius:4px;
+  font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--text-secondary);
+  transition:background .08s,color .08s;
+}
+.step-seg button:hover{background:var(--fill-subtle-hover);}
+.step-seg button[aria-pressed="true"]{background:var(--fill-control);color:var(--accent-text);box-shadow:var(--shadow-card);}
+.jog-ft .lbl{font-size:11px;color:var(--text-tertiary);}
+.jog-ft .hint{margin-left:auto;font-size:11px;color:var(--text-tertiary);display:flex;align-items:center;gap:5px;}
+.jog-ft .hint svg{width:13px;height:13px;color:var(--text-tertiary);}
+
+/* 夹爪 */
+.grip{grid-area:grip;}
+.grip-body{flex:1;min-height:0;padding:10px 12px;display:flex;flex-direction:column;gap:9px;justify-content:center;}
+.grip-read{display:flex;align-items:baseline;gap:4px;}
+.grip-read .big{font-family:var(--font-mono);font-size:30px;font-weight:700;line-height:1;}
+.grip-read .pct{font-size:14px;color:var(--text-secondary);font-weight:600;}
+.grip-read .sub{margin-left:auto;text-align:right;font-size:11px;color:var(--text-tertiary);font-family:var(--font-mono);}
+.grip-track{position:relative;height:10px;border-radius:5px;background:var(--bar-track);overflow:hidden;}
+.grip-track .fill{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:5px;transition:width .2s ease;}
+.grip-track .tick{position:absolute;top:2px;bottom:2px;width:1px;background:var(--stroke-control-strong);opacity:.5;}
+.grip-actions{display:flex;gap:7px;}
+.grip-actions .btn{flex:1;height:32px;}
+
+/* ---------- 日志条 ---------- */
+.logbar{
+  height:108px;flex:none;
+  background:var(--bg-layer);border-top:1px solid var(--stroke-divider);
+  display:flex;flex-direction:column;
+}
+.log-hd{display:flex;align-items:center;gap:10px;padding:6px 12px;border-bottom:1px solid var(--stroke-divider);flex:none;}
+.log-hd .lt{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;}
+.log-hd .lt svg{width:15px;height:15px;color:var(--accent-text);}
+.log-filters{display:inline-flex;gap:2px;background:var(--bg-subtle);border:1px solid var(--stroke-divider);border-radius:5px;padding:2px;}
+.lchip{height:22px;padding:0 10px;border:none;background:transparent;border-radius:4px;font-size:11px;font-weight:600;color:var(--text-secondary);transition:background .08s,color .08s;}
+.lchip:hover{background:var(--fill-subtle-hover);}
+.lchip[aria-pressed="true"]{background:var(--fill-control);color:var(--accent-text);box-shadow:var(--shadow-card);}
+.log-hd .rate{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-tertiary);font-family:var(--font-mono);}
+.log-body{flex:1;min-height:0;overflow-y:auto;padding:3px 0;font-family:var(--font-mono);font-size:11.5px;}
+.logrow{display:flex;gap:10px;padding:2px 14px;align-items:baseline;}
+.logrow:hover{background:var(--fill-subtle-hover);}
+.logrow time{color:var(--text-tertiary);flex:none;font-size:11px;}
+.logrow .tag{flex:none;width:44px;font-weight:700;font-size:10px;letter-spacing:.4px;}
+.logrow .tag.INFO{color:var(--accent-text);}
+.logrow .tag.MOVE{color:var(--ok);}
+.logrow .tag.WARN{color:var(--warn);}
+.logrow .tag.ERR{color:var(--danger);}
+.logrow .msg{color:var(--text-secondary);min-width:0;}
+.logrow .msg .hl{color:var(--text-primary);font-weight:700;}
+
+@media (prefers-reduced-motion: reduce){
+  .rr-sweep{animation:none;display:none;}
+  .dot.live{animation:none;}
+  *{transition:none !important;}
+}
+</style>
+</head>
+<body>
+<main class="window" role="application" aria-label="Panthera-HT 控制终端 · 驾驶舱">
+
+  <!-- ================= 顶栏 ================= -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M12 21v-4"/><circle cx="12" cy="12" r="2.4"/><path d="M12 9.6 8 5M12 9.6 16 5M10 13.6 5.5 17M14 13.6 18.5 17"/></svg>
+      </div>
+      <div class="brand-txt">
+        <b>Panthera-HT 控制终端</b>
+        <span>驾驶舱 · 六轴 · 单臂</span>
+      </div>
+    </div>
+
+    <div class="topdiv"></div>
+
+    <span class="badge"><span class="dot ok" id="connDot"></span>已连接 <b>localhost:50051</b></span>
+    <span class="badge" id="ctrlBadge"><span class="dot ok"></span>控制权 · <b id="ctrlOwner">wpf-cockpit</b></span>
+
+    <button class="btn" id="ctrlBtn" title="获取 / 释放控制权">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      释放控制权
+    </button>
+
+    <div class="spacer"></div>
+
+    <button class="btn btn-accent" id="enableBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/></svg>
+      <span id="enableTxt">Disable 伺服</span>
+    </button>
+
+    <button class="estop" id="estopBtn" title="紧急停止（直通硬件）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5"/><circle cx="12" cy="12" r="9"/><path d="M12 16.2h.01"/></svg>
+      急停 EStop
+    </button>
+
+    <div class="topdiv"></div>
+
+    <div class="theme-seg" role="group" aria-label="主题">
+      <button data-theme-set="system" aria-pressed="false" title="跟随系统">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      </button>
+      <button data-theme-set="light" aria-pressed="false" title="浅色">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
+      </button>
+      <button data-theme-set="dark" aria-pressed="false" title="深色">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 7 7 0 1 0 20 14.5Z"/></svg>
+      </button>
+    </div>
+
+    <div class="wincaps" aria-hidden="true">
+      <button title="最小化"><svg viewBox="0 0 12 12"><path d="M2 6h8" stroke="currentColor" stroke-width="1" fill="none"/></svg></button>
+      <button title="最大化"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" stroke="currentColor" stroke-width="1" fill="none"/></svg></button>
+      <button class="close" title="关闭"><svg viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1" fill="none"/></svg></button>
+    </div>
+  </header>
+
+  <!-- ================= 主区 ================= -->
+  <div class="stage">
+
+    <!-- 左仪表列 J1-J3 -->
+    <div class="rail" id="railL"></div>
+
+    <!-- 中控台 -->
+    <div class="console">
+
+      <!-- 雷达俯视 -->
+      <section class="card radar" id="radarCard">
+        <div class="card-hd">
+          <span class="ct">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+            机械臂俯视示意
+          </span>
+          <span class="cm">base 坐标系 · top view</span>
+        </div>
+        <div class="radar-body">
+          <svg viewBox="0 0 400 344" preserveAspectRatio="xMidYMid meet" aria-label="机械臂俯视雷达图">
+            <defs>
+              <radialGradient id="radarGrad" cx="50%" cy="50%" r="62%">
+                <stop offset="0%" stop-color="var(--radar-bg-a)"/>
+                <stop offset="100%" stop-color="var(--radar-bg-b)"/>
+              </radialGradient>
+              <linearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="var(--radar-sweep)" stop-opacity="0"/>
+                <stop offset="100%" stop-color="var(--radar-sweep)" stop-opacity="1"/>
+              </linearGradient>
+            </defs>
+
+            <rect x="0" y="0" width="400" height="344" fill="url(#radarGrad)"/>
+            <!-- J1 软限位扇区 ±170° -->
+            <path id="limitWedge" class="rr-limit"/>
+            <!-- 距离环 -->
+            <circle class="rr-ring hi" cx="200" cy="172" r="158"/>
+            <circle class="rr-ring" cx="200" cy="172" r="120"/>
+            <circle class="rr-ring" cx="200" cy="172" r="80"/>
+            <circle class="rr-ring hi" cx="200" cy="172" r="40"/>
+            <line class="rr-cross" x1="200" y1="14" x2="200" y2="330"/>
+            <line class="rr-cross" x1="42" y1="172" x2="358" y2="172"/>
+            <!-- 方位刻度 + 标签 -->
+            <g id="azTicks"></g>
+            <!-- 距离标签 -->
+            <text class="rr-lbl" x="204" y="98">0.40</text>
+            <text class="rr-lbl" x="204" y="58">0.62 m</text>
+            <!-- 雷达扫描 -->
+            <path class="rr-sweep" id="sweep" d="M200 172 L200 14 A158 158 0 0 1 311 61 Z"/>
+            <!-- 机械臂 -->
+            <g class="arm" id="armGroup"></g>
+            <!-- TCP 坐标浮标 -->
+            <g id="tcpCallout"></g>
+          </svg>
+        </div>
+      </section>
+
+      <!-- 末端位姿 + 笛卡尔目标 -->
+      <section class="card pose">
+        <div class="card-hd">
+          <span class="ct">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3"/></svg>
+            末端位姿 · 笛卡尔
+          </span>
+          <span class="cm">TCP</span>
+        </div>
+        <div class="pose-body">
+          <div class="sub-lbl">当前位姿</div>
+          <div class="pose-grid" id="poseGrid"></div>
+
+          <div class="sub-lbl">目标位姿</div>
+          <div class="tgt-grid">
+            <div class="inp"><label>X <u>m</u></label><input value="0.4230" spellcheck="false"></div>
+            <div class="inp"><label>Y <u>m</u></label><input value="-0.0380" spellcheck="false"></div>
+            <div class="inp"><label>Z <u>m</u></label><input value="0.3050" spellcheck="false"></div>
+            <div class="inp"><label>Roll <u>rad</u></label><input value="3.1416" spellcheck="false"></div>
+            <div class="inp"><label>Pitch <u>rad</u></label><input value="0.0000" spellcheck="false"></div>
+            <div class="inp"><label>Yaw <u>rad</u></label><input value="-1.5708" spellcheck="false"></div>
+          </div>
+
+          <div class="pose-actions">
+            <button class="btn btn-accent" id="moveJ">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18c4-9 12-9 16 0" stroke-dasharray="0.1 3"/><circle cx="4" cy="18" r="1.8" fill="currentColor" stroke="none"/><circle cx="20" cy="18" r="1.8" fill="currentColor" stroke="none"/></svg>
+              moveJ
+            </button>
+            <button class="btn" id="moveL">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 20 6"/><circle cx="4" cy="18" r="1.8" fill="currentColor" stroke="none"/><circle cx="20" cy="6" r="1.8" fill="currentColor" stroke="none"/></svg>
+              moveL
+            </button>
+            <span class="speed-inline">速度 <b>30%</b></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- JOG 视觉中心 -->
+      <section class="card jog">
+        <div class="card-hd">
+          <span class="ct">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M12 4l-3 3M12 4l3 3M4 12h16M4 12l3-3M4 12l3 3"/></svg>
+            关节点动 Jog
+          </span>
+          <span class="cm">按住持续 · 松开即停</span>
+        </div>
+        <div class="jog-body">
+          <div class="jog-grid" id="jogGrid"></div>
+          <div class="jog-ft">
+            <span class="lbl">步进</span>
+            <div class="step-seg" id="stepSeg" role="group" aria-label="步进角度">
+              <button data-step="0.01" aria-pressed="false">0.01</button>
+              <button data-step="0.05" aria-pressed="true">0.05</button>
+              <button data-step="0.10" aria-pressed="false">0.10</button>
+              <button data-step="0.50" aria-pressed="false">0.50</button>
+            </div>
+            <span class="lbl" style="font-family:var(--font-mono)">rad / 次</span>
+            <span class="hint">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11.5V6a2 2 0 1 1 4 0v5M13 8a2 2 0 1 1 4 0v4M9 9.5a2 2 0 1 0-4 0v4a7 7 0 0 0 7 7h1a6 6 0 0 0 6-6v-2"/></svg>
+              长按 = 连续点动
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 夹爪 -->
+      <section class="card grip">
+        <div class="card-hd">
+          <span class="ct">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v6M7 10a3 3 0 0 0 3 3h4a3 3 0 0 0 3-3M17 4v6M12 13v7"/></svg>
+            夹爪
+          </span>
+          <span class="cm">0 – 85 mm</span>
+        </div>
+        <div class="grip-body">
+          <div class="grip-read">
+            <span class="big" id="gripPct">62</span><span class="pct">%</span>
+            <span class="sub" id="gripMm">52.7 mm · 力控 24 N</span>
+          </div>
+          <div class="grip-track">
+            <div class="fill" id="gripFill" style="width:62%"></div>
+            <div class="tick" style="left:25%"></div><div class="tick" style="left:50%"></div><div class="tick" style="left:75%"></div>
+          </div>
+          <div class="grip-actions">
+            <button class="btn btn-ghost" id="gripOpen">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6 4 12l5 6M15 6l5 6-5 6"/></svg>张开
+            </button>
+            <button class="btn btn-ghost" id="gripClose">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l5 6-5 6M19 6l-5 6 5 6"/></svg>闭合
+            </button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- 右仪表列 J4-J6 -->
+    <div class="rail" id="railR"></div>
+
+  </div>
+
+  <!-- ================= 日志条 ================= -->
+  <footer class="logbar">
+    <div class="log-hd">
+      <span class="lt">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="19" height="17" rx="2.5"/><path d="M5 7l4 3-4 3M11 15h6"/></svg>
+        系统日志
+      </span>
+      <div class="log-filters">
+        <button class="lchip" aria-pressed="true">全部</button>
+        <button class="lchip" aria-pressed="false">MOVE</button>
+        <button class="lchip" aria-pressed="false">WARN</button>
+        <button class="lchip" aria-pressed="false">ERR</button>
+      </div>
+      <span class="rate"><span class="dot live"></span>watchdog 心跳 118 ms · 已缓存 <span id="logCount">6</span> 条</span>
+    </div>
+    <div class="log-body" id="logBody"></div>
+  </footer>
+
+</main>
+
+<script>
+/* ============================================================
+   主题：系统 / 浅色 / 深色 · localStorage 持久化
+   ============================================================ */
+const THEME_KEY = "panthera.cockpit.theme";
+const themeBtns = document.querySelectorAll("[data-theme-set]");
+function applyTheme(mode){
+  if(mode === "system"){ document.documentElement.removeAttribute("data-theme"); }
+  else { document.documentElement.setAttribute("data-theme", mode); }
+  themeBtns.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.themeSet === mode)));
+  try{ localStorage.setItem(THEME_KEY, mode); }catch(e){}
+}
+themeBtns.forEach(b => b.addEventListener("click", () => applyTheme(b.dataset.themeSet)));
+let savedTheme = "system";
+try{ savedTheme = localStorage.getItem(THEME_KEY) || "system"; }catch(e){}
+applyTheme(savedTheme);
+
+/* ============================================================
+   关节数据模型  (角度/速度/力矩 · 真实感数值)
+   ============================================================ */
+const joints = [
+  {n:"J1", zh:"基座回转", angle:0.0000,  lim:2.967, vel:0.0, vmax:2.0, tq:2.4,  tmax:42, warn:false},
+  {n:"J2", zh:"大臂俯仰", angle:-0.7854, lim:2.094, vel:0.0, vmax:2.0, tq:18.6, tmax:24, warn:true },
+  {n:"J3", zh:"小臂俯仰", angle:1.5708,  lim:2.618, vel:0.0, vmax:2.5, tq:9.2,  tmax:32, warn:false},
+  {n:"J4", zh:"腕部回转", angle:0.0000,  lim:3.054, vel:0.0, vmax:3.0, tq:0.8,  tmax:16, warn:false},
+  {n:"J5", zh:"腕部俯仰", angle:0.7854,  lim:2.094, vel:0.0, vmax:3.0, tq:1.6,  tmax:16, warn:false},
+  {n:"J6", zh:"末端回转", angle:-1.5708, lim:3.054, vel:0.0, vmax:3.0, tq:0.3,  tmax:10, warn:false},
+];
+const pose = {x:0.4212, y:-0.0375, z:0.3061, roll:3.1401, pitch:0.0032, yaw:-1.5690};
+
+/* 运行状态 */
+let servoOn = true, estop = false, controlHeld = true;
+
+/* ============================================================
+   圆形仪表盘 (环绕关节仪表)
+   270° 弧 · 底部缺口 · 指针 + 值弧 + 刻度
+   ============================================================ */
+const CX=60, CY=56, R=42, START=135, SWEEP=270;
+function polar(cx,cy,r,deg){const a=deg*Math.PI/180;return {x:cx+r*Math.cos(a), y:cy+r*Math.sin(a)};}
+function arcPath(cx,cy,r,s,e){
+  const p1=polar(cx,cy,r,e), p2=polar(cx,cy,r,s);
+  const large=(e-s)<=180?"0":"1";
+  return `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} A ${r} ${r} 0 ${large} 0 ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+}
+function frac(j){return Math.max(0,Math.min(1,(j.angle + j.lim)/(2*j.lim)));}
+
+function gaugeMarkup(j,i){
+  const ticks=[0,0.25,0.5,0.75,1].map(f=>{
+    const d=START+f*SWEEP, a=polar(CX,CY,R-8,d), b=polar(CX,CY,R-3,d);
+    return `<line class="g-tick" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"/>`;
+  }).join("");
+  const lo=polar(CX,CY,R-8,START), hi=polar(CX,CY,R-8,START+SWEEP);
+  return `
+  <div class="gauge-hd">
+    <span class="jn">${j.n}</span><span class="jz">${j.zh}</span>
+    <span class="wdot ${j.warn?'warn':''}" title="${j.warn?'力矩接近软阈值':'正常'}"></span>
+  </div>
+  <div class="gauge-dial">
+    <svg viewBox="0 0 120 108">
+      <path class="g-track" d="${arcPath(CX,CY,R,START,START+SWEEP)}"/>
+      <path class="g-arc ${j.warn?'warn':''}" id="arc${i}" d="${arcPath(CX,CY,R,START,START+frac(j)*SWEEP)}"/>
+      ${ticks}
+      <text class="g-end" x="${(lo.x-2).toFixed(0)}" y="${(lo.y+9).toFixed(0)}" text-anchor="end">-${j.lim.toFixed(1)}</text>
+      <text class="g-end" x="${(hi.x+2).toFixed(0)}" y="${(hi.y+9).toFixed(0)}">+${j.lim.toFixed(1)}</text>
+      <g id="ndl${i}" class="g-needle">
+        <line x1="${CX}" y1="${CY}" x2="${CX}" y2="${CY-R+6}"/>
+      </g>
+      <circle class="g-hub" cx="${CX}" cy="${CY}" r="4.5"/>
+      <circle class="g-hub-in" cx="${CX}" cy="${CY}" r="2"/>
+      <text class="g-val" id="gval${i}" x="60" y="96">0.000</text>
+      <text class="g-unit" x="60" y="104">rad</text>
+    </svg>
+  </div>
+  <div class="gauge-ft">
+    <div class="gstat">
+      <div class="gl"><span>速度</span><b><span id="gvel${i}">0.00</span> rad/s</b></div>
+      <div class="gbar"><i id="gvbar${i}"></i></div>
+    </div>
+    <div class="gstat">
+      <div class="gl"><span>力矩</span><b><span id="gtq${i}">${j.tq.toFixed(1)}</span> N·m</b></div>
+      <div class="gbar tq"><i id="gtbar${i}" class="${j.tq/j.tmax>0.7?'warn':''}"></i></div>
+    </div>
+  </div>`;
+}
+
+const railL=document.getElementById("railL"), railR=document.getElementById("railR");
+joints.forEach((j,i)=>{
+  const card=document.createElement("section");
+  card.className="gauge"; card.innerHTML=gaugeMarkup(j,i);
+  (i<3?railL:railR).appendChild(card);
+});
+
+function renderGauge(i){
+  const j=joints[i], f=frac(j), ndlDeg=START+f*SWEEP-270; /* -270 => 指针0点朝上 */
+  document.getElementById("arc"+i).setAttribute("d", arcPath(CX,CY,R,START,START+f*SWEEP));
+  document.getElementById("ndl"+i).style.transform=`rotate(${(START+f*SWEEP-270).toFixed(2)}deg)`;
+  document.getElementById("gval"+i).textContent=j.angle.toFixed(3);
+  document.getElementById("gvel"+i).textContent=j.vel.toFixed(2);
+  document.getElementById("gtq"+i).textContent=j.tq.toFixed(1);
+  document.getElementById("gvbar"+i).style.width=(Math.min(1,Math.abs(j.vel)/j.vmax)*100).toFixed(1)+"%";
+  const tf=Math.min(1,j.tq/j.tmax);
+  const tb=document.getElementById("gtbar"+i);
+  tb.style.width=(tf*100).toFixed(1)+"%";
+  tb.classList.toggle("warn", tf>0.7);
+}
+joints.forEach((_,i)=>renderGauge(i));
+
+/* ============================================================
+   雷达俯视：方位刻度 + J1 限位扇区 + 机械臂投影
+   ============================================================ */
+const RCX=200, RCY=172, RMAX=158;
+/* 方位刻度（每 30°，0°朝上=north） */
+(function(){
+  let s="";
+  for(let d=0; d<360; d+=30){
+    const scr=-90+d; /* 0°->上 */
+    const a=polar(RCX,RCY,RMAX,scr), b=polar(RCX,RCY,RMAX-8,scr);
+    s+=`<line class="rr-tick" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"/>`;
+    if(d%90===0){
+      const t=polar(RCX,RCY,RMAX-18,scr);
+      const lbl=d===0?"0°":(d===90?"+90°":(d===180?"180°":"-90°"));
+      s+=`<text class="rr-lbl az" x="${t.x.toFixed(1)}" y="${(t.y+3).toFixed(1)}">${lbl}</text>`;
+    }
+  }
+  document.getElementById("azTicks").innerHTML=s;
+})();
+/* J1 软限位扇区 ±lim */
+(function(){
+  const lim=joints[0].lim*180/Math.PI; /* ≈170° */
+  const a=polar(RCX,RCY,RMAX,-90-lim), b=polar(RCX,RCY,RMAX,-90+lim);
+  const large=lim*2>180?1:0;
+  document.getElementById("limitWedge").setAttribute("d",
+    `M ${RCX} ${RCY} L ${a.x.toFixed(1)} ${a.y.toFixed(1)} A ${RMAX} ${RMAX} 0 ${large} 1 ${b.x.toFixed(1)} ${b.y.toFixed(1)} Z`);
+})();
+
+/* 机械臂俯视投影：J1 决定方位，J2/J3 决定水平伸展 */
+function renderArm(){
+  const j1=joints[0].angle, j2=joints[1].angle, j3=joints[2].angle;
+  const dir=-90 + j1*180/Math.PI;                        /* 方位角(度) */
+  const rElbow = 30 + 76*(0.55+0.35*Math.cos(j2));       /* 肘部半径 */
+  const rTcp   = rElbow + 84*(0.55+0.35*Math.cos(j2+j3));/* 末端半径 */
+  const bend   = j3*0.16*180/Math.PI;                    /* 前臂微弯（视觉） */
+  const E=polar(RCX,RCY,Math.min(rElbow,RMAX-10),dir);
+  const T=polar(RCX,RCY,Math.min(rTcp,RMAX-8),dir+bend);
+  const gA=polar(T.x,T.y,9,dir+bend-90), gB=polar(T.x,T.y,9,dir+bend+90);
+  const svg=`
+    <circle class="arm-base" cx="${RCX}" cy="${RCY}" r="22"/>
+    <circle class="arm-base-ring" cx="${RCX}" cy="${RCY}" r="22"/>
+    <line class="arm-link" x1="${RCX}" y1="${RCY}" x2="${E.x.toFixed(1)}" y2="${E.y.toFixed(1)}" stroke-width="9"/>
+    <line class="arm-link" x1="${E.x.toFixed(1)}" y1="${E.y.toFixed(1)}" x2="${T.x.toFixed(1)}" y2="${T.y.toFixed(1)}" stroke-width="7"/>
+    <circle class="arm-joint" cx="${E.x.toFixed(1)}" cy="${E.y.toFixed(1)}" r="6.5"/>
+    <circle class="arm-joint" cx="${RCX}" cy="${RCY}" r="7.5"/>
+    <line class="gripper-jaw" x1="${T.x.toFixed(1)}" y1="${T.y.toFixed(1)}" x2="${gA.x.toFixed(1)}" y2="${gA.y.toFixed(1)}"/>
+    <line class="gripper-jaw" x1="${T.x.toFixed(1)}" y1="${T.y.toFixed(1)}" x2="${gB.x.toFixed(1)}" y2="${gB.y.toFixed(1)}"/>
+    <circle class="tcp-ring" cx="${T.x.toFixed(1)}" cy="${T.y.toFixed(1)}" r="9"/>
+    <circle class="tcp-dot" cx="${T.x.toFixed(1)}" cy="${T.y.toFixed(1)}" r="3"/>
+    <line class="tcp-cross" x1="${(T.x-13).toFixed(1)}" y1="${T.y.toFixed(1)}" x2="${(T.x+13).toFixed(1)}" y2="${T.y.toFixed(1)}"/>
+    <line class="tcp-cross" x1="${T.x.toFixed(1)}" y1="${(T.y-13).toFixed(1)}" x2="${T.x.toFixed(1)}" y2="${(T.y+13).toFixed(1)}"/>`;
+  document.getElementById("armGroup").innerHTML=svg;
+
+  /* TCP 坐标浮标 */
+  const co=`
+    <rect class="rr-callout-bx" x="286" y="286" width="106" height="46" rx="5"/>
+    <text class="rr-callout-t" x="294" y="300">TCP</text>
+    <text class="rr-callout-v" x="316" y="300">X ${pose.x.toFixed(3)}</text>
+    <text class="rr-callout-v" x="316" y="312">Y ${pose.y.toFixed(3)}</text>
+    <text class="rr-callout-v" x="316" y="324">Z ${pose.z.toFixed(3)}</text>`;
+  document.getElementById("tcpCallout").innerHTML=co;
+}
+renderArm();
+
+/* ============================================================
+   末端位姿卡片
+   ============================================================ */
+const poseDefs=[
+  ["X","m","x"],["Y","m","y"],["Z","m","z"],
+  ["Roll","rad","roll"],["Pitch","rad","pitch"],["Yaw","rad","yaw"]
+];
+const poseGrid=document.getElementById("poseGrid");
+poseGrid.innerHTML=poseDefs.map(([l,u,k])=>`
+  <div class="pcell"><div class="pl">${l}<u>${u}</u></div><div class="pv" id="pv_${k}">${pose[k].toFixed(4)}</div></div>`).join("");
+function renderPose(){ poseDefs.forEach(([,,k])=>document.getElementById("pv_"+k).textContent=pose[k].toFixed(4)); }
+
+/* ============================================================
+   JOG 面板（视觉中心）：J1-J6 rocker + 步进
+   ============================================================ */
+let step=0.05;
+const jogGrid=document.getElementById("jogGrid");
+jogGrid.innerHTML=joints.map((j,i)=>`
+  <div class="jpod">
+    <div class="jpod-hd"><b>${j.n}</b><span>${j.zh}</span><em id="jv${i}">${j.angle.toFixed(3)}<u>rad</u></em></div>
+    <div class="rocker">
+      <button class="rk" data-jog="${i}" data-dir="-1" aria-label="${j.n} 负向点动">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>
+      </button>
+      <button class="rk" data-jog="${i}" data-dir="1" aria-label="${j.n} 正向点动">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+  </div>`).join("");
+
+/* 步进选择 */
+document.getElementById("stepSeg").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#stepSeg button").forEach(x=>x.setAttribute("aria-pressed", String(x===b)));
+  step=parseFloat(b.dataset.step);
+});
+
+/* rocker 长按连续点动 */
+let holdTimer=null;
+function canJog(){ return controlHeld && servoOn && !estop; }
+function jogOnce(i,dir){
+  const j=joints[i];
+  j.angle=Math.max(-j.lim, Math.min(j.lim, j.angle+dir*step));
+  j.vel=dir*Math.min(j.vmax, step*8);
+  document.getElementById("jv"+i).innerHTML=j.angle.toFixed(3)+"<u>rad</u>";
+  renderGauge(i);
+  if(i<3) renderArm();
+}
+document.querySelectorAll(".rk").forEach(btn=>{
+  const start=(ev)=>{
+    if(btn.disabled||!canJog()) return;
+    ev.preventDefault();
+    const i=+btn.dataset.jog, dir=+btn.dataset.dir;
+    btn.classList.add("holding");
+    jogOnce(i,dir);
+    let n=0;
+    holdTimer=setInterval(()=>{ jogOnce(i,dir); if(++n===1) pushLog("MOVE",`Jog ${joints[i].n} ${dir>0?'+':'−'}${step.toFixed(2)} rad · 连续点动`); },110);
+  };
+  const stop=()=>{
+    btn.classList.remove("holding");
+    if(holdTimer){clearInterval(holdTimer); holdTimer=null;}
+    const i=+btn.dataset.jog; if(joints[i]) joints[i].vel=0;
+  };
+  btn.addEventListener("pointerdown",start);
+  btn.addEventListener("pointerup",stop);
+  btn.addEventListener("pointerleave",stop);
+  btn.addEventListener("pointercancel",stop);
+});
+
+/* ============================================================
+   夹爪
+   ============================================================ */
+function setGrip(pct){
+  pct=Math.max(0,Math.min(100,pct));
+  document.getElementById("gripPct").textContent=Math.round(pct);
+  document.getElementById("gripFill").style.width=pct+"%";
+  const mm=(pct/100*85).toFixed(1);
+  document.getElementById("gripMm").textContent=`${mm} mm · 力控 ${pct<20?'24':'—'} N`;
+}
+document.getElementById("gripOpen").addEventListener("click",()=>{ if(!canJog())return; setGrip(100); pushLog("MOVE","夹爪张开至 <span class=\"hl\">85.0 mm</span>"); });
+document.getElementById("gripClose").addEventListener("click",()=>{ if(!canJog())return; setGrip(4); pushLog("MOVE","夹爪闭合 · 触发力控 <span class=\"hl\">24 N</span>"); });
+
+/* ============================================================
+   moveJ / moveL
+   ============================================================ */
+document.getElementById("moveJ").addEventListener("click",()=>{
+  if(!canJog()){ pushLog("WARN","伺服未使能或无控制权，moveJ 被拒绝"); return; }
+  pushLog("MOVE","moveJ → 目标位姿 · 软限位预检通过 · 已排队");
+});
+document.getElementById("moveL").addEventListener("click",()=>{
+  if(!canJog()){ pushLog("WARN","伺服未使能或无控制权，moveL 被拒绝"); return; }
+  pushLog("MOVE","moveL → 直线插补 <span class=\"hl\">12.4 cm</span> · 速度 30% · 已排队");
+});
+
+/* ============================================================
+   顶栏状态：Enable / EStop / 控制权
+   ============================================================ */
+const enableBtn=document.getElementById("enableBtn"), enableTxt=document.getElementById("enableTxt");
+const estopBtn=document.getElementById("estopBtn");
+const ctrlBtn=document.getElementById("ctrlBtn"), ctrlBadge=document.getElementById("ctrlBadge"), ctrlOwner=document.getElementById("ctrlOwner");
+const radarCard=document.getElementById("radarCard");
+
+function refreshInteractivity(){
+  const blocked=!canJog();
+  document.querySelectorAll(".rk").forEach(b=>b.disabled=blocked);
+  document.getElementById("moveJ").disabled=blocked;
+  document.getElementById("moveL").disabled=blocked;
+  document.getElementById("gripOpen").disabled=blocked;
+  document.getElementById("gripClose").disabled=blocked;
+  radarCard.classList.toggle("idle", blocked);
+}
+
+enableBtn.addEventListener("click",()=>{
+  if(estop){ pushLog("WARN","急停锁定中，请先复位 EStop"); return; }
+  if(!controlHeld){ pushLog("WARN","未持有控制权，无法切换伺服"); return; }
+  servoOn=!servoOn;
+  enableTxt.textContent=servoOn?"Disable 伺服":"Enable 伺服";
+  enableBtn.classList.toggle("btn-accent", !servoOn);
+  if(!servoOn) joints.forEach((j,i)=>{j.vel=0; renderGauge(i);});
+  pushLog(servoOn?"INFO":"WARN", servoOn?"伺服已使能 · HardwareLoop 进入闭环":"伺服已下电 · 关节自由");
+  refreshInteractivity();
+});
+
+estopBtn.addEventListener("click",()=>{
+  estop=!estop;
+  estopBtn.classList.toggle("engaged", estop);
+  estopBtn.lastChild.textContent = estop ? " 已急停 · 点击复位" : " 急停 EStop";
+  if(estop){
+    servoOn=false; enableTxt.textContent="Enable 伺服"; enableBtn.classList.add("btn-accent");
+    joints.forEach((j,i)=>{j.vel=0; renderGauge(i);});
+    document.getElementById("connDot").className="dot";
+    pushLog("ERR","EStop 触发 · 硬件直通下电 · 全轴抱闸");
+  }else{
+    document.getElementById("connDot").className="dot ok";
+    pushLog("INFO","EStop 已复位 · 等待重新 Enable 伺服");
+  }
+  refreshInteractivity();
+});
+
+ctrlBtn.addEventListener("click",()=>{
+  controlHeld=!controlHeld;
+  if(controlHeld){
+    ctrlBadge.querySelector(".dot").className="dot ok";
+    ctrlOwner.textContent="wpf-cockpit";
+    ctrlBtn.innerHTML=ctrlBtn.innerHTML.replace("获取控制权","释放控制权");
+    ctrlBtn.lastChild.textContent="释放控制权";
+    pushLog("INFO","控制权已获取 · client=<span class=\"hl\">wpf-cockpit</span>");
+  }else{
+    ctrlBadge.querySelector(".dot").className="dot";
+    ctrlOwner.textContent="— 空闲";
+    ctrlBtn.lastChild.textContent="获取控制权";
+    servoOn=false; enableTxt.textContent="Enable 伺服"; enableBtn.classList.add("btn-accent");
+    joints.forEach((j,i)=>{j.vel=0; renderGauge(i);});
+    pushLog("WARN","控制权已释放 · 伺服自动下电");
+  }
+  refreshInteractivity();
+});
+
+/* ============================================================
+   遥测“活”起来：微小抖动
+   ============================================================ */
+setInterval(()=>{
+  if(!servoOn || estop){ return; }
+  joints.forEach((j,i)=>{
+    if(document.querySelector(`.rk.holding[data-jog="${i}"]`)) return; /* 正在点动的轴不抖 */
+    j.angle += (Math.random()-0.5)*0.0016;
+    j.angle = Math.max(-j.lim, Math.min(j.lim, j.angle));
+    j.vel = (Math.random()-0.5)*0.012;
+    j.tq += (Math.random()-0.5)*0.10;
+    renderGauge(i);
+    document.getElementById("jv"+i).innerHTML=j.angle.toFixed(3)+"<u>rad</u>";
+  });
+  pose.x += (Math.random()-0.5)*0.0006;
+  pose.y += (Math.random()-0.5)*0.0006;
+  pose.z += (Math.random()-0.5)*0.0005;
+  pose.pitch += (Math.random()-0.5)*0.0008;
+  renderPose();
+  renderArm();
+}, 220);
+
+/* ============================================================
+   日志
+   ============================================================ */
+const logBody=document.getElementById("logBody"), logCount=document.getElementById("logCount");
+let logN=0;
+function nowStr(){const d=new Date();return d.toTimeString().slice(0,8)+"."+String(d.getMilliseconds()).padStart(3,"0");}
+function pushLog(level,msg){
+  const row=document.createElement("div");
+  row.className="logrow";
+  row.innerHTML=`<time>${nowStr()}</time><span class="tag ${level}">${level}</span><span class="msg">${msg}</span>`;
+  logBody.appendChild(row);
+  logN++; logCount.textContent=logN;
+  while(logBody.children.length>120) logBody.removeChild(logBody.firstChild);
+  logBody.scrollTop=logBody.scrollHeight;
+}
+[
+  ["INFO","armd 已连接 · gRPC <span class=\"hl\">localhost:50051</span>"],
+  ["INFO","控制权已获取 · client=<span class=\"hl\">wpf-cockpit</span>"],
+  ["INFO","HardwareLoop 启动 · 轮询 200 Hz · watchdog 心跳正常"],
+  ["MOVE","moveJ 到达 J2=<span class=\"hl\">-0.785 rad</span> · 误差 0.0004 rad"],
+  ["INFO","D405 未挂载（v2 特性）· 视频流通道保留"],
+  ["WARN","J2 力矩 <span class=\"hl\">18.6 N·m</span> 接近软阈值 24 N·m"],
+].forEach(([lv,m])=>pushLog(lv,m));
+logN=6; logCount.textContent=logN;
+
+setInterval(()=>{ if(servoOn && !estop && Math.random()<0.5) pushLog("INFO",`watchdog 心跳 · loop ${(4.8+Math.random()*0.4).toFixed(2)} ms · 队列 0`); }, 6400);
+
+/* 日志过滤（视觉态，仅切换选中） */
+document.querySelectorAll(".lchip").forEach(c=>c.addEventListener("click",()=>{
+  document.querySelectorAll(".lchip").forEach(x=>x.setAttribute("aria-pressed", String(x===c)));
+}));
+
+refreshInteractivity();
+</script>
+</body>
+</html>
