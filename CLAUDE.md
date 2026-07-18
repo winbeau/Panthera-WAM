@@ -1,12 +1,13 @@
 # Panthera-WAM
 
 Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Action Model 数据平台。
-当前状态：**计划已敲定，实现未开始。从里程碑 M0 开始干。**
+当前状态：**实施进行中。进度以 `docs/MILESTONES.md` 为准**（前置准备已完成，M0 spike 尚未通过；M0 全过才允许开工 v1）。
 
 ## 必读文档（按顺序）
 
-1. `docs/FINAL_PLAN.md` — **唯一权威计划**。架构决策、42 个 SDK 方法覆盖映射、arm.proto 草案、CLI 命令树、里程碑 M0→v1→WPF v1→v2、14 项审计修订。与其它文档冲突时以它为准。
-2. `docs/CLI_PLAN.md` / `docs/WPF_PLAN.md` — 两侧的展开细节。
+1. `docs/FINAL_PLAN.md` — **唯一权威计划**。架构决策、42 个 SDK 方法覆盖映射、arm.proto 草案、CLI 命令树、里程碑 M0→v1→WPF v1→v2、14 项审计修订。与其它文档冲突时以它为准。文末「**SDK 源码核实结论**」是逐行核对官方源码得到的一手事实（含 4 项契约修正与 N1–N10 新发现），**与 SDK README 冲突时以该节为准**（README 多处过时）。
+2. `docs/MILESTONES.md` — **进度看板**。每项打勾即 commit+push；🔒 标记＝需真机且用户在场，不可自动执行。
+3. `docs/CLI_PLAN.md` / `docs/WPF_PLAN.md` — 两侧的展开细节。
 3. `docs/mockups/mockup-C-fluent-cockpit.html` — **WPF 已定稿的视觉基准**（驾驶舱式：中央 SVG 雷达俯视图 + 左右圆形关节仪表 + jog pod）。A/B 两稿仅作参考。
 
 ## 已敲定的决策（不要重新讨论）
