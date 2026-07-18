@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using FlaUI.Core;
-using FlaUI.Core.Capturing;
 using FlaUI.Core.Tools;
 using FlaUI.UIA3;
 using Xunit;
@@ -37,6 +36,12 @@ public sealed class CockpitUiTests
         startInfo.ArgumentList.Add(applicationAssembly);
         startInfo.Environment["PANTHERA_UI_TEST"] = "1";
         startInfo.Environment["PANTHERA_SCREENSHOT_THEME"] = theme;
+        var artifactDirectory = Environment.GetEnvironmentVariable("PANTHERA_UI_ARTIFACTS")
+            ?? Path.Combine(AppContext.BaseDirectory, "ui-artifacts");
+        Directory.CreateDirectory(artifactDirectory);
+        var screenshotPath = Path.Combine(
+            artifactDirectory,
+            $"cockpit-{theme.ToLowerInvariant()}.png");
 
         using var application = Application.Launch(startInfo);
         using var automation = new UIA3Automation();
@@ -56,12 +61,6 @@ public sealed class CockpitUiTests
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("CancelExecutionButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("GripperOpenButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("GripperCloseButton")));
-
-            var artifactDirectory = Environment.GetEnvironmentVariable("PANTHERA_UI_ARTIFACTS")
-                ?? Path.Combine(AppContext.BaseDirectory, "ui-artifacts");
-            Directory.CreateDirectory(artifactDirectory);
-            Capture.Element(window).ToFile(
-                Path.Combine(artifactDirectory, $"cockpit-{theme.ToLowerInvariant()}.png"));
         }
         finally
         {
@@ -71,5 +70,20 @@ public sealed class CockpitUiTests
                 application.Kill();
             }
         }
+
+        var screenshotInfo = new ProcessStartInfo(dotnetHost)
+        {
+            UseShellExecute = false,
+            WorkingDirectory = AppContext.BaseDirectory,
+        };
+        screenshotInfo.ArgumentList.Add(applicationAssembly);
+        screenshotInfo.Environment["PANTHERA_UI_TEST"] = "1";
+        screenshotInfo.Environment["PANTHERA_SCREENSHOT_THEME"] = theme;
+        screenshotInfo.Environment["PANTHERA_SCREENSHOT_PATH"] = screenshotPath;
+        using var screenshotProcess = Process.Start(screenshotInfo)
+            ?? throw new InvalidOperationException("WPF screenshot process did not start");
+        Assert.True(screenshotProcess.WaitForExit(30_000), "WPF screenshot process did not exit");
+        Assert.Equal(0, screenshotProcess.ExitCode);
+        Assert.True(File.Exists(screenshotPath), $"Screenshot was not written to {screenshotPath}");
     }
 }
