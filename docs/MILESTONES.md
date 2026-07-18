@@ -23,7 +23,7 @@
 | 阶段 -1 | 前置准备（环境 + SDK 核实） | 5 / 5 ✅ |
 | 阶段 0 | M0 架构验证 spike（v1 硬前置） | 6 / 6 ✅ |
 | 阶段 1 | 契约与仓库骨架 | 6 / 6 ✅ |
-| 阶段 2 | v1：armd + CLI（M1–M4） | 1 / 4（M2–M4 已实现，真机尾项待验收） |
+| 阶段 2 | v1：armd + CLI（M1–M4） | 4 / 4 ✅ |
 | 阶段 3 | WPF v1（M-W0 – M-W3） | 4 / 5 |
 | 阶段 4 | v2（M5–M9） | 0 / 5 |
 
@@ -83,7 +83,7 @@
 - [x] 🧪 实现 ✅ `state get`、`state watch`（`StreamState`）、`calibrate zero` 已接入 gRPC 与 CLI；归零强制 lease + `confirm=true` + 电机静止检查
 - [x] 🧪 验收 ✅ `state watch` 可配置 0–100Hz 持续输出，断流可重新订阅；`age_ms` 来自 HardwareLoop 单调时钟缓存年龄
 - [x] 🧪 **999.0 哨兵处理** ✅ 对外 `valid=false`，位置/速度/力矩清零，不把 SDK 的 999.0 当真实位置输出
-- [ ] 🔒 验收：`calibrate zero --confirm` 行为与核实结论一致（不产生运动、需补 `motor_send_cmd()`、全体归零不持久化）
+- [x] 🔒 验收 ✅ 操作员现场确认全体归零没有产生物理运动；归零后 7 轴进入零参考，lease 已释放。停止服务并给控制器断电重启后，7/7 电机重新上线且恢复独立编码坐标，`fault=0`、模式 21，确认全体归零仅本次上电有效
 
 ### M3 关节 / 夹爪控制
 - [x] 🧪 实现 ✅ `joint jog/move/movej`、`gripper open/close/move` 均已接入；位置运动使用 HardwareLoop 非阻塞状态机，CLI `--wait` 自动维持 heartbeat
@@ -91,15 +91,15 @@
 - [x] 🧪 验收 ✅ `joint jog` 关流立即归零，250ms 无新指令自动归零；近软限位 0.02rad 时屏蔽朝外速度并返回 `limit_hit`
 - [x] 🔒 验收 ✅ J1 小幅 `movej --wait` 往返完成，前向误差 0.004798rad、回程误差 0.004414rad；等待期间 heartbeat 正常，取消/看门狗路径由仿真测试覆盖
 - [x] 🔒 **桌面点动断线回归** ✅ J1 以 `0.02rad/s` 正向 5s、反向 5s（单程约 5.7°），控制链路全程持锁且 watchdog 正常；回位误差约 0.00063rad（0.036°），结束后 7/7 电机恢复模式 21 柔顺阻尼
-- [ ] 🔒 验收：`gripper open/close` 正确反映限位拒绝并带 `reject_reason`
+- [x] 🔒 验收 ✅ `open --pos 2.01 --vel 0.0` 与 `close --pos -0.01 --vel 0.0` 均在入队前以退出码 2 拒绝，分别报告上限 2 与下限 0；操作员确认夹爪未动，拒绝前后 7 轴均无故障
 
 ### M4 笛卡尔与运动学
 - [x] 🧪 实现 ✅ `kinematics fk/ik/jacobian/manipulability`、`cartesian movel/plan-preview`、`safety check-reached` 已接入 gRPC 与 CLI；计算仍隔离在独立 worker 进程
 - [x] 🧪 验收 ✅ `plan-preview` 对不可达路径返回 `fraction<1` 且不执行运动；CLI 不暴露无效的 avoid-collisions 选项
 - [x] 🧪 验收 ✅ `ik` 不可达返回 `found=false`，超时结构化返回 `timeout=true`，worker 异常不穿透服务进程
 - [x] **安全收尾算法定案** ✅ `CancelExecution` 用 12 个控制周期按比例减速，watchdog 取消后切入柔顺阻尼；速度/加速度超限在轨迹入队前拒绝
-- [ ] 🔒 验收：`movel` 期间 `StreamExecution` 见 `fraction` 单调递增，`DONE/FAILED/CANCELLED` 三态清晰，取消能减速收尾
-- [ ] **v1 完成口径**：27 条命令可用 + M1–M4 场景全过
+- [x] 🔒 验收 ✅ `+Z 0.3cm / 2s` 完整执行进入 `EXEC_STATE_DONE`；`+Z 3cm / 4s` 的执行流 `fraction` 单调，在 50.623% 请求取消并进入 `EXEC_STATE_CANCELLED`。取消后重力回落约 1.14cm，仅记录、不判轨迹失败；`FAILED` 由仿真断连注入覆盖
+- [x] **v1 完成口径** ✅ 27 条命令可用，M1–M4 自动化与真机场景全部通过
 
 ---
 
@@ -124,13 +124,10 @@
 
 ---
 
-## v1 剩余验收项
+## v1 发布剩余验收项
 
 | 项 | 需要什么 |
 |---|---|
-| M2 全体非持久化归零 | 用户在场；放在所有运动验收之后，完成断电恢复 |
-| M3 夹爪限位拒绝 | 用户在场；只发送预期被软件层拒绝的越限目标 |
-| M4 MoveL 完成/取消 | 用户在场；小幅低速路径，先 preview 后执行 |
 | M-W3 Windows 签字 | 原生 Windows 运行 Release、FlaUI、高对比和键盘验收 |
 
-逐项命令、顺序和恢复要求见 `docs/V1_ACCEPTANCE.md`。
+M2/M3/M4 真机尾项已完成；逐项命令、实测证据和恢复结果见 `docs/V1_ACCEPTANCE.md`。

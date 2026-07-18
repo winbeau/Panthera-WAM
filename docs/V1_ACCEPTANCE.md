@@ -55,21 +55,22 @@ wpf\tools\run-tests.cmd
 下面两个目标位于软件限位之外，预期在入队前直接拒绝：
 
 ```bash
-uv run panthera gripper open --pos 2.1 --vel 0.1
-uv run panthera gripper close --pos -0.1 --vel 0.1
+uv run panthera gripper open --pos 2.01 --vel 0.0
+uv run panthera gripper close --pos -0.01 --vel 0.0
 ```
 
 通过标准：两条命令均以非零退出码结束；`reject_reason` 分别包含“目标、上限值”和
-“目标、下限值”；夹爪没有动作。随后在现场允许时，用限位内的小幅目标确认正常命令仍可接受。
+“目标、下限值”；夹爪没有动作。限位内正常命令由自动化闭环测试覆盖，本轮真机不额外动作夹爪。
 
 ## 4. MoveL 完成与取消（真机，会运动）
 
-1. 先执行 FK，并从当前位置选择竖直方向不超过 4mm 的目标；姿态保持不变。
+1. 所有位移统一用 cm 记录；先执行 FK，并从当前位置选择竖直方向目标，姿态保持不变。
+   本次完整执行使用 +Z 0.3cm，放大量级取消测试使用 +Z 3cm；每次真机执行仍需操作员明确授权。
 2. 先用 `cartesian plan-preview` 确认 `fraction=1`，检查关节轨迹没有越限。
-3. 以不少于 1 秒的时长执行 MoveL：
+3. 以不少于 2 秒的时长执行 MoveL：
 
    ```bash
-   uv run panthera cartesian movel --pos X,Y,Z --rpy R,P,Y --duration 1.0
+   uv run panthera cartesian movel --pos X,Y,Z --rpy R,P,Y --duration 2.0
    ```
 
 4. 第一次让动作完成；第二次在约 50% 时按 `Ctrl+C` 请求取消。
@@ -107,13 +108,27 @@ uv run panthera gripper close --pos -0.1 --vel 0.1
 
 | 项目 | 结果 | 证据/日志 |
 |---|---|---|
-| `make check` | 通过：57 tests，仿真约 199Hz、0 overrun | [CI 29650696553](https://github.com/winbeau/Panthera-WAM/actions/runs/29650696553) |
-| Windows Release + unit tests | 通过：Release 0 warning，7 项 .NET 测试 | [CI 29650696553](https://github.com/winbeau/Panthera-WAM/actions/runs/29650696553) |
+| `make check` | ✅ 通过：57 tests，仿真约 199Hz、0 overrun | [CI 29650914644](https://github.com/winbeau/Panthera-WAM/actions/runs/29650914644) |
+| Windows Release + unit tests | ✅ 通过：Release 0 warning，7 项 .NET 测试 | [CI 29650914644](https://github.com/winbeau/Panthera-WAM/actions/runs/29650914644) |
 | FlaUI 三态 + 强制高对比 | 通过：4 次实际启动，4 张 1240×800 截图 | `wpf-ui-artifacts` |
 | Windows 系统高对比与完整 Tab 顺序 | 待人工签字 | |
-| 夹爪限位拒绝 | 待操作员确认 | |
-| MoveL DONE/CANCELLED | 待操作员确认 | |
-| 全体非持久化归零及断电恢复 | 待操作员确认 | |
+| 夹爪限位拒绝 | ✅ 通过 | `2.01 > 2`、`-0.01 < 0` 均退出码 2；操作员确认未动 |
+| MoveL DONE/CANCELLED | ✅ 通过 | DONE `63298165bc7e4d699656a6335d5263a9`；CANCELLED `70d06abe097e4866b7d6c0ca45427967` |
+| 全体非持久化归零及断电恢复 | ✅ 通过 | 归零无运动；断电后 7/7 有效、`fault=0`、坐标恢复 |
 
-全部通过后，更新 `docs/MILESTONES.md` 的 M2、M3、M4、M-W3 与 v1 完成口径，
-再创建正式版本 tag。
+M2/M3/M4 与 CLI v1 完成口径已经收口。完成 M-W3 的 Windows 人工签字后，再创建正式版本 tag。
+
+### 2026-07-18 真机证据
+
+- 夹爪：以零速度发送上越限 `2.01` 和下越限 `-0.01`，服务分别返回
+  “目标 2.01 超过上限 2”和“目标 -0.01 超过下限 0”；操作员现场确认夹爪未动。
+- MoveL 完成：保持姿态执行 +Z 0.3cm / 2s，路径预览 `fraction=1.0`，终态
+  `EXEC_STATE_DONE`。停止前末端 Z 读数变化约 0.034cm；操作员明确接受毫米级误差。
+- MoveL 取消：保持姿态执行 +Z 3cm / 4s，预览 163 点、`fraction=1.0`；
+  在 `fraction=0.506234` 请求取消，40 个流式样本保持单调，下一终态为
+  `EXEC_STATE_CANCELLED`。取消瞬间 Z 位移约 1.245cm，随后柔顺模式下重力回落约
+  1.143cm，按 M0 既定口径仅记录、不判失败。
+- 全体归零：操作员确认机械臂未动；归零后 7 轴读数进入近零参考，lease 已释放。
+  服务停止并断电重启后，坐标恢复为
+  `[0.037071, -0.010053, -0.006283, -0.002513, 0.049009, -0.047124, -0.008168]rad`；
+  7/7 状态有效、全部 `fault=0`、模式 21、控制权未持有，证明归零未持久化。
