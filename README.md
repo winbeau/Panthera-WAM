@@ -10,7 +10,7 @@ WSL:     panthera-cli (typer) ──────────┤→ gRPC (localho
 未来:    WAM 训练/推理 ─────────────────┘
 ```
 
-- **armd**：WSL2 内常驻守护服务，独占硬件，封装官方 [Panthera-HT_SDK](https://github.com/HighTorque-Robotics/Panthera-HT_SDK)（零修改），提供控制权互斥 / watchdog / 软限位 / EStop 安全层
+- **armd**：WSL2 内常驻守护服务，独占硬件，零修改封装 [Panthera-HT_SDK fork](https://github.com/winbeau/Panthera-HT_SDK)（上游为 HighTorque-Robotics），提供控制权互斥 / watchdog / 软限位 / EStop 安全层
 - **panthera-cli**：无损暴露 SDK 全部能力的命令行客户端
 - **WPF 终端**：.NET 9 Fluent 主题（系统/浅色/深色），关节监控 + jog + 笛卡尔控制
 - **v2**：拖动示教录制回放、RealSense D405 视频流、LeRobot 数据采集 → World Action Model
@@ -24,8 +24,15 @@ cli/      panthera-cli (Python + typer)
 wpf/      WPF 控制终端 (.NET 9)
 deploy/   usbipd 脚本、systemd unit、安装文档
 docs/     设计文档与计划
+vendor/   第三方 git submodule（Panthera-HT_SDK public fork）
+```
+
+克隆后初始化第三方依赖：
+
+```bash
+git submodule update --init --recursive
 ```
 
 ## 状态
 
-计划已敲定（`docs/FINAL_PLAN.md`），WPF 视觉定稿为 C 稿驾驶舱（`docs/mockups/mockup-C-fluent-cockpit.html`）。实现从里程碑 M0 开始，开发约定见 `CLAUDE.md`。
+计划已敲定（`docs/FINAL_PLAN.md`），WPF 视觉定稿为 C 稿驾驶舱（`docs/mockups/mockup-C-fluent-cockpit.html`）。M0、阶段 1 与 M1 已完成，控制周期锁定 200Hz；真实后端已具备 SDK 源码审计、串口重连换句柄、固件版本门槛和 150ms 电机看门狗。最新进度见 `docs/MILESTONES.md`，开发约定见 `CLAUDE.md`。

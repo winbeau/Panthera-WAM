@@ -1,0 +1,16 @@
+[project]
+name = "panthera-arm-proto"
+version = "0.1.0"
+description = "由 proto/arm.proto 生成的 gRPC stub（勿手工编辑，用 proto/gen.sh 重新生成）"
+requires-python = ">=3.10"
+dependencies = ["grpcio>=1.60", "protobuf>=4.25"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+dev-mode-dirs = ["."]
+
+[tool.hatch.build.targets.wheel]
+packages = ["panthera_arm"]

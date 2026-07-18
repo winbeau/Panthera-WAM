@@ -1,7 +1,18 @@
 __pycache__/
 *.pyc
 .venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# .NET / WPF
 bin/
 obj/
 .vs/
 *.user
+
+# 官方 SDK 的临时根目录克隆不入库；正式依赖由 vendor/ git submodule 管理。
+/Panthera-HT_SDK/
+
+# 注意：proto/gen/ 下的生成 stub **故意入库**——CLAUDE.md 要求 proto 改动后
+# 两端 stub 一起提交，便于 review 契约变更的实际影响面。
