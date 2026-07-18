@@ -43,10 +43,23 @@ jobs:
         run: >-
           dotnet test wpf/tests/Panthera.Terminal.UiTests/Panthera.Terminal.UiTests.csproj
           --configuration Release --no-build
+      - name: Publish self-contained WPF release
+        run: >-
+          dotnet publish wpf/src/Panthera.Terminal.App/Panthera.Terminal.App.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --output ${{ runner.temp }}\panthera-terminal-win-x64
       - name: Upload WPF UI artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: wpf-ui-artifacts
           path: ${{ runner.temp }}\ui-artifacts
+          if-no-files-found: error
+      - name: Upload self-contained WPF release
+        uses: actions/upload-artifact@v4
+        with:
+          name: panthera-terminal-win-x64
+          path: ${{ runner.temp }}\panthera-terminal-win-x64
           if-no-files-found: error
