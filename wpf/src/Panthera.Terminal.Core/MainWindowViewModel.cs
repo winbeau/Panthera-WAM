@@ -22,6 +22,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private int _poseRefreshActive;
     private bool _jointTargetsInitialized;
     private bool _cartesianTargetInitialized;
+    private double _gripperMinimum;
+    private double _gripperMaximum = 1.6;
 
     public MainWindowViewModel(
         IArmdClient client,
@@ -42,6 +44,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Theme = settings.Theme;
         JogSpeed = settings.JogSpeed;
         TargetDuration = 3.0;
+        ConnectionDetail = settings.Endpoint;
     }
 
     public TerminalSettings Settings { get; private set; }
@@ -78,6 +81,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty]
     private long _stateAgeMs;
+
+    [ObservableProperty]
+    private double _gripperPosition;
+
+    [ObservableProperty]
+    private double _gripperVelocity;
+
+    [ObservableProperty]
+    private double _gripperTorque;
+
+    [ObservableProperty]
+    private bool _gripperValid;
+
+    [ObservableProperty]
+    private uint _gripperFault;
 
     [ObservableProperty]
     private double _tcpX;
@@ -153,6 +171,35 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool CanControl => HasControl && !EStopEngaged && ConnectionState == TerminalConnectionState.Connected && !IsBusy;
 
+    public bool IsConnected => ConnectionState == TerminalConnectionState.Connected;
+
+    public string ConnectionLabel => ConnectionState switch
+    {
+        TerminalConnectionState.Connected => "已连接",
+        TerminalConnectionState.Connecting => "连接中",
+        TerminalConnectionState.Faulted => "连接异常",
+        _ => "未连接",
+    };
+
+    public string ControlSummary => HasControl
+        ? $"控制权 · {ControlHolder}"
+        : ControlHolder == "无" ? "未持有控制权" : $"控制权 · {ControlHolder}";
+
+    public string LiveSummary => $"LIVE · {StateAgeMs} ms";
+
+    public double GripperPercent
+    {
+        get
+        {
+            var range = _gripperMaximum - _gripperMinimum;
+            return range <= 0 ? 0 : Math.Clamp((GripperPosition - _gripperMinimum) / range * 100.0, 0, 100);
+        }
+    }
+
+    public string GripperStatus => !GripperValid
+        ? "离线"
+        : GripperFault != 0 ? $"故障 0x{GripperFault:X2}" : "就绪";
+
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         try
@@ -168,6 +215,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 ? $"仿真 · {daemon.ControlHz:F0} Hz"
                 : $"真机 {(daemon.HardwareConnected ? "在线" : "未连接")} · {daemon.ControlHz:F0} Hz";
             ConnectionDetail = Settings.Endpoint;
+            _gripperMinimum = limits.GripperMinimum;
+            _gripperMaximum = limits.GripperMaximum;
+            OnPropertyChanged(nameof(GripperPercent));
             for (var index = 0; index < Math.Min(Joints.Count, limits.Joints.Count); index++)
             {
                 Joints[index].Minimum = limits.Joints[index].Minimum;
@@ -201,6 +251,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 || source.Position < target.Minimum + 0.08
                 || source.Position > target.Maximum - 0.08;
         }
+        GripperPosition = snapshot.Gripper.Position;
+        GripperVelocity = snapshot.Gripper.Velocity;
+        GripperTorque = snapshot.Gripper.Torque;
+        GripperFault = snapshot.Gripper.Fault;
+        GripperValid = snapshot.Gripper.Valid;
         if (!_jointTargetsInitialized && snapshot.Joints.Count >= 6)
         {
             TargetJ1 = snapshot.Joints[0].Position;
@@ -644,9 +699,28 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    partial void OnHasControlChanged(bool value) => NotifyMotionCommands();
+    partial void OnHasControlChanged(bool value)
+    {
+        NotifyMotionCommands();
+        OnPropertyChanged(nameof(ControlSummary));
+    }
 
     partial void OnEStopEngagedChanged(bool value) => NotifyMotionCommands();
 
-    partial void OnConnectionStateChanged(TerminalConnectionState value) => NotifyMotionCommands();
+    partial void OnConnectionStateChanged(TerminalConnectionState value)
+    {
+        NotifyMotionCommands();
+        OnPropertyChanged(nameof(IsConnected));
+        OnPropertyChanged(nameof(ConnectionLabel));
+    }
+
+    partial void OnControlHolderChanged(string value) => OnPropertyChanged(nameof(ControlSummary));
+
+    partial void OnStateAgeMsChanged(long value) => OnPropertyChanged(nameof(LiveSummary));
+
+    partial void OnGripperPositionChanged(double value) => OnPropertyChanged(nameof(GripperPercent));
+
+    partial void OnGripperValidChanged(bool value) => OnPropertyChanged(nameof(GripperStatus));
+
+    partial void OnGripperFaultChanged(uint value) => OnPropertyChanged(nameof(GripperStatus));
 }

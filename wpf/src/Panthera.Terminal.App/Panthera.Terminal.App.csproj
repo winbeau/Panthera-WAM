@@ -7,6 +7,7 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
     <ProjectReference Include="../Panthera.Terminal.Contracts/Panthera.Terminal.Contracts.csproj" />
     <ProjectReference Include="../Panthera.Terminal.Controls/Panthera.Terminal.Controls.csproj" />
     <ProjectReference Include="../Panthera.Terminal.Core/Panthera.Terminal.Core.csproj" />

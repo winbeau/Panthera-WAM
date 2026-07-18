@@ -1,50 +1,144 @@
 <UserControl x:Class="Panthera.Terminal.Controls.JointGauge"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             MinWidth="214" MinHeight="128">
-    <Border Padding="10" CornerRadius="12" Margin="2"
-            Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
-            BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
-            BorderThickness="1">
+             MinWidth="196" MinHeight="148">
+    <Border Padding="10,8" Style="{DynamicResource CockpitCardStyle}">
         <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="112" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Grid Width="108" Height="108">
-                <Ellipse Margin="5" Stroke="{DynamicResource {x:Static SystemColors.InactiveBorderBrushKey}}" StrokeThickness="7" />
-                <Ellipse Margin="14" Stroke="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" StrokeThickness="2.5" />
-                <Line X1="54" Y1="54" X2="54" Y2="18" StrokeThickness="3"
-                      Stroke="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"
-                      RenderTransformOrigin="0.5,0.5">
-                    <Line.RenderTransform>
-                        <RotateTransform Angle="{Binding AngleDegrees, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}}" />
-                    </Line.RenderTransform>
-                </Line>
-                <Ellipse Width="9" Height="9" Fill="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
-                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,28,0,0">
-                    <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                               FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Center" />
-                    <TextBlock Text="{Binding PositionDegrees, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:F1}°}"
-                               FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" />
-                    <TextBlock Text="{Binding StatusText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                               FontSize="10" HorizontalAlignment="Center" />
-                </StackPanel>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                           FontFamily="Cascadia Mono, Consolas" FontSize="14" FontWeight="Bold" />
+                <TextBlock Grid.Column="1" Margin="7,1,0,0"
+                           Text="{Binding Subtitle, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                           FontSize="10.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <Ellipse Grid.Column="2" Width="7" Height="7" Margin="6,0,1,0">
+                    <Ellipse.Style>
+                        <Style TargetType="Ellipse">
+                            <Setter Property="Fill" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsOnline, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                    <Setter Property="Fill" Value="{DynamicResource SystemFillColorSuccessBrush}" />
+                                </DataTrigger>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsOnline, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                        <Condition Binding="{Binding IsWarning, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Fill" Value="{DynamicResource SystemFillColorCautionBrush}" />
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Ellipse.Style>
+                    <Ellipse.Effect>
+                        <DropShadowEffect BlurRadius="7" ShadowDepth="0" Opacity="0.65" />
+                    </Ellipse.Effect>
+                </Ellipse>
             </Grid>
 
-            <!-- 速度与力矩纵向同列，压缩单个关节卡片宽度。 -->
-            <StackPanel Grid.Column="1" Margin="8,2,0,2" VerticalAlignment="Center">
-                <TextBlock Text="SPEED" FontSize="10" FontWeight="SemiBold" Opacity="0.7" />
-                <ProgressBar Height="9" Margin="0,3,0,2" Maximum="1.5"
-                             Value="{Binding SpeedMagnitude, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}}" />
-                <TextBlock Text="{Binding Velocity, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:F3} rad/s}"
-                           FontFamily="Consolas" FontSize="10" Margin="0,0,0,8" />
-                <TextBlock Text="TORQUE" FontSize="10" FontWeight="SemiBold" Opacity="0.7" />
-                <ProgressBar Height="9" Margin="0,3,0,2" Maximum="40"
-                             Value="{Binding TorqueMagnitude, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}}" />
-                <TextBlock Text="{Binding Torque, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:F2} N·m}"
-                           FontFamily="Consolas" FontSize="10" />
-            </StackPanel>
+            <Grid Grid.Row="1" Width="120" Height="102" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Canvas Width="120" Height="102">
+                    <Path Data="M 31.716,80.284 A 40,40 0 1 1 88.284,80.284"
+                          Stroke="{DynamicResource ControlStrongFillColorDisabledBrush}" StrokeThickness="6"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                    <Path Data="{Binding ArcGeometry, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                          StrokeThickness="6"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+                        <Path.Style>
+                            <Style TargetType="Path">
+                                <Setter Property="Stroke" Value="{DynamicResource SystemAccentColorPrimaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsWarning, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                        <Setter Property="Stroke" Value="{DynamicResource SystemFillColorCautionBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Path.Style>
+                    </Path>
+
+                    <Line X1="60" Y1="11" X2="60" Y2="17" Stroke="{DynamicResource ControlStrongFillColorDefaultBrush}" StrokeThickness="1.2"><Line.RenderTransform><RotateTransform CenterX="60" CenterY="52" Angle="-135" /></Line.RenderTransform></Line>
+                    <Line X1="60" Y1="11" X2="60" Y2="17" Stroke="{DynamicResource ControlStrongFillColorDefaultBrush}" StrokeThickness="1.2"><Line.RenderTransform><RotateTransform CenterX="60" CenterY="52" Angle="-90" /></Line.RenderTransform></Line>
+                    <Line X1="60" Y1="11" X2="60" Y2="17" Stroke="{DynamicResource ControlStrongFillColorDefaultBrush}" StrokeThickness="1.2"><Line.RenderTransform><RotateTransform CenterX="60" CenterY="52" Angle="-45" /></Line.RenderTransform></Line>
+                    <Line X1="60" Y1="11" X2="60" Y2="17" Stroke="{DynamicResource ControlStrongFillColorDefaultBrush}" StrokeThickness="1.2" />
+                    <Line X1="60" Y1="11" X2="60" Y2="17" Stroke="{DynamicResource ControlStrongFillColorDefaultBrush}" StrokeThickness="1.2"><Line.RenderTransform><RotateTransform CenterX="60" CenterY="52" Angle="45" /></Line.RenderTransform></Line>
+                    <Line X1="60" Y1="11" X2="60" Y2="17" Stroke="{DynamicResource ControlStrongFillColorDefaultBrush}" StrokeThickness="1.2"><Line.RenderTransform><RotateTransform CenterX="60" CenterY="52" Angle="90" /></Line.RenderTransform></Line>
+                    <Line X1="60" Y1="11" X2="60" Y2="17" Stroke="{DynamicResource ControlStrongFillColorDefaultBrush}" StrokeThickness="1.2"><Line.RenderTransform><RotateTransform CenterX="60" CenterY="52" Angle="135" /></Line.RenderTransform></Line>
+
+                    <Line X1="60" Y1="52" X2="60" Y2="22"
+                          Stroke="{DynamicResource TextFillColorPrimaryBrush}" StrokeThickness="2.2"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+                        <Line.RenderTransform>
+                            <RotateTransform CenterX="60" CenterY="52"
+                                             Angle="{Binding AngleDegrees, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                        </Line.RenderTransform>
+                    </Line>
+                    <Ellipse Canvas.Left="55" Canvas.Top="47" Width="10" Height="10"
+                             Fill="{DynamicResource TextFillColorPrimaryBrush}" />
+                    <Ellipse Canvas.Left="58" Canvas.Top="50" Width="4" Height="4"
+                             Fill="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
+                </Canvas>
+
+                <StackPanel Margin="0,48,0,0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Position, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:F3}}"
+                               HorizontalAlignment="Center" FontFamily="Cascadia Mono, Consolas"
+                               FontSize="16" FontWeight="Bold" />
+                    <TextBlock Text="rad" HorizontalAlignment="Center" FontSize="8"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                </StackPanel>
+
+                <TextBlock HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="4,0,0,4"
+                           Text="{Binding Minimum, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:F1}}"
+                           FontFamily="Cascadia Mono, Consolas" FontSize="8"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                <TextBlock HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,4"
+                           Text="{Binding Maximum, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:F1}}"
+                           FontFamily="Cascadia Mono, Consolas" FontSize="8"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            </Grid>
+
+            <Grid Grid.Row="2" Margin="0,2,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="速度" FontSize="9.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                        <TextBlock HorizontalAlignment="Right"
+                                   Text="{Binding Velocity, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:F2}}"
+                                   FontFamily="Cascadia Mono, Consolas" FontSize="9.5"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    </Grid>
+                    <ProgressBar Margin="0,3,0,0" Maximum="3"
+                                 Foreground="{DynamicResource CockpitVelocityBrush}"
+                                 Value="{Binding SpeedMagnitude, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <Grid>
+                        <TextBlock Text="力矩" FontSize="9.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                        <TextBlock HorizontalAlignment="Right"
+                                   Text="{Binding Torque, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:F1}}"
+                                   FontFamily="Cascadia Mono, Consolas" FontSize="9.5"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    </Grid>
+                    <ProgressBar Margin="0,3,0,0" Maximum="42"
+                                 Foreground="{DynamicResource SystemAccentColorPrimaryBrush}"
+                                 Value="{Binding TorqueMagnitude, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                </StackPanel>
+                <TextBlock Grid.ColumnSpan="3" Margin="0,18,0,0" HorizontalAlignment="Center"
+                           Text="{Binding StatusText, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                           FontSize="9" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Visibility="Collapsed" />
+            </Grid>
         </Grid>
     </Border>
 </UserControl>

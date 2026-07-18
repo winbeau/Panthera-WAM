@@ -1,12 +1,18 @@
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Panthera.Terminal.Core;
+using Wpf.Ui.Appearance;
+using FluentWindow = Wpf.Ui.Controls.FluentWindow;
+using WindowBackdropType = Wpf.Ui.Controls.WindowBackdropType;
 
 namespace Panthera.Terminal.App;
 
-public partial class MainWindow : Window
+public partial class MainWindow : FluentWindow
 {
     private readonly MainWindowViewModel _viewModel;
     private readonly LatestStateSlot<RobotSnapshot> _stateSlot;
@@ -28,12 +34,14 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         Deactivated += OnDeactivated;
         Closing += OnClosing;
+        ApplyThemePreference(viewModel.Theme);
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs eventArgs)
     {
         _renderTimer.Start();
         await _viewModel.InitializeAsync();
+        await CaptureRequestedScreenshotAsync();
     }
 
     private async void OnDeactivated(object? sender, EventArgs eventArgs)
@@ -103,5 +111,51 @@ public partial class MainWindow : Window
         {
             _viewModel.RunEnvironmentGuideCommand.Execute(null);
         }
+    }
+
+    internal void ApplyThemePreference(string theme)
+    {
+        if (IsLoaded)
+        {
+            SystemThemeWatcher.UnWatch(this);
+        }
+        var backdrop = App.IsScreenshotMode ? WindowBackdropType.None : WindowBackdropType.Mica;
+        WindowBackdropType = backdrop;
+        if (theme.Equals("system", StringComparison.OrdinalIgnoreCase))
+        {
+            SystemThemeWatcher.Watch(this, backdrop, updateAccents: true);
+            return;
+        }
+        var applicationTheme = theme.Equals("dark", StringComparison.OrdinalIgnoreCase)
+            ? ApplicationTheme.Dark
+            : ApplicationTheme.Light;
+        ApplicationThemeManager.Apply(applicationTheme, backdrop, updateAccent: true);
+    }
+
+    private async Task CaptureRequestedScreenshotAsync()
+    {
+        var path = Environment.GetEnvironmentVariable("PANTHERA_SCREENSHOT_PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+        UpdateLayout();
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var width = Math.Max(1, (int)Math.Ceiling(ActualWidth * dpi.DpiScaleX));
+        var height = Math.Max(1, (int)Math.Ceiling(ActualHeight * dpi.DpiScaleY));
+        var bitmap = new RenderTargetBitmap(width, height, 96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY, PixelFormats.Pbgra32);
+        bitmap.Render(this);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
+        await using (var stream = File.Create(path))
+        {
+            encoder.Save(stream);
+        }
+        await _viewModel.ShutdownAsync();
+        _shutdownComplete = true;
+        Application.Current.Shutdown();
     }
 }
