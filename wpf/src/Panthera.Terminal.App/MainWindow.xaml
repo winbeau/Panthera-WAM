@@ -227,12 +227,9 @@
                             </DockPanel>
                         </Border>
 
-                        <TabControl Grid.Row="1" Margin="6,2,8,2" Background="Transparent" BorderThickness="0"
-                                    TabStripPlacement="Left">
-                            <TabItem ToolTip="MoveL 笛卡尔目标">
-                                <TabItem.Header>
-                                    <TextBlock Text="⌖" FontSize="15" />
-                                </TabItem.Header>
+                        <TabControl Grid.Row="1" Margin="8,2,8,2" Background="Transparent" BorderThickness="0"
+                                    TabStripPlacement="Top">
+                            <TabItem Header="MoveL" ToolTip="MoveL 笛卡尔目标">
                                 <Grid Margin="5,2,0,0">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
@@ -250,10 +247,7 @@
                                               Content="保持末端姿态" IsChecked="{Binding PreserveOrientation}" />
                                 </Grid>
                             </TabItem>
-                            <TabItem ToolTip="MoveJ 关节目标">
-                                <TabItem.Header>
-                                    <TextBlock Text="≋" FontSize="15" />
-                                </TabItem.Header>
+                            <TabItem Header="MoveJ" ToolTip="MoveJ 关节目标">
                                 <Grid Margin="5,2,0,0">
                                     <UniformGrid Columns="3">
                                         <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J1  / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ1}" /></StackPanel>

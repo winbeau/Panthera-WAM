@@ -1,6 +1,7 @@
 @echo off
 setlocal
 set "DOTNET_ROOT=%USERPROFILE%\.dotnet"
+set "MSBuildSDKsPath="
 set "PATH=%DOTNET_ROOT%;%PATH%"
 set "PANTHERA_RUN_UI_TESTS=1"
 set "PANTHERA_UI_ARTIFACTS=%USERPROFILE%\Desktop\Panthera-Design\ui-artifacts"
