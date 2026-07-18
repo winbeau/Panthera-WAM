@@ -28,18 +28,24 @@ public partial class App : Application
             settings = settings with { Theme = screenshotTheme };
         }
         ApplyTheme(settings.Theme);
+        var uiAcceptanceMode = Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE") == "1";
 
         _host = Host.CreateDefaultBuilder()
             .ConfigureServices(services =>
             {
                 services.AddSingleton<ITerminalSettingsStore>(settingsStore);
                 services.AddSingleton(settings);
-                services.AddSingleton<IArmdClient>(_ => new ArmdClient(settings.Endpoint));
+                services.AddSingleton<IArmdClient>(_ => uiAcceptanceMode
+                    ? new UiAcceptanceArmdClient()
+                    : new ArmdClient(settings.Endpoint));
                 services.AddSingleton<IEnvironmentGuideService, WindowsEnvironmentGuideService>();
                 services.AddSingleton<LatestStateSlot<RobotSnapshot>>();
                 services.AddSingleton<MainWindowViewModel>();
                 services.AddSingleton<MainWindow>();
-                services.AddHostedService<WslTcpBridgeHostedService>();
+                if (!uiAcceptanceMode)
+                {
+                    services.AddHostedService<WslTcpBridgeHostedService>();
+                }
                 services.AddHostedService<StateStreamHostedService>();
             })
             .Build();
