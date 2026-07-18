@@ -7,11 +7,15 @@ import time
 from collections.abc import AsyncIterator
 
 import grpc
+import numpy as np
 from panthera_arm import arm_pb2, arm_pb2_grpc
 
+from .backend import BackendError, BackendLimits, LimitViolationError
 from .control import LEASE_METADATA_KEY, LeaseManager
-from .hardware_loop import CancelReason, HardwareLoop
+from .hardware_loop import CancelReason, HardwareLoop, MotionStepResult
+from .motion import JointJogMotion, JointPositionMotion, position_frame
 from .safety import apply_watchdog_stop
+from .state import gripper_state_message, joint_state_message, robot_state_message
 
 SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
 
@@ -39,6 +43,43 @@ LEASE_PROTECTED_METHODS = {
 }
 
 ESTOP_BLOCKED_METHODS = LEASE_PROTECTED_METHODS - {"ReleaseControl", "ClearEStop"}
+
+
+def finite_vector(values, *, name: str, length: int = 6) -> np.ndarray:
+    result = np.asarray(values, dtype=np.float64)
+    if result.shape != (length,):
+        raise ValueError(f"{name} 必须包含 {length} 个数值")
+    if not np.all(np.isfinite(result)):
+        raise ValueError(f"{name} 必须全部为有限数值")
+    return result
+
+
+def optional_double(request, field: str, default: float) -> float:
+    return float(getattr(request, field)) if request.HasField(field) else default
+
+
+def arm_position_reject_reason(positions: np.ndarray, limits: BackendLimits) -> str:
+    below = positions < limits.joint_lower
+    above = positions > limits.joint_upper
+    if not np.any(below | above):
+        return ""
+    index = int(np.flatnonzero(below | above)[0])
+    direction = "下限" if below[index] else "上限"
+    limit = limits.joint_lower[index] if below[index] else limits.joint_upper[index]
+    return f"joint{index + 1} 目标 {positions[index]:.6g} 超过{direction} {limit:.6g}"
+
+
+def arm_magnitude_reject_reason(
+    values: np.ndarray,
+    limits: np.ndarray,
+    *,
+    label: str,
+) -> str:
+    exceeded = np.abs(values) > limits
+    if not np.any(exceeded):
+        return ""
+    index = int(np.flatnonzero(exceeded)[0])
+    return f"joint{index + 1} {label} {values[index]:.6g} 超过限值 ±{limits[index]:.6g}"
 
 
 def metadata_value(metadata, key: str) -> str:
@@ -202,6 +243,73 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         )
         return response
 
+    async def SetZero(self, request, context):
+        if not request.confirm:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "SetZero 必须 confirm=true")
+        if self._hardware_loop.has_active_motion:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "存在活动运动，拒绝重定义零点")
+        motor_ids = list(request.motor_ids) or None
+
+        def set_zero(backend):
+            states = backend.read_all()
+            if len(states) != 7 or not all(state.valid for state in states):
+                return False, False, "电机状态无效或连接不完整"
+            moving = [state.name for state in states if abs(state.velocity) > 0.01]
+            if moving:
+                return False, False, f"电机尚未静止: {moving}"
+            result = backend.set_zero(motor_ids)
+            if result[0]:
+                backend.refresh_state()
+            return result
+
+        try:
+            accepted, persisted, reject_reason = await asyncio.wrap_future(
+                self._hardware_loop.submit(set_zero)
+            )
+        except BackendError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        return arm_pb2.SetZeroResponse(
+            accepted=accepted,
+            persisted=persisted,
+            reject_reason=reject_reason,
+        )
+
+    async def GetJointState(self, request, context):
+        del request
+        cached = self._hardware_loop.latest_state()
+        if cached is None:
+            await context.abort(grpc.StatusCode.UNAVAILABLE, "尚无电机状态缓存")
+        return joint_state_message(cached)
+
+    async def GetGripperState(self, request, context):
+        del request
+        cached = self._hardware_loop.latest_state()
+        if cached is None:
+            await context.abort(grpc.StatusCode.UNAVAILABLE, "尚无电机状态缓存")
+        return gripper_state_message(cached)
+
+    async def StreamState(self, request, context) -> AsyncIterator[arm_pb2.RobotState]:
+        rate_hz = optional_double(request, "rate_hz", 10.0)
+        if rate_hz <= 0 or rate_hz > 100:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "rate_hz 必须位于 (0, 100]")
+        include_joints = request.joints or not request.gripper
+        include_gripper = request.gripper or not request.joints
+        period_s = 1.0 / rate_hz
+        try:
+            while True:
+                cached = self._hardware_loop.latest_state()
+                if cached is None:
+                    await context.abort(grpc.StatusCode.UNAVAILABLE, "尚无电机状态缓存")
+                yield robot_state_message(
+                    cached,
+                    estop_engaged=self._hardware_loop.estop_engaged,
+                    include_joints=include_joints,
+                    include_gripper=include_gripper,
+                )
+                await asyncio.sleep(period_s)
+        except asyncio.CancelledError:
+            return
+
     async def GetDaemonStatus(self, request, context):
         del request, context
         is_sim, sdk_version, estop_latch_hazard_present = await asyncio.wrap_future(
@@ -225,5 +333,234 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         )
 
     async def JointMove(self, request, context):
-        del request
-        await context.abort(grpc.StatusCode.UNIMPLEMENTED, "JointMove 将在 M3 实现")
+        try:
+            positions = finite_vector(request.positions, name="positions")
+            velocities = finite_vector(request.velocities, name="velocities")
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        if np.any(velocities < 0):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "JointMove.velocities 不得为负数")
+        tolerance = optional_double(request, "tolerance", 0.1)
+        timeout_s = optional_double(request, "timeout_s", 15.0)
+        if tolerance < 0 or timeout_s < 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tolerance/timeout_s 不得为负数")
+        limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
+        max_torque = (
+            finite_vector(request.max_torque, name="max_torque")
+            if request.max_torque
+            else limits.joint_torque
+        )
+        reject_reason = arm_position_reject_reason(positions, limits)
+        reject_reason = reject_reason or arm_magnitude_reject_reason(
+            velocities, limits.joint_velocity, label="速度"
+        )
+        reject_reason = reject_reason or arm_magnitude_reject_reason(
+            max_torque, limits.joint_torque, label="最大力矩"
+        )
+        if np.any(max_torque <= 0):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "max_torque 必须全部为正数")
+        if reject_reason:
+            return arm_pb2.JointMoveResponse(accepted=False, reject_reason=reject_reason)
+        motion = JointPositionMotion(
+            positions=positions,
+            velocities=velocities,
+            max_torque=max_torque,
+            tolerance=tolerance,
+            deadline=time.monotonic() + timeout_s,
+        )
+        return await self._run_position_motion(motion, request.wait, arm_pb2.JointMoveResponse, context)
+
+    async def MoveJ(self, request, context):
+        try:
+            positions = finite_vector(request.positions, name="positions")
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        if not np.isfinite(request.duration_s) or request.duration_s <= 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "duration_s 必须为正数")
+        tolerance = optional_double(request, "tolerance", 0.1)
+        timeout_s = optional_double(request, "timeout_s", 15.0)
+        if tolerance < 0 or timeout_s < 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tolerance/timeout_s 不得为负数")
+        limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
+        max_torque = (
+            finite_vector(request.max_torque, name="max_torque")
+            if request.max_torque
+            else limits.joint_torque
+        )
+        reject_reason = arm_position_reject_reason(positions, limits)
+        reject_reason = reject_reason or arm_magnitude_reject_reason(
+            max_torque, limits.joint_torque, label="最大力矩"
+        )
+        if np.any(max_torque <= 0):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "max_torque 必须全部为正数")
+        cached = self._hardware_loop.latest_state()
+        if cached is None or not all(state.valid for state in cached.motors[:6]):
+            return arm_pb2.MoveJResponse(accepted=False, reject_reason="关节状态无效或连接不完整")
+        current = np.array([state.position for state in cached.motors[:6]], dtype=np.float64)
+        velocities = np.abs(positions - current) / request.duration_s
+        reject_reason = reject_reason or arm_magnitude_reject_reason(
+            velocities, limits.joint_velocity, label="计算速度"
+        )
+        if reject_reason:
+            return arm_pb2.MoveJResponse(accepted=False, reject_reason=reject_reason)
+        motion = JointPositionMotion(
+            positions=positions,
+            velocities=velocities,
+            max_torque=max_torque,
+            tolerance=tolerance,
+            deadline=time.monotonic() + timeout_s,
+        )
+        return await self._run_position_motion(motion, request.wait, arm_pb2.MoveJResponse, context)
+
+    async def JointJog(self, request_iterator, context) -> AsyncIterator[arm_pb2.JointJogFeedback]:
+        iterator = request_iterator.__aiter__()
+        try:
+            first = await iterator.__anext__()
+        except StopAsyncIteration:
+            return
+        limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
+        try:
+            first_velocities = finite_vector(first.velocities, name="velocities")
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        reject_reason = arm_magnitude_reject_reason(first_velocities, limits.joint_velocity, label="速度")
+        if reject_reason:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, reject_reason)
+
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        motion = JointJogMotion()
+        motion.update(first_velocities)
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+
+        async def consume_commands() -> None:
+            async for command in iterator:
+                velocities = finite_vector(command.velocities, name="velocities")
+                reason = arm_magnitude_reject_reason(velocities, limits.joint_velocity, label="速度")
+                if reason:
+                    raise ValueError(reason)
+                if not self._leases.heartbeat(token):
+                    raise PermissionError("控制权 lease 已失效")
+                motion.update(velocities)
+
+        consumer = asyncio.create_task(consume_commands(), name="panthera-joint-jog-consumer")
+        try:
+            while not completion.done():
+                if consumer.done():
+                    error = consumer.exception()
+                    if isinstance(error, ValueError):
+                        await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(error))
+                    if isinstance(error, PermissionError):
+                        await context.abort(grpc.StatusCode.PERMISSION_DENIED, str(error))
+                    break
+                cached = self._hardware_loop.latest_state()
+                if cached is not None:
+                    yield arm_pb2.JointJogFeedback(
+                        joint_state=joint_state_message(cached),
+                        limit_hit=motion.limit_hit,
+                    )
+                await asyncio.sleep(0.05)
+        finally:
+            motion.request_cancel(CancelReason.CLIENT)
+            consumer.cancel()
+            try:
+                await consumer
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+            try:
+                await asyncio.wait_for(asyncio.wrap_future(completion), timeout=0.5)
+            except (TimeoutError, RuntimeError):
+                pass
+
+    async def GripperMove(self, request, context):
+        return await self._gripper_move(
+            position=request.position,
+            velocity=request.velocity,
+            max_torque=optional_double(request, "max_torque", 0.5),
+            context=context,
+        )
+
+    async def GripperOpen(self, request, context):
+        return await self._gripper_move(
+            position=optional_double(request, "position", 1.6),
+            velocity=optional_double(request, "velocity", 0.5),
+            max_torque=optional_double(request, "max_torque", 0.5),
+            context=context,
+        )
+
+    async def GripperClose(self, request, context):
+        return await self._gripper_move(
+            position=optional_double(request, "position", 0.0),
+            velocity=optional_double(request, "velocity", 0.5),
+            max_torque=optional_double(request, "max_torque", 0.5),
+            context=context,
+        )
+
+    async def _run_position_motion(self, motion, wait, response_type, context):
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            return response_type(accepted=False, reject_reason=str(exc))
+        if not wait:
+            return response_type(accepted=True, reached=False)
+        try:
+            result = await asyncio.wrap_future(completion)
+        except asyncio.CancelledError:
+            motion.request_cancel(CancelReason.CLIENT)
+            raise
+        except (BackendError, LimitViolationError, RuntimeError, ValueError) as exc:
+            return response_type(accepted=False, reject_reason=str(exc))
+        return response_type(
+            accepted=True,
+            reached=result is MotionStepResult.DONE,
+            errors=motion.errors.tolist(),
+            reject_reason=motion.reject_reason,
+        )
+
+    async def _gripper_move(self, *, position, velocity, max_torque, context):
+        values = np.array([position, velocity, max_torque], dtype=np.float64)
+        if not np.all(np.isfinite(values)):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "夹爪参数必须为有限数值")
+        if velocity < 0 or max_torque <= 0:
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT, "夹爪 velocity 不得为负且 max_torque 必须为正"
+            )
+        if self._hardware_loop.has_active_motion:
+            return arm_pb2.GripperMoveResponse(accepted=False, reject_reason="已有运动正在执行")
+
+        def command(backend):
+            limits = backend.limits
+            if position < limits.gripper_lower:
+                return False, f"gripper 目标 {position:.6g} 超过下限 {limits.gripper_lower:.6g}"
+            if position > limits.gripper_upper:
+                return False, f"gripper 目标 {position:.6g} 超过上限 {limits.gripper_upper:.6g}"
+            if velocity > limits.gripper_velocity:
+                return False, f"gripper 速度 {velocity:.6g} 超过限值 {limits.gripper_velocity:.6g}"
+            if max_torque > limits.gripper_torque:
+                return False, f"gripper 最大力矩 {max_torque:.6g} 超过限值 {limits.gripper_torque:.6g}"
+            states = backend.read_all()
+            if len(states) != 7 or not all(state.valid for state in states):
+                return False, "电机状态无效或连接不完整"
+            backend.write_frame(
+                position_frame(
+                    backend,
+                    arm_position=np.array([state.position for state in states[:6]], dtype=np.float64),
+                    arm_velocity=np.full(6, 0.1),
+                    gripper_position=position,
+                    gripper_velocity=velocity,
+                    gripper_max_torque=max_torque,
+                )
+            )
+            return True, ""
+
+        try:
+            accepted, reject_reason = await asyncio.wrap_future(self._hardware_loop.submit(command))
+        except (BackendError, LimitViolationError, ValueError) as exc:
+            return arm_pb2.GripperMoveResponse(accepted=False, reject_reason=str(exc))
+        return arm_pb2.GripperMoveResponse(accepted=accepted, reject_reason=reject_reason)

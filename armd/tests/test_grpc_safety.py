@@ -74,7 +74,7 @@ async def test_force_acquire_invalidates_previous_token(grpc_stack) -> None:
 
     with pytest.raises(grpc.aio.AioRpcError) as new_token:
         await stub.JointMove(arm_pb2.JointMoveRequest(), metadata=lease_metadata(second.lease_token))
-    assert new_token.value.code() is grpc.StatusCode.UNIMPLEMENTED
+    assert new_token.value.code() is grpc.StatusCode.INVALID_ARGUMENT
 
 
 @pytest.mark.asyncio
@@ -87,9 +87,8 @@ async def test_mutating_rpc_requires_valid_metadata_lease(grpc_stack) -> None:
     assert missing.value.code() is grpc.StatusCode.PERMISSION_DENIED
 
     acquired = await stub.AcquireControl(arm_pb2.AcquireControlRequest(client_id="holder"))
-    with pytest.raises(grpc.aio.AioRpcError) as accepted_by_interceptor:
-        await stub.JointMove(request, metadata=lease_metadata(acquired.lease_token))
-    assert accepted_by_interceptor.value.code() is grpc.StatusCode.UNIMPLEMENTED
+    accepted = await stub.JointMove(request, metadata=lease_metadata(acquired.lease_token))
+    assert accepted.accepted
 
 
 @pytest.mark.asyncio

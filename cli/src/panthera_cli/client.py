@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import grpc
-from panthera_arm import arm_pb2_grpc
+from panthera_arm import arm_pb2, arm_pb2_grpc
 
 LEASE_METADATA_KEY = "x-panthera-lease"
 
@@ -62,3 +64,33 @@ def lease_metadata(lease: SavedLease):
 def create_stub(target: str | None = None):
     channel = grpc.insecure_channel(target or endpoint())
     return channel, arm_pb2_grpc.ArmServiceStub(channel)
+
+
+@contextmanager
+def maintain_heartbeat(lease: SavedLease, *, interval_s: float = 0.5):
+    stop = threading.Event()
+
+    def run() -> None:
+        channel, stub = create_stub(lease.endpoint)
+
+        def requests():
+            while not stop.is_set():
+                yield arm_pb2.HeartbeatRequest()
+                stop.wait(interval_s)
+
+        try:
+            for _ in stub.Heartbeat(requests(), metadata=lease_metadata(lease)):
+                if stop.is_set():
+                    break
+        except grpc.RpcError:
+            pass
+        finally:
+            channel.close()
+
+    thread = threading.Thread(target=run, name="panthera-cli-heartbeat", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=2.0)

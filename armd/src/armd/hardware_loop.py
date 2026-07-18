@@ -69,6 +69,7 @@ class _BackendCall(Generic[ResultT]):
 @dataclass(slots=True)
 class _StartMotion:
     motion: SteppableMotion
+    accepted: Future[None]
     future: Future[MotionStepResult]
 
 
@@ -169,10 +170,15 @@ class HardwareLoop:
         return future
 
     def start_motion(self, motion: SteppableMotion) -> Future[MotionStepResult]:
+        _, completion = self.start_motion_with_ack(motion)
+        return completion
+
+    def start_motion_with_ack(self, motion: SteppableMotion) -> tuple[Future[None], Future[MotionStepResult]]:
         self._require_running()
+        accepted: Future[None] = Future()
         future: Future[MotionStepResult] = Future()
-        self._requests.put(_StartMotion(motion=motion, future=future))
-        return future
+        self._requests.put(_StartMotion(motion=motion, accepted=accepted, future=future))
+        return accepted, future
 
     def request_cancel(self, reason: CancelReason = CancelReason.CLIENT) -> None:
         self._require_running()
@@ -294,10 +300,13 @@ class HardwareLoop:
                 return
             if isinstance(request, _StartMotion):
                 if self._active_motion is not None:
-                    request.future.set_exception(RuntimeError("已有运动正在执行"))
+                    error = RuntimeError("已有运动正在执行")
+                    request.accepted.set_exception(error)
+                    request.future.set_exception(error)
                 else:
                     self._active_motion = request.motion
                     self._motion_future = request.future
+                    request.accepted.set_result(None)
                 continue
             if request.future.cancelled():
                 continue
@@ -352,6 +361,8 @@ class HardwareLoop:
                 request = self._requests.get_nowait()
             except queue.Empty:
                 return
+            if isinstance(request, _StartMotion) and not request.accepted.done():
+                request.accepted.set_exception(error)
             if not request.future.done():
                 request.future.set_exception(error)
 

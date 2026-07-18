@@ -23,7 +23,7 @@
 | 阶段 -1 | 前置准备（环境 + SDK 核实） | 5 / 5 ✅ |
 | 阶段 0 | M0 架构验证 spike（v1 硬前置） | 6 / 6 ✅ |
 | 阶段 1 | 契约与仓库骨架 | 6 / 6 ✅ |
-| 阶段 2 | v1：armd + CLI（M1–M4） | 0 / 4 |
+| 阶段 2 | v1：armd + CLI（M1–M4） | 1 / 4 |
 | 阶段 3 | WPF v1（M-W0 – M-W3） | 0 / 5 |
 | 阶段 4 | v2（M5–M9） | 0 / 5 |
 
@@ -80,15 +80,15 @@
 > M1 已收口：lease/EStop/watchdog、RealBackend、N1/N4/N5 防护与 150ms 固件看门狗均已落地；真机运行仍遵守逐次确认红线。
 
 ### M2 状态与标定
-- [ ] 🧪 实现：`state get`、`state watch`（`StreamState`）、`calibrate zero`
-- [ ] 🧪 验收：`state watch` 连续输出、断线重连不 crash、`age_ms` 正确反映新鲜度
-- [ ] 🧪 **999.0 哨兵处理**：`position == 999.0` 视为未连接/无效，不得当真实位置推给客户端
+- [x] 🧪 实现 ✅ `state get`、`state watch`（`StreamState`）、`calibrate zero` 已接入 gRPC 与 CLI；归零强制 lease + `confirm=true` + 电机静止检查
+- [x] 🧪 验收 ✅ `state watch` 可配置 0–100Hz 持续输出，断流可重新订阅；`age_ms` 来自 HardwareLoop 单调时钟缓存年龄
+- [x] 🧪 **999.0 哨兵处理** ✅ 对外 `valid=false`，位置/速度/力矩清零，不把 SDK 的 999.0 当真实位置输出
 - [ ] 🔒 验收：`calibrate zero --confirm` 行为与核实结论一致（不产生运动、需补 `motor_send_cmd()`、全体归零不持久化）
 
 ### M3 关节 / 夹爪控制
-- [ ] 🧪 实现：`joint jog/move/movej`、`gripper open/close/move`（gripper 直调 `gripper_control` 绕开恒 `None` 缺陷）
-- [ ] 🧪 验收：越限 `joint move` 被拒且含关节名 + 方向 + 限位值
-- [ ] 🧪 验收：`joint jog` 关流或 250ms 无新指令自动停、不漂移
+- [x] 🧪 实现 ✅ `joint jog/move/movej`、`gripper open/close/move` 均已接入；位置运动使用 HardwareLoop 非阻塞状态机，CLI `--wait` 自动维持 heartbeat
+- [x] 🧪 验收 ✅ 越限 `joint move` 被拒且包含关节名、方向和限位值；速度/力矩也在入队前检查
+- [x] 🧪 验收 ✅ `joint jog` 关流立即归零，250ms 无新指令自动归零；近软限位 0.02rad 时屏蔽朝外速度并返回 `limit_hit`
 - [ ] 🔒 验收：`joint movej --wait` 到达/超时才返回、误差在 `--tolerance` 内，且等待期间 watchdog/EStop 仍响应
 - [ ] 🔒 验收：`gripper open/close` 正确反映限位拒绝并带 `reject_reason`
 

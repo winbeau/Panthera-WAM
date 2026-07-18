@@ -39,6 +39,65 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
 
         acquired = runner.invoke(app, ["control", "acquire", "--client-id", "cli-test"])
         assert acquired.exit_code == 0, acquired.output
+
+        state = runner.invoke(app, ["state", "get", "--json"])
+        assert state.exit_code == 0, state.output
+        assert '"motor_id": 7' in state.output
+
+        moved = runner.invoke(
+            app,
+            [
+                "joint",
+                "move",
+                "--pos",
+                "0.02,0,0,0,0,0",
+                "--vel",
+                "0.5,0.5,0.5,0.5,0.5,0.5",
+                "--wait",
+                "--tolerance",
+                "0.001",
+                "--timeout",
+                "1",
+            ],
+        )
+        assert moved.exit_code == 0, moved.output
+        assert "reached=True" in moved.output
+
+        movej = runner.invoke(
+            app,
+            [
+                "joint",
+                "movej",
+                "--pos",
+                "0.03,0,0,0,0,0",
+                "--duration",
+                "0.1",
+                "--wait",
+                "--tolerance",
+                "0.001",
+                "--timeout",
+                "1",
+            ],
+        )
+        assert movej.exit_code == 0, movej.output
+
+        jog = runner.invoke(
+            app,
+            ["joint", "jog", "--vel", "-0.1,0,0,0,0,0", "--duration", "0.1"],
+        )
+        assert jog.exit_code == 0, jog.output
+
+        gripper = runner.invoke(
+            app,
+            ["gripper", "open", "--pos", "0.1", "--vel", "0.5"],
+        )
+        assert gripper.exit_code == 0, gripper.output
+        time.sleep(0.25)
+
+        zero = runner.invoke(app, ["calibrate", "zero", "--confirm", "--motor-ids", "1,7"])
+        assert zero.exit_code == 0, zero.output
+        assert "已持久化" in zero.output
+
         status = runner.invoke(app, ["control", "status", "--json"])
         assert status.exit_code == 0, status.output
         assert '"held": true' in status.output
