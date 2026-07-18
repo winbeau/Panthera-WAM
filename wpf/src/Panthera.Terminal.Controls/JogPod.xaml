@@ -31,11 +31,17 @@
             <UniformGrid Grid.Row="2" Columns="2">
                 <controls:JogButton Margin="0,0,3,0" Content="−"
                                     Style="{DynamicResource JogRockerButtonStyle}"
+                                    ToolTip="按住鼠标、空格或回车执行负向点动，松开即停"
+                                    AutomationProperties.Name="{Binding Title, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0} 负向点动}"
+                                    AutomationProperties.HelpText="按住空格或回车持续点动，松开立即停止"
                                     JogParameter="{Binding NegativeParameter, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     PressCommand="{Binding PressCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     ReleaseCommand="{Binding ReleaseCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
                 <controls:JogButton Margin="3,0,0,0" Content="+"
                                     Style="{DynamicResource JogRockerButtonStyle}"
+                                    ToolTip="按住鼠标、空格或回车执行正向点动，松开即停"
+                                    AutomationProperties.Name="{Binding Title, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0} 正向点动}"
+                                    AutomationProperties.HelpText="按住空格或回车持续点动，松开立即停止"
                                     JogParameter="{Binding PositiveParameter, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     PressCommand="{Binding PressCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     ReleaseCommand="{Binding ReleaseCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />

@@ -8,9 +8,58 @@ import sys
 import time
 
 import grpc
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from panthera_cli.__main__ import app
+
+
+EXPECTED_V1_COMMANDS = {
+    "calibrate zero",
+    "cartesian movel",
+    "cartesian plan-preview",
+    "control acquire",
+    "control heartbeat",
+    "control release",
+    "control status",
+    "daemon status",
+    "daemon version",
+    "estop reset",
+    "estop trigger",
+    "execution cancel",
+    "execution watch",
+    "gripper close",
+    "gripper move",
+    "gripper open",
+    "joint jog",
+    "joint move",
+    "joint movej",
+    "kinematics fk",
+    "kinematics ik",
+    "kinematics jacobian",
+    "kinematics manipulability",
+    "safety check-reached",
+    "safety limits show",
+    "state get",
+    "state watch",
+}
+
+
+def command_paths(group, prefix: tuple[str, ...] = ()) -> set[str]:
+    paths: set[str] = set()
+    for name, command in group.commands.items():
+        path = (*prefix, name)
+        if hasattr(command, "commands"):
+            paths.update(command_paths(command, path))
+        else:
+            paths.add(" ".join(path))
+    return paths
+
+
+def test_v1_command_inventory_is_explicit() -> None:
+    root = get_command(app)
+    assert hasattr(root, "commands")
+    assert command_paths(root) == EXPECTED_V1_COMMANDS
 
 
 def free_port() -> int:
@@ -98,6 +147,10 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
         zero = runner.invoke(app, ["calibrate", "zero", "--confirm", "--motor-ids", "1,7"])
         assert zero.exit_code == 0, zero.output
         assert "已持久化" in zero.output
+
+        zero_all = runner.invoke(app, ["calibrate", "zero", "--confirm"])
+        assert zero_all.exit_code == 0, zero_all.output
+        assert "仅本次上电有效" in zero_all.output
 
         fk = runner.invoke(app, ["kinematics", "fk", "--json"])
         assert fk.exit_code == 0, fk.output

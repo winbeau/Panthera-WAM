@@ -62,6 +62,12 @@ async def test_m2_state_stream_and_zero_semantics(motion_stack) -> None:
     )
     assert selected.accepted and selected.persisted
 
+    all_motors = await stub.SetZero(
+        arm_pb2.SetZeroRequest(confirm=True),
+        metadata=metadata,
+    )
+    assert all_motors.accepted and not all_motors.persisted
+
     await asyncio.wrap_future(loop.submit(lambda backend: backend.set_motor_connected(3, False)))
     await asyncio.sleep(0.02)
     invalid = await stub.GetJointState(arm_pb2.Empty())
@@ -125,6 +131,20 @@ async def test_movej_wait_and_gripper_commands(motion_stack) -> None:
     )
     assert not rejected.accepted
     assert "上限" in rejected.reject_reason
+
+    rejected_open = await stub.GripperOpen(
+        arm_pb2.GripperOpenRequest(position=2.1),
+        metadata=metadata,
+    )
+    assert not rejected_open.accepted
+    assert "目标" in rejected_open.reject_reason and "上限" in rejected_open.reject_reason
+
+    rejected_close = await stub.GripperClose(
+        arm_pb2.GripperCloseRequest(position=-0.1),
+        metadata=metadata,
+    )
+    assert not rejected_close.accepted
+    assert "目标" in rejected_close.reject_reason and "下限" in rejected_close.reject_reason
 
 
 @pytest.mark.asyncio

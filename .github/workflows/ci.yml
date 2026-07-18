@@ -16,3 +16,19 @@ jobs:
         run: python -m pip install uv
       - name: Run checks
         run: make check
+
+  wpf:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - name: Restore WPF solution
+        run: dotnet restore wpf/Panthera.Terminal.sln
+      - name: Build WPF release
+        run: dotnet build wpf/Panthera.Terminal.sln --configuration Release --no-restore
+      - name: Run WPF unit tests
+        run: >-
+          dotnet test wpf/tests/Panthera.Terminal.Tests/Panthera.Terminal.Tests.csproj
+          --configuration Release --no-build

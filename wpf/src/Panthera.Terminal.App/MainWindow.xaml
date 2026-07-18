@@ -8,7 +8,8 @@
         ExtendsContentIntoTitleBar="True" WindowBackdropType="None" WindowCornerPreference="Round"
         Foreground="{DynamicResource TextFillColorPrimaryBrush}"
         WindowStartupLocation="CenterScreen" UseLayoutRounding="True"
-        SnapsToDevicePixels="True">
+        SnapsToDevicePixels="True"
+        KeyboardNavigation.TabNavigation="Cycle">
     <ui:FluentWindow.Resources>
         <Style x:Key="CardHeaderStyle" TargetType="Border">
             <Setter Property="Padding" Value="11,8" />
@@ -28,6 +29,11 @@
             <Setter Property="Fill" Value="{DynamicResource TextFillColorTertiaryBrush}" />
         </Style>
     </ui:FluentWindow.Resources>
+
+    <ui:FluentWindow.InputBindings>
+        <KeyBinding Key="F12" Command="{Binding TriggerEStopCommand}" />
+        <KeyBinding Key="Escape" Command="{Binding CancelExecutionCommand}" />
+    </ui:FluentWindow.InputBindings>
 
     <Grid Background="{DynamicResource ApplicationBackgroundBrush}">
         <Grid.RowDefinitions>
@@ -123,7 +129,9 @@
                                AutomationProperties.AutomationId="ResetEStopButton" />
                     <ui:Button Content="急停 EStop" Icon="{ui:SymbolIcon Warning20}" Appearance="Danger"
                                Height="34" Padding="12,0" Command="{Binding TriggerEStopCommand}" Margin="8,0,0,0"
-                               ToolTip="紧急停止，无需控制权" AutomationProperties.AutomationId="EStopButton" />
+                               ToolTip="紧急停止，无需控制权（F12）"
+                               AutomationProperties.HelpText="按 F12 可从窗口内任何位置触发急停"
+                               AutomationProperties.AutomationId="EStopButton" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -269,6 +277,7 @@
                                     <ui:Button Content="MoveL" Appearance="Secondary" Command="{Binding MoveLCommand}" Margin="6,0,0,0"
                                                AutomationProperties.AutomationId="MoveLButton" />
                                     <ui:Button Content="取消" Appearance="Transparent" Command="{Binding CancelExecutionCommand}" Margin="4,0,0,0"
+                                               ToolTip="取消当前长动作（Esc）"
                                                AutomationProperties.AutomationId="CancelExecutionButton" />
                                 </StackPanel>
                                 <TextBlock Text="时长" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorTertiaryBrush}" FontSize="10.5" />

@@ -9,8 +9,11 @@ namespace Panthera.Terminal.UiTests;
 
 public sealed class CockpitUiTests
 {
-    [Fact]
-    public void Cockpit_exposes_the_safety_and_control_surface()
+    [Theory]
+    [InlineData("System")]
+    [InlineData("Light")]
+    [InlineData("Dark")]
+    public void Cockpit_exposes_the_safety_and_control_surface(string theme)
     {
         if (Environment.GetEnvironmentVariable("PANTHERA_RUN_UI_TESTS") != "1")
         {
@@ -32,7 +35,7 @@ public sealed class CockpitUiTests
         };
         startInfo.ArgumentList.Add(applicationAssembly);
         startInfo.Environment["PANTHERA_UI_TEST"] = "1";
-        startInfo.Environment["PANTHERA_SCREENSHOT_THEME"] = "Dark";
+        startInfo.Environment["PANTHERA_SCREENSHOT_THEME"] = theme;
 
         using var application = Application.Launch(startInfo);
         using var automation = new UIA3Automation();
@@ -47,12 +50,17 @@ public sealed class CockpitUiTests
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("AcquireControlButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("ThemeSelector")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("EStopButton")));
+            Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("ResetEStopButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("MoveLButton")));
+            Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("CancelExecutionButton")));
+            Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("GripperOpenButton")));
+            Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("GripperCloseButton")));
 
             var artifactDirectory = Environment.GetEnvironmentVariable("PANTHERA_UI_ARTIFACTS")
                 ?? Path.Combine(AppContext.BaseDirectory, "ui-artifacts");
             Directory.CreateDirectory(artifactDirectory);
-            Capture.Element(window).ToFile(Path.Combine(artifactDirectory, "cockpit-dark.png"));
+            Capture.Element(window).ToFile(
+                Path.Combine(artifactDirectory, $"cockpit-{theme.ToLowerInvariant()}.png"));
         }
         finally
         {

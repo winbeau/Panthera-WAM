@@ -69,6 +69,21 @@ public sealed class JogButton : Button
         base.OnPreviewKeyUp(eventArgs);
     }
 
+    protected override void OnLostKeyboardFocus(KeyboardFocusChangedEventArgs eventArgs)
+    {
+        EndJog();
+        base.OnLostKeyboardFocus(eventArgs);
+    }
+
+    protected override void OnIsEnabledChanged(DependencyPropertyChangedEventArgs eventArgs)
+    {
+        if (eventArgs.NewValue is false)
+        {
+            EndJog();
+        }
+        base.OnIsEnabledChanged(eventArgs);
+    }
+
     private void BeginJog()
     {
         if (_pressed || PressCommand?.CanExecute(JogParameter) != true)

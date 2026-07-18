@@ -10,7 +10,6 @@
             </ResourceDictionary.MergedDictionaries>
 
             <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-            <SolidColorBrush x:Key="CockpitVelocityBrush" Color="#22A7BA" />
 
             <Style x:Key="JogRockerButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                 <Setter Property="MinHeight" Value="32" />
