@@ -28,4 +28,4 @@ docs/     设计文档与计划
 
 ## 状态
 
-计划已敲定（`docs/FINAL_PLAN.md`），WPF 视觉定稿为 C 稿驾驶舱（`docs/mockups/mockup-C-fluent-cockpit.html`）。实现从里程碑 M0 开始，开发约定见 `CLAUDE.md`。
+计划已敲定（`docs/FINAL_PLAN.md`），WPF 视觉定稿为 C 稿驾驶舱（`docs/mockups/mockup-C-fluent-cockpit.html`）。阶段 1 的契约、仿真后端、HardwareLoop 骨架与 CI 已完成；M0-1/M0-2 仍等待真机在场验证，完成前不启动 v1 业务 RPC。最新进度见 `docs/MILESTONES.md`，开发约定见 `CLAUDE.md`。

@@ -22,7 +22,7 @@
 |---|---|---|
 | 阶段 -1 | 前置准备（环境 + SDK 核实） | 5 / 5 ✅ |
 | 阶段 0 | M0 架构验证 spike（v1 硬前置） | 3 / 6 |
-| 阶段 1 | 契约与仓库骨架 | 3 / 6 |
+| 阶段 1 | 契约与仓库骨架 | 6 / 6 ✅ |
 | 阶段 2 | v1：armd + CLI（M1–M4） | 0 / 4 |
 | 阶段 3 | WPF v1（M-W0 – M-W3） | 0 / 5 |
 | 阶段 4 | v2（M5–M9） | 0 / 5 |
@@ -57,9 +57,9 @@
 - [x] 🧪 **`proto/arm.proto`** ✅ 40 个 rpc（7 个流式）。已焊入核实修正：`MotorState` 删 `online`、补 `fault`/`mode`/`motor_time`/`pos_limit_flag`/`tor_limit_flag`/`valid`；IK 默认值经核实无需改并新增 `timeout_s`（默认 0.5s）；`avoid_collisions` 标 `deprecated` 并注明恒不生效；新增 `SetZero.persisted`、`SoftLimits.hardware_limits_enabled`、`DaemonStatus.estop_latch_hazard_present` 三个由核实结论倒逼出的字段
 - [x] 🧪 **codegen** ✅ `proto/gen.sh` 生成 Python stub 到 `proto/gen/python/panthera_arm/`（含 `.pyi`，并修正 grpc 生成物的顶层 import 为包内相对 import）。C# 侧不重复生成物：由 Grpc.Tools 在 `dotnet build` 时按 csproj 引用同一份 `arm.proto` 生成
 - [x] 🧪 **仓库骨架** ✅ `proto/ armd/ cli/ wpf/ deploy/` 就位；根 `pyproject.toml` 为 uv workspace（成员 armd / cli / proto/gen/python），`panthera-arm-proto` 以 workspace 依赖被两端共享，已 `uv` 解析构建通过
-- [ ] 🧪 **`armd --sim` 仿真后端**：不依赖真机的 `Panthera` 替身，支持全部只读 + 运动语义，供全部 pytest 使用
-- [ ] 🧪 **HardwareLoop 骨架**：单线程独占、逐周期非阻塞步进、estop/cancel 标志优先检查（按 N7 结论确定下发编排）
-- [ ] 🧪 **测试与 CI**：pytest 全走 `--sim`；`make`/脚本一键跑通
+- [x] 🧪 **`armd --sim` 仿真后端** ✅ 6 关节 + 1 夹爪一阶电机模型；支持 POS-VEL / VELOCITY / MIT 整帧同模式下发、软限位、999.0 未连接哨兵、fault 注入、EStop 冻结、全体/逐电机归零持久化语义；`armd --sim --check` 可独立自检
+- [x] 🧪 **HardwareLoop 骨架** ✅ 后端对象在线程内创建并独占；固定周期绝对时间基调度；每周期按 estop → cancel → 状态刷新 → 有界命令队列 → 非阻塞 motion step 顺序推进；N7 由 `JointFrame` 完整 7 槽同模式校验强制；EStop latch 与提交后立即 cancel 的竞态已覆盖
+- [x] 🧪 **测试与 CI** ✅ 14 项 pytest 全走 `SimBackend`，覆盖整帧三模式/限位/归零/断连/线程独占/cancel/EStop<100ms/状态缓存；根 `make check` 一键执行 ruff + pytest + `armd --sim --check`；GitHub Actions 已接入
 
 ---
 
