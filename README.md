@@ -28,4 +28,4 @@ docs/     设计文档与计划
 
 ## 状态
 
-规划阶段——详细设计计划见 `docs/`。
+计划已敲定（`docs/FINAL_PLAN.md`），WPF 视觉定稿为 C 稿驾驶舱（`docs/mockups/mockup-C-fluent-cockpit.html`）。实现从里程碑 M0 开始，开发约定见 `CLAUDE.md`。

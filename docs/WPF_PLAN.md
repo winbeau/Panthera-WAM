@@ -1,5 +1,7 @@
 # Panthera-HT WPF 控制终端 —— 详细设计计划
 
+> **视觉定稿（2026-07-18）**：UI 采用稿 C「Fluent 驾驶舱」，视觉与交互基准为 `docs/mockups/mockup-C-fluent-cockpit.html`（中央 SVG 雷达俯视图 + 左右圆形关节仪表 + jog pod 阵列）。本文档的页面结构描述若与 C 稿冲突，以 C 稿为准；技术架构（MVVM/gRPC/主题系统）不受影响。
+
 > 范围声明：本文档只覆盖 **客户端**（Windows WPF 控制终端）一侧的设计，不涉及 armd / gRPC 服务端实现代码，也不写任何 C#/XAML 代码，仅做架构与页面/交互的详细规划。前置架构决策（六轴 Panthera-HT + D405、WSL2 独占硬件跑 armd、gRPC+protobuf localhost:50051、HardwareLoop 单线程、v1=关节监控+jog+moveJ/moveL）视为既定事实，不重复论证。
 
 ---
