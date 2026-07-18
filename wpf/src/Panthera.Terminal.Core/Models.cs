@@ -94,6 +94,7 @@ public sealed record TerminalSettings(
     string Theme = "System",
     string WslDistribution = "Ubuntu-22.04",
     string WslUser = "",
+    string UsbSerial = "",
     double JogSpeed = 0.15,
     double JogStep = 0.02);
 

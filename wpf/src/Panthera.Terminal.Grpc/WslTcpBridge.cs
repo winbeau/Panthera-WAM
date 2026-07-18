@@ -94,8 +94,11 @@ public sealed class WslTcpBridge
         };
         startInfo.ArgumentList.Add("-d");
         startInfo.ArgumentList.Add(_distribution);
-        startInfo.ArgumentList.Add("-u");
-        startInfo.ArgumentList.Add(_user);
+        if (!string.IsNullOrWhiteSpace(_user))
+        {
+            startInfo.ArgumentList.Add("-u");
+            startInfo.ArgumentList.Add(_user);
+        }
         startInfo.ArgumentList.Add("--");
         startInfo.ArgumentList.Add("nc");
         startInfo.ArgumentList.Add("127.0.0.1");

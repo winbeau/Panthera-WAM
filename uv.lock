@@ -449,7 +449,7 @@ wheels = [
 
 [[package]]
 name = "panthera-arm-proto"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "proto/gen/python" }
 dependencies = [
     { name = "grpcio" },
@@ -464,7 +464,7 @@ requires-dist = [
 
 [[package]]
 name = "panthera-armd"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "armd" }
 dependencies = [
     { name = "grpcio" },
@@ -501,7 +501,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "panthera-cli"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "cli" }
 dependencies = [
     { name = "grpcio" },

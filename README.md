@@ -1,17 +1,22 @@
 # Panthera-WAM
 
+[![CI](https://github.com/winbeau/Panthera-WAM/actions/workflows/ci.yml/badge.svg)](https://github.com/winbeau/Panthera-WAM/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/winbeau/Panthera-WAM)](https://github.com/winbeau/Panthera-WAM/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Panthera-HT 六轴机械臂的控制底座与 World Action Model 数据平台。
 
 ## 当前状态
 
-项目处于 **v1 收尾验收**：armd、27 条 CLI 命令和 WPF 控制闭环均已实现。
-自动化覆盖仿真后端、真实后端 fake、lease/watchdog/EStop、状态与标定、
-关节/夹爪、运动学、MoveL 执行状态以及 WPF 核心逻辑。
+**v1.0.0 已完成**：armd、27 条 CLI 命令、WPF 控制闭环和自包含 Windows Release
+均已交付。自动化覆盖仿真后端、真实后端 fake、lease/watchdog/EStop、状态与标定、
+关节/夹爪、运动学、MoveL 执行状态，以及 WPF 四主题和完整键盘焦点循环。
 
-正式发布前还需要操作员在场完成三项真机签字：夹爪限位拒绝、MoveL 完成/取消、
-全体非持久化归零。具体顺序与恢复步骤见
-[`docs/V1_ACCEPTANCE.md`](docs/V1_ACCEPTANCE.md)。唯一进度来源仍是
-[`docs/MILESTONES.md`](docs/MILESTONES.md)。
+真机验收已完成夹爪限位拒绝、MoveL DONE/CANCELLED、全体非持久化归零及断电恢复。
+证据见 [`docs/V1_ACCEPTANCE.md`](docs/V1_ACCEPTANCE.md)，唯一进度来源是
+[`docs/MILESTONES.md`](docs/MILESTONES.md)。Windows 用户可从
+[GitHub Releases](https://github.com/winbeau/Panthera-WAM/releases/latest) 下载自包含
+`win-x64` 控制终端，无需预装 .NET SDK。
 
 ## 架构
 
@@ -63,8 +68,10 @@ systemctl --user status armd --no-pager
 wpf\tools\run-tests.cmd
 ```
 
-该脚本执行 Release 构建、单元测试，以及 FlaUI 的三种可选主题与强制高对比界面测试，并把截图写入
-`%USERPROFILE%\Desktop\Panthera-Design\ui-artifacts`。WPF build 与非 UI 单元测试也已纳入 GitHub Actions。
+该脚本执行 Release 构建、单元测试，以及 FlaUI 的 System/Light/Dark/HighContrast
+四主题测试，并验证获取/释放控制、主题、复位、EStop、MoveJ、MoveL、取消、夹爪和
+12 个 Jog 按钮都能通过 Tab 到达且焦点可循环。截图写入
+`%USERPROFILE%\Desktop\Panthera-Design\ui-artifacts`。同一门禁已纳入 GitHub Actions。
 
 ## 安全红线
 
@@ -74,3 +81,8 @@ wpf\tools\run-tests.cmd
 - `calibrate zero` 虽不产生运动，但会重定义坐标零点，必须按验收文档在最后执行并完成恢复。
 
 详细架构决策见 [`docs/FINAL_PLAN.md`](docs/FINAL_PLAN.md)。
+
+## License
+
+本项目以 [MIT License](LICENSE) 开源。官方 Panthera-HT SDK 作为 git submodule 引用，
+其许可证与使用条件以对应 SDK 仓库为准。

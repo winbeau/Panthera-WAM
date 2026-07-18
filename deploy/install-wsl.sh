@@ -15,7 +15,7 @@ fi
 
 mkdir -p "$config_dir" "$systemd_dir"
 if [[ ! -f "$config_dir/armd.env" ]]; then
-    sed "s|/home/<wsl-user>/panthera-wam|$repo_root|g" \
+    sed "s|__PANTHERA_REPO_ROOT__|$repo_root|g" \
         "$repo_root/deploy/armd.env.example" > "$config_dir/armd.env"
     chmod 600 "$config_dir/armd.env"
 fi

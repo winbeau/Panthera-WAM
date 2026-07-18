@@ -8,7 +8,6 @@ namespace Panthera.Terminal.Settings;
 public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
 {
     private const string TargetVidPid = "VID_CAF1&PID_FFFF";
-    private const string TargetSerial = "DEVICE_SERIAL";
     private readonly IArmdClient _client;
 
     public WindowsEnvironmentGuideService(IArmdClient client)
@@ -36,9 +35,9 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             wslRunning ? $"{settings.WslDistribution} 正在运行" : $"{settings.WslDistribution} 未运行",
             distributions.Command));
 
-        var device = await LocateDeviceAsync(cancellationToken);
+        var device = await LocateDeviceAsync(settings.UsbSerial, cancellationToken);
         steps.Add(Step("机械臂 USB", device is not null,
-            device is null ? $"未找到 {TargetVidPid} / {TargetSerial}" : $"已匹配 busid {device.BusId}",
+            device is null ? $"未找到 {DescribeTarget(settings.UsbSerial)}" : $"已匹配 busid {device.BusId}",
             "usbipd state --json"));
 
         var usbList = await RunAsync("usbipd", ["list"], cancellationToken);
@@ -86,7 +85,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
 
         var startWsl = await RunAsync(
             "wsl.exe",
-            ["-d", settings.WslDistribution, "-u", settings.WslUser, "--", "true"],
+            BuildWslArguments(settings, "true"),
             cancellationToken);
         steps.Add(Step("启动 WSL", startWsl.Success,
             startWsl.Success ? $"{settings.WslDistribution} 已启动" : startWsl.Error,
@@ -96,9 +95,9 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             return new EnvironmentGuideResult(steps);
         }
 
-        var device = await LocateDeviceAsync(cancellationToken);
+        var device = await LocateDeviceAsync(settings.UsbSerial, cancellationToken);
         steps.Add(Step("机械臂 USB", device is not null,
-            device is null ? $"未找到 {TargetVidPid} / {TargetSerial}；请检查上电与 USB" : $"已匹配 busid {device.BusId}",
+            device is null ? $"未找到 {DescribeTarget(settings.UsbSerial)}；请检查上电与 USB" : $"已匹配 busid {device.BusId}",
             "usbipd state --json"));
         if (device is null)
         {
@@ -193,7 +192,9 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
     private static EnvironmentGuideStep Step(string name, bool success, string detail, string command) =>
         new(name, success, detail, command);
 
-    private static async Task<UsbDevice?> LocateDeviceAsync(CancellationToken cancellationToken)
+    private static async Task<UsbDevice?> LocateDeviceAsync(
+        string targetSerial,
+        CancellationToken cancellationToken)
     {
         var state = await RunAsync("usbipd", ["state", "--json"], cancellationToken);
         if (!state.Success || string.IsNullOrWhiteSpace(state.Output))
@@ -201,10 +202,10 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             return null;
         }
         using var document = JsonDocument.Parse(state.Output);
-        return LocateDevice(document.RootElement);
+        return LocateDevice(document.RootElement, targetSerial);
     }
 
-    internal static UsbDevice? LocateDevice(JsonElement element)
+    internal static UsbDevice? LocateDevice(JsonElement element, string targetSerial = "")
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
@@ -224,13 +225,14 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             if (!string.IsNullOrWhiteSpace(instanceId)
                 && !string.IsNullOrWhiteSpace(busId)
                 && instanceId.Contains(TargetVidPid, StringComparison.OrdinalIgnoreCase)
-                && instanceId.Contains(TargetSerial, StringComparison.OrdinalIgnoreCase))
+                && (string.IsNullOrWhiteSpace(targetSerial)
+                    || instanceId.Contains(targetSerial, StringComparison.OrdinalIgnoreCase)))
             {
                 return new UsbDevice(busId, instanceId);
             }
             foreach (var property in element.EnumerateObject())
             {
-                var match = LocateDevice(property.Value);
+                var match = LocateDevice(property.Value, targetSerial);
                 if (match is not null)
                 {
                     return match;
@@ -241,7 +243,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         {
             foreach (var item in element.EnumerateArray())
             {
-                var match = LocateDevice(item);
+                var match = LocateDevice(item, targetSerial);
                 if (match is not null)
                 {
                     return match;
@@ -261,8 +263,26 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         string command,
         CancellationToken cancellationToken) => RunAsync(
             "wsl.exe",
-            ["-d", settings.WslDistribution, "-u", settings.WslUser, "--", "bash", "-lc", command],
+            BuildWslArguments(settings, "bash", "-lc", command),
             cancellationToken);
+
+    private static IReadOnlyList<string> BuildWslArguments(
+        TerminalSettings settings,
+        params string[] command)
+    {
+        var arguments = new List<string> { "-d", settings.WslDistribution };
+        if (!string.IsNullOrWhiteSpace(settings.WslUser))
+        {
+            arguments.Add("-u");
+            arguments.Add(settings.WslUser);
+        }
+        arguments.Add("--");
+        arguments.AddRange(command);
+        return arguments;
+    }
+
+    private static string DescribeTarget(string targetSerial) =>
+        string.IsNullOrWhiteSpace(targetSerial) ? TargetVidPid : $"{TargetVidPid} / {targetSerial}";
 
     private static async Task<ProcessResult> RunElevatedUsbIpdAsync(
         IReadOnlyList<string> arguments,

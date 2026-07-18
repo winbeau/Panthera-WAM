@@ -1,7 +1,7 @@
 # Panthera-WAM
 
 Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Action Model 数据平台。
-当前状态：**实施进行中。进度以 `docs/MILESTONES.md` 为准**（M0、阶段 1 与 M1 已完成；RealBackend 已含 N1/N4/N5 防护，固件看门狗定为 150ms）。
+当前状态：**v1.0.0 已完成。进度以 `docs/MILESTONES.md` 为准**；RealBackend 已含 N1/N4/N5 防护，固件看门狗定为 150ms。
 
 ## 必读文档（按顺序）
 
@@ -22,15 +22,15 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 
 | 事实 | 值 |
 |---|---|
-| 机械臂 | Panthera-HT，USB 复合设备 `VID_CAF1:FFFF`（序列号 DEVICE_SERIAL），7×虚拟串口 |
-| Windows 侧 busid | `3-2`，usbipd 状态已 Shared；挂进 WSL：管理员 PowerShell `usbipd attach --wsl --busid 3-2` |
+| 机械臂 | Panthera-HT，USB 复合设备 `VID_CAF1:FFFF`，7×虚拟串口；具体序列号通过本地设置提供，不提交到仓库 |
+| Windows 侧 busid | 由 `usbipd state --json` 动态发现；挂进 WSL：管理员 PowerShell `usbipd attach --wsl --busid <BUSID>` |
 | 相机 | Intel RealSense D405（v2 才用，届时同样 usbipd 挂 WSL） |
-| WSL2 主机 | wsl-host = `ssh -p <port> <wsl-user>@<WSL_HOST_IP>`（Ubuntu 22.04 + systemd，Tailscale）。**不要在 WSL 里跑 .exe**（interop 挂死），需要 Windows 命令直连下面这台 |
-| Windows 主机 | windows-host = `ssh <windows-user>@<WINDOWS_HOST_IP>`（usbipd / dotnet build / WPF 运行都在这） |
-| Windows 桌面 | `/mnt/c/Users/<windows-user>/Desktop`（视觉稿在 `Desktop/Panthera-Design/`） |
+| WSL2 主机 | Ubuntu 22.04 + systemd；远程地址与账号保存在操作者本地配置，不提交到仓库 |
+| Windows 主机 | usbipd、.NET build 与 WPF 运行在原生 Windows；远程地址与账号不入库 |
+| Windows 桌面 | `%USERPROFILE%\Desktop`（UI 测试产物默认位于 `Panthera-Design\ui-artifacts`） |
 | 官方 SDK | public fork `https://github.com/winbeau/Panthera-HT_SDK`，以 git submodule 固定在 `vendor/Panthera-HT_SDK`；上游为 `HighTorque-Robotics/Panthera-HT_SDK`。装 whl：`motor_whl/hightorque_robot-1.2.0-cp3XX-*-linux_x86_64.whl`；Python 库在 `panthera_python/scripts/Panthera_lib/` |
 
-判断你跑在哪：`/mnt/c` 存在 → 你就在 wsl-host 本地，直接操作硬件侧；否则你在 VPS，armd/CLI 的真机操作走 SSH（有 tmux-ssh-remote skill 就用它保持持久会话）。
+判断你跑在哪：`/mnt/c` 存在 → 你就在 WSL2 本地；否则真机操作需使用操作者本地保存的 SSH 配置。任何远程地址、用户名与设备序列号都不得写入仓库。
 
 ## 安全红线（机械臂会动，会伤人）
 
@@ -38,7 +38,7 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 2. 一切开发默认走 `armd --sim` 仿真后端；真机只用于集成验收。
 3. 首次真机联调顺序：读状态 → Enable → 单关节小角度（≤5°）jog → EStop 演练 → 才允许 moveJ/moveL。
 4. 真机测试脚本必须先打印将要执行的动作并二次确认；力矩限制用保守默认值。
-5. `calibrate zero`（`set_reset_zero`）语义未核实前（FINAL_PLAN 风险 §2），不得对真机调用。
+5. `calibrate zero` 已验证为全体、非持久化且不产生运动；仍必须放在所有运动验收之后，并通过断电恢复原坐标。
 
 ## 开发约定
 

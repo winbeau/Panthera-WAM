@@ -23,7 +23,8 @@ wpf\tools\run-tests.cmd
 
 通过标准：Release 构建 0 warning、单元测试通过、FlaUI 在 System/Light/Dark
 三种可选主题和强制 HighContrast 主题下通过，并生成四张完整 cockpit 截图。
-发布签字前仍需在 Windows 系统高对比设置下手动启动一次，确认系统设置切换与焦点框清晰可见。
+HighContrast 由 Windows FlaUI 实际启动并截图；完整键盘焦点循环由隔离 UI 验收客户端自动执行，
+不会连接 WSL bridge 或真机。
 
 键盘验收：
 
@@ -108,15 +109,15 @@ uv run panthera gripper close --pos -0.01 --vel 0.0
 
 | 项目 | 结果 | 证据/日志 |
 |---|---|---|
-| `make check` | ✅ 通过：57 tests，仿真约 199Hz、0 overrun | [CI 29650914644](https://github.com/winbeau/Panthera-WAM/actions/runs/29650914644) |
-| Windows Release + unit tests | ✅ 通过：Release 0 warning，7 项 .NET 测试 | [CI 29650914644](https://github.com/winbeau/Panthera-WAM/actions/runs/29650914644) |
+| `make check` | ✅ 通过：57 tests，仿真约 199Hz、0 overrun | [CI workflow](https://github.com/winbeau/Panthera-WAM/actions/workflows/ci.yml) |
+| Windows Release + unit tests | ✅ 通过：Release 0 warning，7 项 .NET 测试 | [CI workflow](https://github.com/winbeau/Panthera-WAM/actions/workflows/ci.yml) |
 | FlaUI 三态 + 强制高对比 | 通过：4 次实际启动，4 张 1240×800 截图 | `wpf-ui-artifacts` |
-| Windows 系统高对比与完整 Tab 顺序 | 待人工签字 | |
+| Windows 高对比与完整 Tab 顺序 | ✅ 通过 | HighContrast 实际启动截图；22 个 v1 控件可 Tab 到达并循环 |
 | 夹爪限位拒绝 | ✅ 通过 | `2.01 > 2`、`-0.01 < 0` 均退出码 2；操作员确认未动 |
 | MoveL DONE/CANCELLED | ✅ 通过 | DONE `63298165bc7e4d699656a6335d5263a9`；CANCELLED `70d06abe097e4866b7d6c0ca45427967` |
 | 全体非持久化归零及断电恢复 | ✅ 通过 | 归零无运动；断电后 7/7 有效、`fault=0`、坐标恢复 |
 
-M2/M3/M4 与 CLI v1 完成口径已经收口。完成 M-W3 的 Windows 人工签字后，再创建正式版本 tag。
+M2/M3/M4、M-W3 与 v1 完成口径均已收口，可创建正式版本 tag。
 
 ### 2026-07-18 真机证据
 

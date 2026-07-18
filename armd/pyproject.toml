@@ -1,7 +1,8 @@
 [project]
 name = "panthera-armd"
-version = "0.1.0"
+version = "1.0.0"
 description = "Panthera-HT 机械臂守护服务：独占硬件，对外只暴露 gRPC"
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
     "panthera-arm-proto",
