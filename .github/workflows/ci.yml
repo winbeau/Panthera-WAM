@@ -36,3 +36,17 @@ jobs:
         run: >-
           dotnet test wpf/tests/Panthera.Terminal.Tests/Panthera.Terminal.Tests.csproj
           --configuration Release --no-build
+      - name: Run WPF UI tests
+        env:
+          PANTHERA_RUN_UI_TESTS: "1"
+          PANTHERA_UI_ARTIFACTS: ${{ runner.temp }}\ui-artifacts
+        run: >-
+          dotnet test wpf/tests/Panthera.Terminal.UiTests/Panthera.Terminal.UiTests.csproj
+          --configuration Release --no-build
+      - name: Upload WPF UI artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpf-ui-artifacts
+          path: ${{ runner.temp }}\ui-artifacts
+          if-no-files-found: error
