@@ -246,6 +246,8 @@ class HardwareLoop:
                 if not estop:
                     self._process_requests(backend)
                     self._step_motion(backend, self._clock())
+                    if self._active_motion is None:
+                        backend.maintain_idle()
 
                 cycle_s = self._clock() - cycle_started
                 cycles += 1

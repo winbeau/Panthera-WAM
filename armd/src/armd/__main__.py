@@ -69,14 +69,23 @@ async def run(args: argparse.Namespace) -> None:
 
     loop = HardwareLoop(backend_factory, control_hz=args.control_hz)
     bind = "127.0.0.1:0" if args.check else args.bind
-    server = ArmdServer(loop, bind=bind, lease_timeout_s=args.lease_timeout)
+    server = ArmdServer(
+        loop,
+        bind=bind,
+        lease_timeout_s=args.lease_timeout,
+        sdk_root=args.sdk_root,
+        config_path=args.config,
+    )
     loop.start()
     try:
         await server.start()
         if args.check:
             if not loop.wait_for_cycles(3):
                 raise SystemExit("仿真控制循环未能按期推进")
-            async with grpc.aio.insecure_channel(f"127.0.0.1:{server.port}") as channel:
+            async with grpc.aio.insecure_channel(
+                f"127.0.0.1:{server.port}",
+                options=(("grpc.enable_http_proxy", 0),),
+            ) as channel:
                 stub = arm_pb2_grpc.ArmServiceStub(channel)
                 status = await stub.GetDaemonStatus(arm_pb2.Empty())
                 stats = loop.stats()

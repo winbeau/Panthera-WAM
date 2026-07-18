@@ -17,6 +17,7 @@ from .base import (
     JointFrame,
     LimitViolationError,
     MotorSnapshot,
+    idle_damping_frame,
 )
 
 
@@ -59,6 +60,7 @@ class SimBackend:
         self._pos_limit_flags = np.zeros(7, dtype=np.int8)
         self._tor_limit_flags = np.zeros(7, dtype=np.int8)
         self._mode = FrameMode.STOP
+        self._last_frame: JointFrame | None = None
         self._last_update = self._clock()
         self._motor_time = self._last_update
         self._closed = False
@@ -94,6 +96,7 @@ class SimBackend:
         self._advance()
         if frame.mode in {FrameMode.STOP, FrameMode.BRAKE}:
             self._freeze(frame.mode)
+            self._last_frame = None
             return
 
         positions = np.concatenate((frame.arm_position, [frame.gripper_position]))
@@ -120,6 +123,18 @@ class SimBackend:
             self._feedforward_torque = np.concatenate((frame.arm_torque, [frame.gripper_torque]))
             self._kp = np.concatenate((frame.arm_kp, [frame.gripper_kp]))
             self._kd = np.concatenate((frame.arm_kd, [frame.gripper_kd]))
+        self._last_frame = frame
+
+    def maintain_idle(self) -> None:
+        self._require_open()
+        if self._last_frame is None:
+            self.write_frame(idle_damping_frame(self.limits, self._positions[:6], self._positions[6]))
+            return
+        self.write_frame(self._last_frame)
+
+    def enter_idle_damping(self) -> None:
+        self._require_open()
+        self._last_frame = None
 
     def stop(self) -> None:
         self._require_open()
@@ -146,6 +161,7 @@ class SimBackend:
         self._target_velocities[indices] = 0.0
         self._torques[indices] = 0.0
         self._pos_limit_flags[indices] = 0
+        self._last_frame = None
         persisted = motor_ids is not None
         return True, persisted, ""
 
@@ -170,6 +186,7 @@ class SimBackend:
             return
         self._advance()
         self._freeze(FrameMode.STOP)
+        self._last_frame = None
         self._closed = True
 
     def _advance(self) -> None:

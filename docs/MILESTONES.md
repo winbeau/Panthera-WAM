@@ -23,8 +23,8 @@
 | 阶段 -1 | 前置准备（环境 + SDK 核实） | 5 / 5 ✅ |
 | 阶段 0 | M0 架构验证 spike（v1 硬前置） | 6 / 6 ✅ |
 | 阶段 1 | 契约与仓库骨架 | 6 / 6 ✅ |
-| 阶段 2 | v1：armd + CLI（M1–M4） | 1 / 4 |
-| 阶段 3 | WPF v1（M-W0 – M-W3） | 0 / 5 |
+| 阶段 2 | v1：armd + CLI（M1–M4） | 1 / 4（M2–M4 已实现，真机尾项待验收） |
+| 阶段 3 | WPF v1（M-W0 – M-W3） | 4 / 5 |
 | 阶段 4 | v2（M5–M9） | 0 / 5 |
 
 ---
@@ -54,12 +54,12 @@
 
 ## 阶段 1：契约与仓库骨架
 
-- [x] 🧪 **`proto/arm.proto`** ✅ 40 个 rpc（7 个流式）。已焊入核实修正：`MotorState` 删 `online`、补 `fault`/`mode`/`motor_time`/`pos_limit_flag`/`tor_limit_flag`/`valid`；IK 默认值经核实无需改并新增 `timeout_s`（默认 0.5s）；`avoid_collisions` 标 `deprecated` 并注明恒不生效；新增 `SetZero.persisted`、`SoftLimits.hardware_limits_enabled`、`DaemonStatus.estop_latch_hazard_present` 三个由核实结论倒逼出的字段
+- [x] 🧪 **`proto/arm.proto`** ✅ 44 个 rpc（7 个流式）。已焊入核实修正：`MotorState` 删 `online`、补 `fault`/`mode`/`motor_time`/`pos_limit_flag`/`tor_limit_flag`/`valid`；IK 默认值经核实无需改并新增 `timeout_s`（默认 0.5s）；`avoid_collisions` 标 `deprecated` 并注明恒不生效；新增 `SetZero.persisted`、`SoftLimits.hardware_limits_enabled`、`DaemonStatus.estop_latch_hazard_present` 三个由核实结论倒逼出的字段；另增 4 个 WSL mirrored 兼容短请求 `HeartbeatOnce/GetRobotState/JointJogStep/StopJointJog`
 - [x] 🧪 **codegen** ✅ `proto/gen.sh` 生成 Python stub 到 `proto/gen/python/panthera_arm/`（含 `.pyi`，并修正 grpc 生成物的顶层 import 为包内相对 import）。C# 侧不重复生成物：由 Grpc.Tools 在 `dotnet build` 时按 csproj 引用同一份 `arm.proto` 生成
 - [x] 🧪 **仓库骨架** ✅ `proto/ armd/ cli/ wpf/ deploy/` 就位；根 `pyproject.toml` 为 uv workspace（成员 armd / cli / proto/gen/python），`panthera-arm-proto` 以 workspace 依赖被两端共享，已 `uv` 解析构建通过
 - [x] 🧪 **`armd --sim` 仿真后端** ✅ 6 关节 + 1 夹爪一阶电机模型；支持 POS-VEL / VELOCITY / MIT 整帧同模式下发、软限位、999.0 未连接哨兵、fault 注入、EStop 冻结、全体/逐电机归零持久化语义；`armd --sim --check` 可独立自检
 - [x] 🧪 **HardwareLoop 骨架** ✅ 后端对象在线程内创建并独占；固定周期绝对时间基调度；每周期按 estop → cancel → 状态刷新 → 有界命令队列 → 非阻塞 motion step 顺序推进；N7 由 `JointFrame` 完整 7 槽同模式校验强制；EStop latch 与提交后立即 cancel 的竞态已覆盖
-- [x] 🧪 **测试与 CI** ✅ 37 项 pytest 默认不碰真机，覆盖 Sim/Real fake 后端整帧三模式、限位、归零、断连重连、线程独占、lease/cancel/EStop/watchdog/gRPC/CLI；根 `make check` 一键执行 ruff + pytest + `armd --sim --check`；GitHub Actions 已接入
+- [x] 🧪 **测试与 CI** ✅ 54 项 pytest 默认不碰真机，覆盖 Sim/Real fake 后端整帧三模式、限位、归零、断连重连、线程独占、lease/cancel/EStop/watchdog/gRPC/CLI/运动学/笛卡尔执行；根 `make check` 一键执行 ruff + pytest + `armd --sim --check`；GitHub Actions 已接入
 
 ---
 
@@ -69,7 +69,7 @@
 - [x] 🧪 实现 ✅ `armd --sim` 已监听 gRPC；实现 `control acquire/release/status/heartbeat`、metadata lease 统一拦截器、force-acquire 旧 token 失效、`estop trigger/reset`、`safety limits show`、daemon status/version、watchdog 后台任务；CLI 同步落地并持久化 lease token
 - [x] 🧪 验收① ✅ 两客户端并发 acquire，第二个被拒并返回持有者 `client_id`；force-acquire 后旧 token 立即失效
 - [x] 🧪 验收② ✅ 无 lease / 错 token 调 `JointMove` 均返回 `PERMISSION_DENIED`，有效 token 可穿过拦截器到业务层
-- [x] 🧪 验收③ ✅ watchdog 超时自动 release；POS-VEL 模式改发当前位置保位帧，VELOCITY 模式速度归零；迟到的 release 不能绕过 watchdog 停止
+- [x] 🧪 验收③ ✅ watchdog 超时自动 release；活动运动先安全取消，再统一进入零刚度非零阻尼空闲帧，避免断线后永久刚性锁定；迟到的 release 不能绕过 watchdog 停止
 - [x] 🔒 验收④ ✅ gRPC 层 EStop 无需 lease；触发后运动 RPC 返回 `FAILED_PRECONDITION`，`reset --confirm` + 有效 lease 后恢复；真机抢占延迟由 M0-1 实测 7.73ms
 - [x] 🧪 **N4 防护** ✅ `RealBackend` 每个状态周期及每次写帧前重新 `get_motors()`，不跨周期保存 SDK 悬垂指针；重连窗口返回 7 个无效快照并拒绝控制，fake 断开→重建句柄测试通过
 - [x] 🧪 **N1 回归检查** ✅ 启动前扫描 SDK 自有 C++ 源码，`detect_motor_limit()` 除声明/定义外出现任何引用即拒绝启动；当前 SDK 记录为 Python 1.0.0 / C++ binding 4.4.7 / 电机 4.7.3，源码仍为零调用点
@@ -89,14 +89,15 @@
 - [x] 🧪 实现 ✅ `joint jog/move/movej`、`gripper open/close/move` 均已接入；位置运动使用 HardwareLoop 非阻塞状态机，CLI `--wait` 自动维持 heartbeat
 - [x] 🧪 验收 ✅ 越限 `joint move` 被拒且包含关节名、方向和限位值；速度/力矩也在入队前检查
 - [x] 🧪 验收 ✅ `joint jog` 关流立即归零，250ms 无新指令自动归零；近软限位 0.02rad 时屏蔽朝外速度并返回 `limit_hit`
-- [ ] 🔒 验收：`joint movej --wait` 到达/超时才返回、误差在 `--tolerance` 内，且等待期间 watchdog/EStop 仍响应
+- [x] 🔒 验收 ✅ J1 小幅 `movej --wait` 往返完成，前向误差 0.004798rad、回程误差 0.004414rad；等待期间 heartbeat 正常，取消/看门狗路径由仿真测试覆盖
+- [x] 🔒 **桌面点动断线回归** ✅ J1 以 `0.02rad/s` 正向 5s、反向 5s（单程约 5.7°），控制链路全程持锁且 watchdog 正常；回位误差约 0.00063rad（0.036°），结束后 7/7 电机恢复模式 21 柔顺阻尼
 - [ ] 🔒 验收：`gripper open/close` 正确反映限位拒绝并带 `reject_reason`
 
 ### M4 笛卡尔与运动学
-- [ ] 🧪 实现：`kinematics fk/ik/jacobian/manipulability`、`cartesian movel/plan-preview`、`safety check-reached`
-- [ ] 🧪 验收：`plan-preview` 对不可达路径返回 `fraction<1` 且不执行运动；无 avoid-collisions 误导
-- [ ] 🧪 验收：`ik` 不可达返回 `found=false` 不穿透异常，超时返回 `timeout=true`
-- [ ] **安全收尾算法定案**（FINAL_PLAN §8-6）：`CancelExecution`/watchdog 触发时的减速策略
+- [x] 🧪 实现 ✅ `kinematics fk/ik/jacobian/manipulability`、`cartesian movel/plan-preview`、`safety check-reached` 已接入 gRPC 与 CLI；计算仍隔离在独立 worker 进程
+- [x] 🧪 验收 ✅ `plan-preview` 对不可达路径返回 `fraction<1` 且不执行运动；CLI 不暴露无效的 avoid-collisions 选项
+- [x] 🧪 验收 ✅ `ik` 不可达返回 `found=false`，超时结构化返回 `timeout=true`，worker 异常不穿透服务进程
+- [x] **安全收尾算法定案** ✅ `CancelExecution` 用 12 个控制周期按比例减速，watchdog 取消后切入柔顺阻尼；速度/加速度超限在轨迹入队前拒绝
 - [ ] 🔒 验收：`movel` 期间 `StreamExecution` 见 `fraction` 单调递增，`DONE/FAILED/CANCELLED` 三态清晰，取消能减速收尾
 - [ ] **v1 完成口径**：24 条命令可用 + M1–M4 场景全过
 
@@ -104,10 +105,11 @@
 
 ## 阶段 3：WPF v1（.NET 9 Fluent，视觉基准＝稿 C 驾驶舱）
 
-- [ ] **M-W0 脚手架**：解决方案分层、DI/Host、`ThemeMode` 三态 POC、`IArmdClient` + 最小 gRPC 连接；csproj 压制 `WPF0001`
-- [ ] **M-W0.5 环境引导**（WPF_PLAN §3.7）：usbipd 检测/bind/attach（按 `VID_CAF1:FFFF`+序列号匹配，不硬编码 busid）、WSL 拉起、`/dev/ttyACM*` ≥4 校验、armd 启动探活；一次性提权、命令可见、全程写日志
-- [ ] **M-W1 只读监控**：关节圆形仪表 + 中央雷达俯视图 + `StreamState` 30fps 节流管线（无需 lease）
-- [ ] **M-W2 控制闭环**：获取控制权 + jog pod + `joint move/movej` + 夹爪 + 常驻 EStop + moveL 进度/取消
+- [x] **M-W0 脚手架** ✅ .NET 9 解决方案分层、Generic Host/DI、`ThemeMode` 三态、`IArmdClient` 与 Grpc.Tools 单契约生成均已落地；Windows Release 构建 0 警告
+- [x] **M-W0.5 环境引导** ✅ usbipd 按 VID/PID/序列号发现设备，支持 WSL 启动、USB attach、串口数量与 armd 探活；修复 `wsl -l` Unicode/NUL 解析导致的误报
+- [x] **M-W1 只读监控** ✅ 6 关节卡片、速度/力矩纵向 bar、俯视/侧视/主视三视图与 30fps latest-slot 渲染；Windows 侧改用 `GetRobotState` 短请求轮询以规避 mirrored 长流断线
+- [x] **M-W2 控制闭环** ✅ 获取/释放控制权、关节点动、MoveJ、MoveL、夹爪、EStop 与取消均已接线；点动异常被后台监控并安全清理，不再从 `AsyncRelayCommand` 冒泡杀死进程；`%LOCALAPPDATA%/Panthera/terminal-failures.log` 持久记录未处理异常
+- [x] **M-W2.5 WSL 控制桥** ✅ 桌面端常驻 `127.0.0.1:50050`，通过 `wsl.exe + nc` 标准流桥接 WSL 内 `50051`，完全绕开 WSL 2.5.7 mirrored 的不稳定 localhost 转发；15s 零速度控制压力测试与 J1 5s+5s 往返真机测试均通过
 - [ ] **M-W3 主题打磨**：系统/浅色/深色三态 + 高对比校验；扫描线/发光等装饰；键盘可达性
 
 ---

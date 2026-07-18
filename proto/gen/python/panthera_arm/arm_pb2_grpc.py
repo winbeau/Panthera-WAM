@@ -58,6 +58,11 @@ class ArmServiceStub:
                 request_serializer=arm__pb2.HeartbeatRequest.SerializeToString,
                 response_deserializer=arm__pb2.HeartbeatResponse.FromString,
                 _registered_method=True)
+        self.HeartbeatOnce = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/HeartbeatOnce',
+                request_serializer=arm__pb2.HeartbeatRequest.SerializeToString,
+                response_deserializer=arm__pb2.HeartbeatResponse.FromString,
+                _registered_method=True)
         self.EStop = channel.unary_unary(
                 '/panthera.arm.v1.ArmService/EStop',
                 request_serializer=arm__pb2.EStopRequest.SerializeToString,
@@ -88,6 +93,11 @@ class ArmServiceStub:
                 request_serializer=arm__pb2.Empty.SerializeToString,
                 response_deserializer=arm__pb2.GripperState.FromString,
                 _registered_method=True)
+        self.GetRobotState = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/GetRobotState',
+                request_serializer=arm__pb2.Empty.SerializeToString,
+                response_deserializer=arm__pb2.RobotState.FromString,
+                _registered_method=True)
         self.StreamState = channel.unary_stream(
                 '/panthera.arm.v1.ArmService/StreamState',
                 request_serializer=arm__pb2.StreamStateRequest.SerializeToString,
@@ -117,6 +127,16 @@ class ArmServiceStub:
                 '/panthera.arm.v1.ArmService/JointJog',
                 request_serializer=arm__pb2.JointJogCommand.SerializeToString,
                 response_deserializer=arm__pb2.JointJogFeedback.FromString,
+                _registered_method=True)
+        self.JointJogStep = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/JointJogStep',
+                request_serializer=arm__pb2.JointJogCommand.SerializeToString,
+                response_deserializer=arm__pb2.JointJogFeedback.FromString,
+                _registered_method=True)
+        self.StopJointJog = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/StopJointJog',
+                request_serializer=arm__pb2.Empty.SerializeToString,
+                response_deserializer=arm__pb2.Empty.FromString,
                 _registered_method=True)
         self.JointMIT = channel.stream_stream(
                 '/panthera.arm.v1.ArmService/JointMIT',
@@ -276,6 +296,13 @@ class ArmServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def HeartbeatOnce(self, request, context):
+        """WSL 转发兼容短请求
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def EStop(self, request, context):
         """**不需持锁**
         """
@@ -317,6 +344,12 @@ class ArmServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetRobotState(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def StreamState(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -349,6 +382,18 @@ class ArmServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def JointJog(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def JointJogStep(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StopJointJog(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -542,6 +587,11 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     request_deserializer=arm__pb2.HeartbeatRequest.FromString,
                     response_serializer=arm__pb2.HeartbeatResponse.SerializeToString,
             ),
+            'HeartbeatOnce': grpc.unary_unary_rpc_method_handler(
+                    servicer.HeartbeatOnce,
+                    request_deserializer=arm__pb2.HeartbeatRequest.FromString,
+                    response_serializer=arm__pb2.HeartbeatResponse.SerializeToString,
+            ),
             'EStop': grpc.unary_unary_rpc_method_handler(
                     servicer.EStop,
                     request_deserializer=arm__pb2.EStopRequest.FromString,
@@ -572,6 +622,11 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     request_deserializer=arm__pb2.Empty.FromString,
                     response_serializer=arm__pb2.GripperState.SerializeToString,
             ),
+            'GetRobotState': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetRobotState,
+                    request_deserializer=arm__pb2.Empty.FromString,
+                    response_serializer=arm__pb2.RobotState.SerializeToString,
+            ),
             'StreamState': grpc.unary_stream_rpc_method_handler(
                     servicer.StreamState,
                     request_deserializer=arm__pb2.StreamStateRequest.FromString,
@@ -601,6 +656,16 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     servicer.JointJog,
                     request_deserializer=arm__pb2.JointJogCommand.FromString,
                     response_serializer=arm__pb2.JointJogFeedback.SerializeToString,
+            ),
+            'JointJogStep': grpc.unary_unary_rpc_method_handler(
+                    servicer.JointJogStep,
+                    request_deserializer=arm__pb2.JointJogCommand.FromString,
+                    response_serializer=arm__pb2.JointJogFeedback.SerializeToString,
+            ),
+            'StopJointJog': grpc.unary_unary_rpc_method_handler(
+                    servicer.StopJointJog,
+                    request_deserializer=arm__pb2.Empty.FromString,
+                    response_serializer=arm__pb2.Empty.SerializeToString,
             ),
             'JointMIT': grpc.stream_stream_rpc_method_handler(
                     servicer.JointMIT,
@@ -846,6 +911,33 @@ class ArmService:
             _registered_method=True)
 
     @staticmethod
+    def HeartbeatOnce(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/HeartbeatOnce',
+            arm__pb2.HeartbeatRequest.SerializeToString,
+            arm__pb2.HeartbeatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def EStop(request,
             target,
             options=(),
@@ -1008,6 +1100,33 @@ class ArmService:
             _registered_method=True)
 
     @staticmethod
+    def GetRobotState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/GetRobotState',
+            arm__pb2.Empty.SerializeToString,
+            arm__pb2.RobotState.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def StreamState(request,
             target,
             options=(),
@@ -1159,6 +1278,60 @@ class ArmService:
             '/panthera.arm.v1.ArmService/JointJog',
             arm__pb2.JointJogCommand.SerializeToString,
             arm__pb2.JointJogFeedback.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def JointJogStep(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/JointJogStep',
+            arm__pb2.JointJogCommand.SerializeToString,
+            arm__pb2.JointJogFeedback.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StopJointJog(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/StopJointJog',
+            arm__pb2.Empty.SerializeToString,
+            arm__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,

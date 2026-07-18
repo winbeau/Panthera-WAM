@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Panthera.Terminal.Core/Panthera.Terminal.Core.csproj" />
+  </ItemGroup>
+</Project>

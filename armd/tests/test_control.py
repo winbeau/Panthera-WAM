@@ -65,7 +65,7 @@ def test_lease_contention_force_and_expiration() -> None:
     assert not leases.snapshot().held
 
 
-def test_watchdog_holds_position_mode() -> None:
+def test_watchdog_enters_damping_from_position_mode() -> None:
     clock = FakeClock()
     backend = SimBackend(clock=clock)
     backend.write_frame(position_frame(0.5))
@@ -78,12 +78,12 @@ def test_watchdog_holds_position_mode() -> None:
     backend.refresh_state()
     after = backend.read_all()[0].position
 
-    assert action is WatchdogStopAction.HOLD_POSITION
+    assert action is WatchdogStopAction.IDLE_DAMPING
     assert after == before
-    assert backend.read_all()[0].mode == FrameMode.POS_VEL_TQE
+    assert backend.read_all()[0].mode == FrameMode.POS_VEL_TQE_KP_KD
 
 
-def test_watchdog_zeroes_velocity_mode() -> None:
+def test_watchdog_enters_damping_from_velocity_mode() -> None:
     clock = FakeClock()
     backend = SimBackend(clock=clock)
     backend.write_frame(velocity_frame(0.5))
@@ -95,6 +95,7 @@ def test_watchdog_zeroes_velocity_mode() -> None:
     clock.advance(1.0)
     backend.refresh_state()
 
-    assert action is WatchdogStopAction.ZERO_VELOCITY
+    assert action is WatchdogStopAction.IDLE_DAMPING
     assert backend.read_all()[0].position == stopped_at
     assert backend.read_all()[0].velocity == 0.0
+    assert backend.read_all()[0].mode == FrameMode.POS_VEL_TQE_KP_KD

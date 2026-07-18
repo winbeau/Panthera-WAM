@@ -25,7 +25,7 @@ async def grpc_stack():
         watchdog_poll_s=0.01,
     )
     await server.start()
-    channel = grpc.aio.insecure_channel(f"127.0.0.1:{server.port}")
+    channel = grpc.aio.insecure_channel(f"127.0.0.1:{server.port}", options=(("grpc.enable_http_proxy", 0),))
     await channel.channel_ready()
     try:
         yield loop, server, arm_pb2_grpc.ArmServiceStub(channel)

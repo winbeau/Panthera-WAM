@@ -34,6 +34,9 @@ state_app = typer.Typer(no_args_is_help=True)
 calibrate_app = typer.Typer(no_args_is_help=True)
 joint_app = typer.Typer(no_args_is_help=True)
 gripper_app = typer.Typer(no_args_is_help=True)
+kinematics_app = typer.Typer(no_args_is_help=True)
+cartesian_app = typer.Typer(no_args_is_help=True)
+execution_app = typer.Typer(no_args_is_help=True)
 app.add_typer(control_app, name="control")
 app.add_typer(estop_app, name="estop")
 app.add_typer(safety_app, name="safety")
@@ -42,6 +45,9 @@ app.add_typer(state_app, name="state")
 app.add_typer(calibrate_app, name="calibrate")
 app.add_typer(joint_app, name="joint")
 app.add_typer(gripper_app, name="gripper")
+app.add_typer(kinematics_app, name="kinematics")
+app.add_typer(cartesian_app, name="cartesian")
+app.add_typer(execution_app, name="execution")
 safety_app.add_typer(limits_app, name="limits")
 console = Console()
 
@@ -90,6 +96,14 @@ def print_motor_table(items: list[dict]) -> None:
             "yes" if item["valid"] else "no",
         )
     console.print(table)
+
+
+def cartesian_pose(position: str, rpy: str | None) -> arm_pb2.CartesianPose:
+    pose = arm_pb2.CartesianPose(position=float_list(position, name="pos", length=3))
+    if rpy is not None:
+        values = float_list(rpy, name="rpy", length=3)
+        pose.rpy.CopyFrom(arm_pb2.RPY(roll=values[0], pitch=values[1], yaw=values[2]))
+    return pose
 
 
 def fail_rpc(exc: grpc.RpcError) -> None:
@@ -241,6 +255,26 @@ def show_limits(as_json: bool = typer.Option(False, "--json")) -> None:
             f"{item['torque']:.1f}",
         )
     console.print(table)
+
+
+@safety_app.command("check-reached")
+def check_reached(
+    target_positions: str = typer.Option(..., "--pos"),
+    tolerance: float = typer.Option(0.1, "--tolerance", min=0.0),
+) -> None:
+    channel, stub = create_stub()
+    try:
+        response = stub.CheckReached(
+            arm_pb2.CheckReachedRequest(
+                target_positions=float_list(target_positions, name="pos"),
+                tolerance=tolerance,
+            )
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(f"reached={response.reached} errors={[round(value, 6) for value in response.errors]}")
 
 
 @daemon_app.command("status")
@@ -499,6 +533,225 @@ def gripper_close(
         "close",
         arm_pb2.GripperCloseRequest(position=position, velocity=velocity, max_torque=max_torque),
     )
+
+
+@kinematics_app.command("fk")
+def kinematics_fk(
+    joint_angles: str | None = typer.Option(None, "--joint-angles"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    channel, stub = create_stub()
+    try:
+        response = stub.GetForwardKinematics(
+            arm_pb2.JointAnglesOptional(joint_angles=optional_float_list(joint_angles, name="joint-angles")),
+            timeout=10.0,
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    data = {
+        "position": list(response.position),
+        "rotation_matrix": list(response.rotation_matrix),
+        "transform": list(response.transform),
+        "used_joint_angles": list(response.used_joint_angles),
+    }
+    if as_json:
+        console.print_json(json.dumps(data, ensure_ascii=False))
+    else:
+        console.print(data)
+
+
+@kinematics_app.command("jacobian")
+def kinematics_jacobian(
+    joint_angles: str | None = typer.Option(None, "--joint-angles"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    channel, stub = create_stub()
+    try:
+        response = stub.GetJacobian(
+            arm_pb2.JointAnglesOptional(joint_angles=optional_float_list(joint_angles, name="joint-angles")),
+            timeout=10.0,
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    matrix = [
+        list(response.matrix[row * response.cols : (row + 1) * response.cols]) for row in range(response.rows)
+    ]
+    if as_json:
+        console.print_json(json.dumps(matrix))
+    else:
+        console.print(matrix)
+
+
+@kinematics_app.command("manipulability")
+def kinematics_manipulability(
+    joint_angles: str | None = typer.Option(None, "--joint-angles"),
+) -> None:
+    channel, stub = create_stub()
+    try:
+        response = stub.GetManipulability(
+            arm_pb2.JointAnglesOptional(joint_angles=optional_float_list(joint_angles, name="joint-angles")),
+            timeout=10.0,
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(f"mu={response.mu:.9g}")
+
+
+@kinematics_app.command("ik")
+def kinematics_ik(
+    position: str = typer.Option(..., "--pos"),
+    rpy: str | None = typer.Option(None, "--rpy"),
+    init_q: str | None = typer.Option(None, "--init-q"),
+    multi_init: bool = typer.Option(True, "--multi-init/--single-init"),
+    num_attempts: int = typer.Option(8, "--num-attempts", min=1),
+    timeout: float = typer.Option(0.5, "--timeout", min=0.0),
+) -> None:
+    channel, stub = create_stub()
+    try:
+        response = stub.GetInverseKinematics(
+            arm_pb2.InverseKinematicsRequest(
+                target=cartesian_pose(position, rpy),
+                init_q=optional_float_list(init_q, name="init-q"),
+                multi_init=multi_init,
+                num_attempts=num_attempts,
+                timeout_s=timeout,
+            ),
+            timeout=timeout + 5.0,
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if not response.found:
+        console.print(f"[yellow]未找到逆解[/yellow] timeout={response.timeout}")
+        raise typer.Exit(2)
+    console.print(
+        f"joint_angles={[round(value, 6) for value in response.joint_angles]} error={response.error:.6g}"
+    )
+
+
+@cartesian_app.command("plan-preview")
+def cartesian_plan_preview(
+    waypoints: str = typer.Option(..., "--waypoints"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    poses = []
+    for item in waypoints.split(";"):
+        values = float_list(item, name="waypoint", length=6)
+        poses.append(
+            arm_pb2.CartesianPose(
+                position=values[:3],
+                rpy=arm_pb2.RPY(roll=values[3], pitch=values[4], yaw=values[5]),
+            )
+        )
+    channel, stub = create_stub()
+    try:
+        response = stub.PlanCartesianPath(
+            arm_pb2.PlanCartesianPathRequest(waypoints=poses),
+            timeout=15.0,
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    data = {
+        "fraction": response.fraction,
+        "points": [
+            {
+                "positions": list(point.positions),
+                "velocities": list(point.velocities),
+                "timestamp_s": point.timestamp_s,
+            }
+            for point in response.joint_trajectory
+        ],
+    }
+    if as_json:
+        console.print_json(json.dumps(data, ensure_ascii=False))
+    else:
+        console.print(f"fraction={response.fraction:.3f} points={len(response.joint_trajectory)}")
+
+
+@cartesian_app.command("movel")
+def cartesian_movel(
+    position: str = typer.Option(..., "--pos"),
+    rpy: str | None = typer.Option(None, "--rpy"),
+    duration: float | None = typer.Option(None, "--duration", min=0.001),
+    spline: bool = typer.Option(True, "--spline/--no-spline"),
+    max_torque: str | None = typer.Option(None, "--max-torque"),
+) -> None:
+    lease = load_lease()
+    request = arm_pb2.MoveLRequest(
+        target=cartesian_pose(position, rpy),
+        use_spline=spline,
+        max_torque=optional_float_list(max_torque, name="max-torque"),
+    )
+    if duration is not None:
+        request.duration_s = duration
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        with maintain_heartbeat(lease):
+            accepted = stub.MoveL(request, metadata=lease_metadata(lease), timeout=20.0)
+            console.print(f"execution_id={accepted.execution_id}")
+            try:
+                final = _watch_execution(stub, accepted.execution_id)
+            except KeyboardInterrupt:
+                stub.CancelExecution(
+                    arm_pb2.CancelExecutionRequest(execution_id=accepted.execution_id),
+                    metadata=lease_metadata(lease),
+                )
+                final = _watch_execution(stub, accepted.execution_id)
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if final.state != arm_pb2.EXEC_STATE_DONE:
+        console.print(f"[yellow]moveL 终态={arm_pb2.ExecState.Name(final.state)}[/yellow]")
+        raise typer.Exit(2)
+
+
+@execution_app.command("watch")
+def execution_watch(execution_id: str = typer.Argument(...)) -> None:
+    channel, stub = create_stub()
+    try:
+        final = _watch_execution(stub, execution_id)
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(f"终态={arm_pb2.ExecState.Name(final.state)}")
+
+
+@execution_app.command("cancel")
+def execution_cancel(execution_id: str = typer.Argument(...)) -> None:
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        response = stub.CancelExecution(
+            arm_pb2.CancelExecutionRequest(execution_id=execution_id),
+            metadata=lease_metadata(lease),
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(f"cancelled={response.cancelled}")
+
+
+def _watch_execution(stub, execution_id: str):
+    final = None
+    for status in stub.StreamExecution(arm_pb2.StreamExecutionRequest(execution_id=execution_id)):
+        final = status
+        console.print(
+            f"{arm_pb2.ExecState.Name(status.state)} fraction={status.fraction:.3f}",
+            end="\r" if status.state == arm_pb2.EXEC_STATE_RUNNING else "\n",
+        )
+    return final
 
 
 def _run_gripper(method: str, request) -> None:

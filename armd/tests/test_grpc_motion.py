@@ -24,7 +24,7 @@ async def motion_stack():
         watchdog_poll_s=0.02,
     )
     await server.start()
-    channel = grpc.aio.insecure_channel(f"127.0.0.1:{server.port}")
+    channel = grpc.aio.insecure_channel(f"127.0.0.1:{server.port}", options=(("grpc.enable_http_proxy", 0),))
     await channel.channel_ready()
     stub = arm_pb2_grpc.ArmServiceStub(channel)
     acquired = await stub.AcquireControl(arm_pb2.AcquireControlRequest(client_id="motion-test"))
@@ -147,3 +147,27 @@ async def test_joint_jog_stops_after_freshness_window_and_stream_close(motion_st
     await call.done_writing()
     while await call.read() is not grpc.aio.EOF:
         pass
+
+
+@pytest.mark.asyncio
+async def test_unary_polling_heartbeat_and_jog_fallback(motion_stack) -> None:
+    loop, stub, metadata = motion_stack
+    robot = await stub.GetRobotState(arm_pb2.Empty())
+    assert len(robot.joint.joints) == 6
+    assert robot.gripper.state.motor_id == 7
+
+    for _ in range(12):
+        heartbeat = await stub.HeartbeatOnce(arm_pb2.HeartbeatRequest(), metadata=metadata)
+        feedback = await stub.JointJogStep(
+            arm_pb2.JointJogCommand(velocities=[0.1, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            metadata=metadata,
+        )
+        assert heartbeat.ok
+        assert len(feedback.joint_state.joints) == 6
+        await asyncio.sleep(0.04)
+
+    moving = await stub.GetRobotState(arm_pb2.Empty())
+    assert moving.joint.joints[0].position > 0.0
+    await stub.StopJointJog(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.05)
+    assert not loop.has_active_motion

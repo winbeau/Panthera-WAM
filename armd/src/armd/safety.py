@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import enum
 
-import numpy as np
-
-from .backend import Backend, FrameMode, JointFrame
+from .backend import Backend, FrameMode
 
 
 class WatchdogStopAction(str, enum.Enum):
+    IDLE_DAMPING = "idle_damping"
     HOLD_POSITION = "hold_position"
     ZERO_VELOCITY = "zero_velocity"
     HOLD_MIT = "hold_mit"
@@ -23,8 +22,6 @@ def apply_watchdog_stop(backend: Backend) -> WatchdogStopAction:
         backend.stop()
         return WatchdogStopAction.HARD_STOP
 
-    arm_position = np.array([state.position for state in states[:6]])
-    gripper_position = states[6].position
     modes = {state.mode for state in states}
     if len(modes) != 1:
         backend.stop()
@@ -37,47 +34,10 @@ def apply_watchdog_stop(backend: Backend) -> WatchdogStopAction:
         backend.stop()
         return WatchdogStopAction.HARD_STOP
 
-    if mode is FrameMode.POS_VEL_TQE:
-        backend.write_frame(
-            JointFrame(
-                mode=FrameMode.POS_VEL_TQE,
-                arm_position=arm_position,
-                arm_velocity=np.full(6, 0.1),
-                arm_max_torque=backend.limits.joint_torque,
-                gripper_position=gripper_position,
-                gripper_velocity=0.1,
-                gripper_max_torque=backend.limits.gripper_torque,
-            )
-        )
-        return WatchdogStopAction.HOLD_POSITION
-
-    if mode is FrameMode.VELOCITY:
-        backend.write_frame(
-            JointFrame(
-                mode=FrameMode.VELOCITY,
-                arm_position=arm_position,
-                arm_velocity=np.zeros(6),
-                gripper_position=gripper_position,
-                gripper_velocity=0.0,
-            )
-        )
-        return WatchdogStopAction.ZERO_VELOCITY
-
-    if mode is FrameMode.POS_VEL_TQE_KP_KD:
-        backend.write_frame(
-            JointFrame(
-                mode=FrameMode.POS_VEL_TQE_KP_KD,
-                arm_position=arm_position,
-                arm_velocity=np.zeros(6),
-                arm_torque=np.zeros(6),
-                arm_kp=np.array([30.0, 50.0, 60.0, 25.0, 15.0, 10.0]),
-                arm_kd=np.array([3.0, 5.0, 6.0, 2.5, 1.5, 1.0]),
-                gripper_position=gripper_position,
-                gripper_velocity=0.0,
-                gripper_torque=0.0,
-            )
-        )
-        return WatchdogStopAction.HOLD_MIT
+    if mode in {FrameMode.POS_VEL_TQE, FrameMode.VELOCITY, FrameMode.POS_VEL_TQE_KP_KD}:
+        backend.enter_idle_damping()
+        backend.maintain_idle()
+        return WatchdogStopAction.IDLE_DAMPING
 
     if mode in {FrameMode.STOP, FrameMode.BRAKE}:
         return WatchdogStopAction.ALREADY_STOPPED

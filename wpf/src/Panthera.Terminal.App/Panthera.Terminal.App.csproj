@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+    <ProjectReference Include="../Panthera.Terminal.Contracts/Panthera.Terminal.Contracts.csproj" />
+    <ProjectReference Include="../Panthera.Terminal.Controls/Panthera.Terminal.Controls.csproj" />
+    <ProjectReference Include="../Panthera.Terminal.Core/Panthera.Terminal.Core.csproj" />
+    <ProjectReference Include="../Panthera.Terminal.Grpc/Panthera.Terminal.Grpc.csproj" />
+    <ProjectReference Include="../Panthera.Terminal.Settings/Panthera.Terminal.Settings.csproj" />
+  </ItemGroup>
+</Project>

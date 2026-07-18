@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -30,7 +31,7 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    channel = grpc.insecure_channel(endpoint)
+    channel = grpc.insecure_channel(endpoint, options=(("grpc.enable_http_proxy", 0),))
     try:
         grpc.channel_ready_future(channel).result(timeout=5)
         monkeypatch.setenv("PANTHERA_ENDPOINT", endpoint)
@@ -97,6 +98,25 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
         zero = runner.invoke(app, ["calibrate", "zero", "--confirm", "--motor-ids", "1,7"])
         assert zero.exit_code == 0, zero.output
         assert "已持久化" in zero.output
+
+        fk = runner.invoke(app, ["kinematics", "fk", "--json"])
+        assert fk.exit_code == 0, fk.output
+        fk_data = json.loads(fk.output)
+        target = fk_data["position"]
+        target[2] += 0.004
+        movel = runner.invoke(
+            app,
+            [
+                "cartesian",
+                "movel",
+                "--pos",
+                ",".join(str(value) for value in target),
+                "--duration",
+                "0.3",
+            ],
+        )
+        assert movel.exit_code == 0, movel.output
+        assert "EXEC_STATE_DONE" in movel.output
 
         status = runner.invoke(app, ["control", "status", "--json"])
         assert status.exit_code == 0, status.output

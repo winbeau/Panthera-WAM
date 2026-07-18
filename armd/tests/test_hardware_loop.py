@@ -25,6 +25,7 @@ class ThreadRecordingBackend(SimBackend):
         super().__init__()
         self.call_threads: set[int] = set()
         self.stop_event = threading.Event()
+        self.idle_maintain_count = 0
 
     def refresh_state(self) -> None:
         self.call_threads.add(threading.get_ident())
@@ -42,6 +43,11 @@ class ThreadRecordingBackend(SimBackend):
         self.call_threads.add(threading.get_ident())
         super().stop()
         self.stop_event.set()
+
+    def maintain_idle(self) -> None:
+        self.call_threads.add(threading.get_ident())
+        self.idle_maintain_count += 1
+        super().maintain_idle()
 
 
 class JogMotion:
@@ -153,6 +159,27 @@ def test_state_cache_and_cycle_stats_keep_advancing() -> None:
         assert state.age_s(time.monotonic()) < 0.1
         assert stats.cycles >= 5
         assert stats.actual_hz > 0
+    finally:
+        loop.stop()
+
+
+def test_idle_cycles_repeat_zero_stiffness_damping_frame() -> None:
+    holder: dict[str, ThreadRecordingBackend] = {}
+
+    def factory() -> ThreadRecordingBackend:
+        backend = ThreadRecordingBackend()
+        holder["backend"] = backend
+        return backend
+
+    loop = HardwareLoop(factory, control_hz=100.0)
+    loop.start()
+    try:
+        assert loop.wait_for_cycles(6)
+        backend = holder["backend"]
+        states = backend.read_all()
+        assert backend.idle_maintain_count >= 5
+        assert {state.mode for state in states} == {int(FrameMode.POS_VEL_TQE_KP_KD)}
+        assert all(state.valid for state in states)
     finally:
         loop.stop()
 

@@ -494,6 +494,7 @@ service ArmService {
   rpc ReleaseControl(Empty) returns (Empty);                                    // 特例
   rpc GetControlStatus(Empty) returns (ControlStatus);                          // 只读
   rpc Heartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse);    // 只读
+  rpc HeartbeatOnce(HeartbeatRequest) returns (HeartbeatResponse);              // WSL 转发兼容短请求
   rpc EStop(EStopRequest) returns (EStopResponse);                              // **不需持锁**
   rpc ClearEStop(ClearEStopRequest) returns (EStopResponse);                    // 需持锁 + confirm
   rpc GetSoftLimits(Empty) returns (SoftLimits);                                // 只读
@@ -502,6 +503,7 @@ service ArmService {
   // ---------- 状态（全部只读，无需 lease）----------
   rpc GetJointState(Empty) returns (JointState);
   rpc GetGripperState(Empty) returns (GripperState);
+  rpc GetRobotState(Empty) returns (RobotState);
   rpc StreamState(StreamStateRequest) returns (stream RobotState);
   rpc CheckReached(CheckReachedRequest) returns (CheckReachedResponse);
   rpc GetDaemonStatus(Empty) returns (DaemonStatus);
@@ -510,6 +512,8 @@ service ArmService {
   rpc JointMove(JointMoveRequest) returns (JointMoveResponse);
   rpc MoveJ(MoveJRequest) returns (MoveJResponse);
   rpc JointJog(stream JointJogCommand) returns (stream JointJogFeedback);
+  rpc JointJogStep(JointJogCommand) returns (JointJogFeedback);
+  rpc StopJointJog(Empty) returns (Empty);
   rpc JointMIT(stream JointMITCommand) returns (stream JointMITFeedback);       // v2
 
   // ---------- 夹爪（需 lease）----------

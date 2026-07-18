@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Grpc.Net.Client" Version="2.66.0" />
+    <ProjectReference Include="../Panthera.Terminal.Contracts/Panthera.Terminal.Contracts.csproj" />
+    <ProjectReference Include="../Panthera.Terminal.Core/Panthera.Terminal.Core.csproj" />
+  </ItemGroup>
+</Project>

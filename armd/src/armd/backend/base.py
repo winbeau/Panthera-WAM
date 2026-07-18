@@ -204,6 +204,30 @@ class JointFrame:
             raise ValueError(f"{self.mode.name} 不是可下发的控制帧模式")
 
 
+IDLE_DAMPING_KD = np.array([2.0, 3.0, 3.0, 1.5, 0.8, 0.8], dtype=np.float64)
+
+
+def idle_damping_frame(
+    limits: BackendLimits,
+    arm_position: np.ndarray,
+    gripper_position: float,
+) -> JointFrame:
+    """零刚度、非零速度阻尼的柔顺空闲帧。"""
+    return JointFrame(
+        mode=FrameMode.POS_VEL_TQE_KP_KD,
+        arm_position=np.clip(arm_position, limits.joint_lower, limits.joint_upper),
+        arm_velocity=np.zeros(6),
+        arm_torque=np.zeros(6),
+        arm_kp=np.zeros(6),
+        arm_kd=IDLE_DAMPING_KD,
+        gripper_position=float(np.clip(gripper_position, limits.gripper_lower, limits.gripper_upper)),
+        gripper_velocity=0.0,
+        gripper_torque=0.0,
+        gripper_kp=0.0,
+        gripper_kd=0.3,
+    )
+
+
 @runtime_checkable
 class Backend(Protocol):
     """硬件后端。**所有方法只允许 HardwareLoop 线程调用**（共享 TX 帧无锁）。"""
@@ -222,6 +246,12 @@ class Backend(Protocol):
 
     def write_frame(self, frame: JointFrame) -> None:
         """写入完整一帧并下发（内部只调一次 flush）。见本模块顶部 N7 说明。"""
+
+    def maintain_idle(self) -> None:
+        """空闲周期重发最后安全帧；无历史帧时建立零刚度阻尼帧。"""
+
+    def enter_idle_damping(self) -> None:
+        """丢弃刚性目标，使下一空闲周期进入零刚度阻尼模式。"""
 
     def stop(self) -> None:
         """急停。真机对应 `set_stop()`，其自带 flush（核实结论 §V3）。"""

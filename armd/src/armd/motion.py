@@ -26,12 +26,15 @@ def position_frame(
     arm_max_torque: np.ndarray | None = None,
     gripper_max_torque: float | None = None,
 ) -> JointFrame:
+    safe_gripper_position = float(
+        np.clip(gripper_position, backend.limits.gripper_lower, backend.limits.gripper_upper)
+    )
     return JointFrame(
         mode=FrameMode.POS_VEL_TQE,
         arm_position=arm_position,
         arm_velocity=arm_velocity,
         arm_max_torque=backend.limits.joint_torque if arm_max_torque is None else arm_max_torque,
-        gripper_position=gripper_position,
+        gripper_position=safe_gripper_position,
         gripper_velocity=gripper_velocity,
         gripper_max_torque=(
             backend.limits.gripper_torque if gripper_max_torque is None else gripper_max_torque
@@ -168,7 +171,8 @@ class JointJogMotion:
             velocities = self._velocities.copy()
             stale = now - self._last_command_at > self.freshness_s
         if cancel_reason is not None:
-            velocities.fill(0.0)
+            hold_current_position(backend)
+            return MotionStepResult.CANCELLED
         elif stale:
             velocities.fill(0.0)
 
@@ -191,4 +195,136 @@ class JointJogMotion:
                 gripper_velocity=0.0,
             )
         )
-        return MotionStepResult.CANCELLED if cancel_reason is not None else MotionStepResult.RUNNING
+        return MotionStepResult.RUNNING
+
+
+class CartesianTrajectoryMotion:
+    """按绝对时间戳执行 POS-VEL 轨迹，并提供单调进度与 12 周期取消减速。"""
+
+    def __init__(
+        self,
+        *,
+        positions: list[np.ndarray],
+        velocities: list[np.ndarray],
+        timestamps: list[float],
+        max_torque: np.ndarray,
+        tolerance: float = 0.01,
+        settle_timeout_s: float = 2.0,
+    ) -> None:
+        if not positions or len(positions) != len(velocities) or len(positions) != len(timestamps):
+            raise ValueError("笛卡尔轨迹位置、速度、时间戳长度必须一致且非空")
+        if any(later < earlier for earlier, later in zip(timestamps, timestamps[1:], strict=False)):
+            raise ValueError("笛卡尔轨迹时间戳必须单调递增")
+        self.positions = [np.asarray(value, dtype=np.float64).copy() for value in positions]
+        self.velocities = [np.asarray(value, dtype=np.float64).copy() for value in velocities]
+        self.timestamps = np.asarray(timestamps, dtype=np.float64)
+        self.max_torque = np.asarray(max_torque, dtype=np.float64).copy()
+        self.tolerance = tolerance
+        self.settle_timeout_s = settle_timeout_s
+        self.reject_reason = ""
+        self.errors = np.full(6, np.inf, dtype=np.float64)
+        self._fraction = 0.0
+        self._started_at: float | None = None
+        self._cancel_reason: CancelReason | None = None
+        self._deceleration_step: int | None = None
+        self._deceleration_velocity = np.zeros(6, dtype=np.float64)
+        self._last_index = 0
+        self._lock = threading.Lock()
+
+    @property
+    def fraction(self) -> float:
+        with self._lock:
+            return self._fraction
+
+    def request_cancel(self, reason: CancelReason) -> None:
+        with self._lock:
+            self._cancel_reason = reason
+
+    def step(self, backend: Backend, now: float) -> MotionStepResult:
+        states = backend.read_all()
+        if len(states) != 7 or not all(state.valid for state in states):
+            backend.stop()
+            self.reject_reason = "电机状态无效或连接不完整"
+            return MotionStepResult.FAILED
+        current = np.array([state.position for state in states[:6]], dtype=np.float64)
+        if self._started_at is None:
+            self._started_at = now
+
+        with self._lock:
+            cancel_reason = self._cancel_reason
+        if cancel_reason is not None:
+            return self._step_cancel(backend, states[6].position, current, cancel_reason)
+
+        elapsed = now - self._started_at
+        index = min(int(np.searchsorted(self.timestamps, elapsed, side="right")), len(self.positions) - 1)
+        self._last_index = index
+        if elapsed < self.timestamps[-1]:
+            speed = np.maximum(np.abs(self.velocities[index]), 1e-3)
+            backend.write_frame(
+                position_frame(
+                    backend,
+                    arm_position=self.positions[index],
+                    arm_velocity=speed,
+                    arm_max_torque=self.max_torque,
+                    gripper_position=states[6].position,
+                )
+            )
+            with self._lock:
+                self._fraction = max(self._fraction, (index + 1) / len(self.positions))
+            return MotionStepResult.RUNNING
+
+        target = self.positions[-1]
+        self.errors = np.abs(target - current)
+        if np.all(self.errors <= self.tolerance):
+            backend.write_frame(
+                position_frame(
+                    backend,
+                    arm_position=target,
+                    arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                    arm_max_torque=self.max_torque,
+                    gripper_position=states[6].position,
+                )
+            )
+            with self._lock:
+                self._fraction = 1.0
+            return MotionStepResult.DONE
+        if elapsed >= self.timestamps[-1] + self.settle_timeout_s:
+            hold_current_position(backend)
+            self.reject_reason = "moveL 末点收敛超时"
+            return MotionStepResult.FAILED
+        backend.write_frame(
+            position_frame(
+                backend,
+                arm_position=target,
+                arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                arm_max_torque=self.max_torque,
+                gripper_position=states[6].position,
+            )
+        )
+        return MotionStepResult.RUNNING
+
+    def _step_cancel(
+        self,
+        backend: Backend,
+        gripper_position: float,
+        current: np.ndarray,
+        cancel_reason: CancelReason,
+    ) -> MotionStepResult:
+        if self._deceleration_step is None:
+            self._deceleration_velocity = np.abs(self.velocities[self._last_index])
+            self._deceleration_step = 0
+        self._deceleration_step += 1
+        scale = max(0.0, 1.0 - self._deceleration_step / 12.0)
+        backend.write_frame(
+            position_frame(
+                backend,
+                arm_position=current,
+                arm_velocity=np.maximum(self._deceleration_velocity * scale, 1e-3),
+                arm_max_torque=self.max_torque,
+                gripper_position=gripper_position,
+            )
+        )
+        if self._deceleration_step < 12:
+            return MotionStepResult.RUNNING
+        self.reject_reason = f"运动已取消: {cancel_reason.value}"
+        return MotionStepResult.CANCELLED

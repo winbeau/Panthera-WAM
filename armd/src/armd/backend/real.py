@@ -24,6 +24,7 @@ from .base import (
     JointFrame,
     LimitViolationError,
     MotorSnapshot,
+    idle_damping_frame,
 )
 
 EXPECTED_MOTOR_COUNT = 7
@@ -110,6 +111,7 @@ class RealBackend:
         self._state_query_safe = False
         self._clock = clock
         self._next_version_check_at = 0.0
+        self._last_frame: JointFrame | None = None
         self.motor_timeout_ms = motor_timeout_ms
 
         if source_audit is None and run_source_audit:
@@ -233,10 +235,33 @@ class RealBackend:
             raise ValueError(f"不支持的真实控制模式: {frame.mode.name}")
 
         robot.motor_send_cmd()
+        self._last_frame = frame
+
+    def maintain_idle(self) -> None:
+        self._require_open()
+        if self._last_frame is not None:
+            self.write_frame(self._last_frame)
+            return
+        states = self.read_all()
+        if len(states) != EXPECTED_MOTOR_COUNT or not all(state.valid for state in states):
+            self.stop()
+            return
+        self.write_frame(
+            idle_damping_frame(
+                self.limits,
+                np.array([state.position for state in states[:6]], dtype=np.float64),
+                states[6].position,
+            )
+        )
+
+    def enter_idle_damping(self) -> None:
+        self._require_open()
+        self._last_frame = None
 
     def stop(self) -> None:
         self._require_open()
         self._require_robot().set_stop()
+        self._last_frame = None
 
     def set_zero(self, motor_ids: list[int] | None = None) -> tuple[bool, bool, str]:
         self._require_open()
@@ -263,6 +288,7 @@ class RealBackend:
         else:
             robot.set_reset_zero_motors([motor_id - 1 for motor_id in ids])
             persisted = True
+        self._last_frame = None
         self._replace_motor_handles(force_version_check=True)
         return True, persisted, ""
 
