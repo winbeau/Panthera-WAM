@@ -59,7 +59,7 @@
 - [x] 🧪 **仓库骨架** ✅ `proto/ armd/ cli/ wpf/ deploy/` 就位；根 `pyproject.toml` 为 uv workspace（成员 armd / cli / proto/gen/python），`panthera-arm-proto` 以 workspace 依赖被两端共享，已 `uv` 解析构建通过
 - [x] 🧪 **`armd --sim` 仿真后端** ✅ 6 关节 + 1 夹爪一阶电机模型；支持 POS-VEL / VELOCITY / MIT 整帧同模式下发、软限位、999.0 未连接哨兵、fault 注入、EStop 冻结、全体/逐电机归零持久化语义；`armd --sim --check` 可独立自检
 - [x] 🧪 **HardwareLoop 骨架** ✅ 后端对象在线程内创建并独占；固定周期绝对时间基调度；每周期按 estop → cancel → 状态刷新 → 有界命令队列 → 非阻塞 motion step 顺序推进；N7 由 `JointFrame` 完整 7 槽同模式校验强制；EStop latch 与提交后立即 cancel 的竞态已覆盖
-- [x] 🧪 **测试与 CI** ✅ 57 项 pytest 默认不碰真机，覆盖 Sim/Real fake 后端整帧三模式、限位、归零、断连重连、线程独占、lease/cancel/EStop/watchdog/gRPC/CLI/运动学/笛卡尔执行；根 `make check` 一键执行 ruff + pytest + `armd --sim --check`；GitHub Actions 已接入 Python 与 Windows WPF Release/单测
+- [x] 🧪 **测试与 CI** ✅ 57 项 pytest 默认不碰真机，覆盖 Sim/Real fake 后端整帧三模式、限位、归零、断连重连、线程独占、lease/cancel/EStop/watchdog/gRPC/CLI/运动学/笛卡尔执行；根 `make check` 一键执行 ruff + pytest + `armd --sim --check`；GitHub Actions 已接入 Python、Windows WPF Release/单测、FlaUI 四主题启动与截图产物
 
 ---
 

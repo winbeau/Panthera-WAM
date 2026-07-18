@@ -107,10 +107,10 @@ uv run panthera gripper close --pos -0.1 --vel 0.1
 
 | 项目 | 结果 | 证据/日志 |
 |---|---|---|
-| `make check` | 待填写 | |
-| Windows Release + unit tests | 待填写 | |
-| FlaUI 三主题 | 待填写 | |
-| Windows 高对比与键盘 | 待填写 | |
+| `make check` | 通过：57 tests，仿真约 199Hz、0 overrun | [CI 29650696553](https://github.com/winbeau/Panthera-WAM/actions/runs/29650696553) |
+| Windows Release + unit tests | 通过：Release 0 warning，7 项 .NET 测试 | [CI 29650696553](https://github.com/winbeau/Panthera-WAM/actions/runs/29650696553) |
+| FlaUI 三态 + 强制高对比 | 通过：4 次实际启动，4 张 1240×800 截图 | `wpf-ui-artifacts` |
+| Windows 系统高对比与完整 Tab 顺序 | 待人工签字 | |
 | 夹爪限位拒绝 | 待操作员确认 | |
 | MoveL DONE/CANCELLED | 待操作员确认 | |
 | 全体非持久化归零及断电恢复 | 待操作员确认 | |
