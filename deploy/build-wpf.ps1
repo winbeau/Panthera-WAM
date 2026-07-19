@@ -298,51 +298,57 @@ function Test-InstallerPackage($Package) {
     Remove-Item -LiteralPath $installDir -Force -ErrorAction SilentlyContinue
 }
 
-$dotnet = Resolve-DotNet9
-Enable-DotNet9ForProcess $dotnet
-Write-Host "Using .NET SDK $($dotnet.Version): $($dotnet.Exe)" -ForegroundColor Green
+Push-Location $repoRoot
+try {
+    $dotnet = Resolve-DotNet9
+    Enable-DotNet9ForProcess $dotnet
+    Write-Host "Using .NET SDK $($dotnet.Version): $($dotnet.Exe)" -ForegroundColor Green
 
-if (-not $NoSubmoduleUpdate) {
-    Invoke-NativeCommand "Initialize WPF CAD visual submodule" "git" @(
-        "-C", $repoRoot, "submodule", "update", "--init", "--recursive", "--", "vendor/Panthera-HT-TriView"
-    )
-}
-
-$releaseVersion = Resolve-ReleaseVersion
-$requestedPublishPath = Resolve-OutputPath $PublishPath $defaultPublishPath
-
-switch ($Mode) {
-    "Quick" {
-        $published = Publish-Application $requestedPublishPath $releaseVersion
+    if (-not $NoSubmoduleUpdate) {
+        Invoke-NativeCommand "Initialize WPF CAD visual submodule" "git" @(
+            "-C", $repoRoot, "submodule", "update", "--init", "--recursive", "--", "vendor/Panthera-HT-TriView"
+        )
     }
-    "Ci" {
-        Restore-Build-And-Test (-not $SkipUiTests)
-        $published = Publish-Application $requestedPublishPath $releaseVersion
+
+    $releaseVersion = Resolve-ReleaseVersion
+    $requestedPublishPath = Resolve-OutputPath $PublishPath $defaultPublishPath
+
+    switch ($Mode) {
+        "Quick" {
+            $published = Publish-Application $requestedPublishPath $releaseVersion
+        }
+        "Ci" {
+            Restore-Build-And-Test (-not $SkipUiTests)
+            $published = Publish-Application $requestedPublishPath $releaseVersion
+        }
+        "Installer" {
+            Restore-Build-And-Test $false
+            $published = Publish-Application $defaultPublishPath $releaseVersion
+            $package = Build-Installer $releaseVersion
+            if (-not $SkipInstallerSmoke) {
+                Test-InstallerPackage $package
+            }
+        }
     }
-    "Installer" {
-        Restore-Build-And-Test $false
-        $published = Publish-Application $defaultPublishPath $releaseVersion
-        $package = Build-Installer $releaseVersion
-        if (-not $SkipInstallerSmoke) {
-            Test-InstallerPackage $package
+
+    Write-Host "`nWPF executable ready:" -ForegroundColor Green
+    Write-Host "  $($published.Exe)"
+
+    if ($Mode -eq "Installer") {
+        Write-Host "Installer ready:" -ForegroundColor Green
+        Write-Host "  $($package.Installer)"
+        Write-Host "  $($package.Checksum)"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_OUTPUT)) {
+        "publish_path=$($published.Root)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+        "executable=$($published.Exe)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+        if ($Mode -eq "Installer") {
+            "installer=$($package.Installer)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+            "checksum_file=$($package.Checksum)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
         }
     }
 }
-
-Write-Host "`nWPF executable ready:" -ForegroundColor Green
-Write-Host "  $($published.Exe)"
-
-if ($Mode -eq "Installer") {
-    Write-Host "Installer ready:" -ForegroundColor Green
-    Write-Host "  $($package.Installer)"
-    Write-Host "  $($package.Checksum)"
-}
-
-if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_OUTPUT)) {
-    "publish_path=$($published.Root)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
-    "executable=$($published.Exe)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
-    if ($Mode -eq "Installer") {
-        "installer=$($package.Installer)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
-        "checksum_file=$($package.Checksum)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
-    }
+finally {
+    Pop-Location
 }

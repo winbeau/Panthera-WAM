@@ -40,7 +40,11 @@ jobs:
             throw "dotnet was not added to PATH by setup-dotnet"
           }
           Write-Host "dotnet command: $($dotnet.Source)"
-          & $dotnet.Source --version
+          $sdkVersion = & $dotnet.Source --version
+          if ($sdkVersion -notmatch '^9\.') {
+            throw "global.json did not select .NET 9: $sdkVersion"
+          }
+          Write-Host "Selected SDK: $sdkVersion"
           & $dotnet.Source --info
 
       - name: Resolve release metadata
