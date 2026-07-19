@@ -163,9 +163,7 @@ def test_estop_preempts_motion_and_latches_until_cleared() -> None:
         queued_index = next(
             index
             for index, frame in enumerate(holder["backend"].frames)
-            if index > recovery_index
-            and frame.mode is FrameMode.VELOCITY
-            and frame.arm_velocity[0] == 0.5
+            if index > recovery_index and frame.mode is FrameMode.VELOCITY and frame.arm_velocity[0] == 0.5
         )
         assert recovery_index < queued_index
         assert np.all(ESTOP_RECOVERY_DAMPING_KD > IDLE_DAMPING_KD)
