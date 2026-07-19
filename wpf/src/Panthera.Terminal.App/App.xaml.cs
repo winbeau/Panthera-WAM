@@ -27,6 +27,10 @@ public partial class App : Application
         {
             settings = settings with { Theme = screenshotTheme };
         }
+        if (double.TryParse(Environment.GetEnvironmentVariable("PANTHERA_UI_SCALE_OVERRIDE"), out var uiScaleOverride))
+        {
+            settings = settings with { UiScale = Math.Clamp(uiScaleOverride, 0.90, 1.40) };
+        }
         ApplyTheme(settings.Theme);
         var uiAcceptanceMode = Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE") == "1";
 

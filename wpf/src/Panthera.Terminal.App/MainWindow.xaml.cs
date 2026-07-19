@@ -35,11 +35,15 @@ public partial class MainWindow : FluentWindow
         DataContext = viewModel;
         if (App.IsScreenshotMode)
         {
-            Width = 1240;
-            Height = 800;
+            Width = ScreenshotDimension("PANTHERA_SCREENSHOT_WIDTH", 1240, MinWidth);
+            Height = ScreenshotDimension("PANTHERA_SCREENSHOT_HEIGHT", 800, MinHeight);
             WindowStartupLocation = WindowStartupLocation.Manual;
             Left = 20;
             Top = 20;
+        }
+        else
+        {
+            ApplyAdaptiveWindowSize();
         }
         _renderTimer = new DispatcherTimer(DispatcherPriority.Render)
         {
@@ -52,13 +56,28 @@ public partial class MainWindow : FluentWindow
         ApplyThemePreference(viewModel.Theme);
     }
 
+    private static double ScreenshotDimension(string variable, double fallback, double minimum) =>
+        double.TryParse(Environment.GetEnvironmentVariable(variable), out var value)
+            ? Math.Max(minimum, value)
+            : fallback;
+
+    private void ApplyAdaptiveWindowSize()
+    {
+        var workArea = SystemParameters.WorkArea;
+        Width = Math.Clamp(Math.Floor(workArea.Width * 0.96), MinWidth, 1680);
+        Height = Math.Clamp(Math.Floor(workArea.Height * 0.84), MinHeight, 920);
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs eventArgs)
     {
         _renderTimer.Start();
         await _viewModel.InitializeAsync();
         if (App.IsScreenshotMode)
         {
-            await CadView.WaitUntilReadyAsync(TimeSpan.FromSeconds(15));
+            var cadTimeout = Environment.GetEnvironmentVariable("PANTHERA_VISUAL_QA_CAD") == "1"
+                ? TimeSpan.FromSeconds(45)
+                : TimeSpan.FromSeconds(15);
+            await CadView.WaitUntilReadyAsync(cadTimeout);
         }
         await CaptureRequestedScreenshotAsync();
     }
@@ -103,7 +122,13 @@ public partial class MainWindow : FluentWindow
             AppDiagnostics.Write("window-closing", exception);
         }
         _shutdownComplete = true;
-        Close();
+        _ = Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (IsLoaded)
+            {
+                Close();
+            }
+        }));
     }
 
     private void RenderLatestState(object? sender, EventArgs eventArgs)
@@ -126,12 +151,17 @@ public partial class MainWindow : FluentWindow
             return;
         }
         renderedVersion = version;
-        image.Source = frame.PixelFormat switch
+        var source = frame.PixelFormat switch
         {
             CameraPixelKind.Rgb8 => CreateColorBitmap(frame),
             CameraPixelKind.Z16 => CreateDepthBitmap(frame),
             _ => null,
         };
+        image.Source = source;
+        if (stream == CameraStreamKind.Color && source is not null)
+        {
+            CadView.UpdateColorCameraFrame(source);
+        }
     }
 
     private static BitmapSource CreateColorBitmap(CameraFrameSnapshot frame)

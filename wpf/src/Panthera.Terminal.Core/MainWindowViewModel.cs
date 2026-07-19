@@ -44,9 +44,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 JointMinimum[index],
                 JointMaximum[index])));
         Theme = settings.Theme;
-        UiScale = Math.Clamp(settings.UiScale, 0.75, 1.40);
+        UiScale = Math.Clamp(settings.UiScale, 0.90, 1.40);
         JogSpeed = settings.JogSpeed;
-        TargetDuration = 3.0;
         DatasetRepoId = "local/panthera-wam";
         DatasetTask = "Panthera demonstration";
         TeachRecordingName = NextRecordingName();
@@ -160,7 +159,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private double _targetJ6;
 
     [ObservableProperty]
-    private double _targetDuration;
+    private double _targetMoveJDuration = 3.0;
+
+    [ObservableProperty]
+    private double _targetMoveLDuration = 3.0;
 
     [ObservableProperty]
     private double _jogSpeed;
@@ -476,7 +478,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             var result = await _client.MoveJAsync(
                 [TargetJ1, TargetJ2, TargetJ3, TargetJ4, TargetJ5, TargetJ6],
-                TargetDuration,
+                TargetMoveJDuration,
                 true);
             AddLog(result.Accepted && result.Reached ? "Info" : "Warning", "Motion",
                 result.Accepted ? $"MoveJ 完成，到位={result.Reached}" : result.RejectReason);
@@ -497,7 +499,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     TargetPitch,
                     TargetYaw,
                     PreserveOrientation),
-                TargetDuration);
+                TargetMoveLDuration);
             _activeExecutionId = handle.ExecutionId;
             ExecutionStatus = "运行中";
             await foreach (var progress in _client.StreamExecutionAsync(handle.ExecutionId))
@@ -990,7 +992,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void SetUiScale(double scale)
     {
-        UiScale = Math.Clamp(Math.Round(scale * 20) / 20, 0.75, 1.40);
+        UiScale = Math.Clamp(Math.Round(scale * 20) / 20, 0.90, 1.40);
         Settings = Settings with { UiScale = UiScale, JogSpeed = JogSpeed };
         _settingsStore.Save(Settings);
     }

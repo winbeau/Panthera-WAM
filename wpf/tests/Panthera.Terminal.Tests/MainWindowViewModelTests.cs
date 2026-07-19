@@ -6,6 +6,18 @@ namespace Panthera.Terminal.Tests;
 public sealed class MainWindowViewModelTests
 {
     [Fact]
+    public void UiScale_IsClampedToReadableMinimum()
+    {
+        var viewModel = new MainWindowViewModel(
+            new FailingJogClient(),
+            new StubEnvironmentGuideService(),
+            new StubSettingsStore(),
+            new TerminalSettings(UiScale: 0.5));
+
+        Assert.Equal(0.90, viewModel.UiScale);
+    }
+
+    [Fact]
     public async Task JogTransportFailure_IsContainedAndResetsJogState()
     {
         var client = new FailingJogClient();

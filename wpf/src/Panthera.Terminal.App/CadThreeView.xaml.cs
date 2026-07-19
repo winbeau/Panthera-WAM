@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
@@ -17,6 +19,9 @@ public partial class CadThreeView : UserControl
     public static readonly DependencyProperty J5Property = StateProperty(nameof(J5));
     public static readonly DependencyProperty J6Property = StateProperty(nameof(J6));
     public static readonly DependencyProperty GripperPercentProperty = StateProperty(nameof(GripperPercent));
+    public static readonly DependencyProperty TcpXProperty = DependencyProperty.Register(nameof(TcpX), typeof(double), typeof(CadThreeView), new PropertyMetadata(0.0));
+    public static readonly DependencyProperty TcpYProperty = DependencyProperty.Register(nameof(TcpY), typeof(double), typeof(CadThreeView), new PropertyMetadata(0.0));
+    public static readonly DependencyProperty TcpZProperty = DependencyProperty.Register(nameof(TcpZ), typeof(double), typeof(CadThreeView), new PropertyMetadata(0.0));
     public static readonly DependencyProperty ThemeProperty = DependencyProperty.Register(
         nameof(Theme),
         typeof(string),
@@ -28,7 +33,9 @@ public partial class CadThreeView : UserControl
     private bool _bridgeReady;
     private bool _stateDirty = true;
     private bool _pushActive;
+    private bool _cameraPushActive;
     private bool _initializing;
+    private DateTimeOffset _lastCameraPush = DateTimeOffset.MinValue;
     private WebView2? _browser;
 
     public CadThreeView()
@@ -50,7 +57,20 @@ public partial class CadThreeView : UserControl
     public double J5 { get => (double)GetValue(J5Property); set => SetValue(J5Property, value); }
     public double J6 { get => (double)GetValue(J6Property); set => SetValue(J6Property, value); }
     public double GripperPercent { get => (double)GetValue(GripperPercentProperty); set => SetValue(GripperPercentProperty, value); }
+    public double TcpX { get => (double)GetValue(TcpXProperty); set => SetValue(TcpXProperty, value); }
+    public double TcpY { get => (double)GetValue(TcpYProperty); set => SetValue(TcpYProperty, value); }
+    public double TcpZ { get => (double)GetValue(TcpZProperty); set => SetValue(TcpZProperty, value); }
     public string Theme { get => (string)GetValue(ThemeProperty); set => SetValue(ThemeProperty, value); }
+
+    public void UpdateColorCameraFrame(BitmapSource frame)
+    {
+        if (!_bridgeReady || _cameraPushActive || _browser?.CoreWebView2 is null
+            || DateTimeOffset.UtcNow - _lastCameraPush < TimeSpan.FromMilliseconds(180))
+        {
+            return;
+        }
+        _ = PushColorCameraFrameAsync(frame);
+    }
 
     public async Task<bool> WaitUntilReadyAsync(TimeSpan timeout)
     {
@@ -72,7 +92,8 @@ public partial class CadThreeView : UserControl
 
     private async void CadThreeView_Loaded(object sender, RoutedEventArgs eventArgs)
     {
-        if (Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE") == "1")
+        if (Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE") == "1"
+            && Environment.GetEnvironmentVariable("PANTHERA_VISUAL_QA_CAD") != "1")
         {
             LoadingText.Text = "CAD UI 验收占位";
             _modelReady.TrySetResult("acceptance");
@@ -202,6 +223,35 @@ public partial class CadThreeView : UserControl
             : "light";
         await browser.ExecuteScriptAsync(
             $"window.PantheraWpfBridge?.setTheme({JsonSerializer.Serialize(theme)})");
+    }
+
+    private async Task PushColorCameraFrameAsync(BitmapSource frame)
+    {
+        var browser = _browser;
+        if (browser?.CoreWebView2 is null)
+        {
+            return;
+        }
+        _cameraPushActive = true;
+        try
+        {
+            using var stream = new MemoryStream();
+            var encoder = new JpegBitmapEncoder { QualityLevel = 72 };
+            encoder.Frames.Add(BitmapFrame.Create(frame));
+            encoder.Save(stream);
+            var dataUrl = $"data:image/jpeg;base64,{Convert.ToBase64String(stream.ToArray())}";
+            await browser.ExecuteScriptAsync(
+                $"window.PantheraWpfBridge?.setCameraFrame({JsonSerializer.Serialize(dataUrl)})");
+            _lastCameraPush = DateTimeOffset.UtcNow;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
+        {
+            AppDiagnostics.Write("cad-camera-frame", exception);
+        }
+        finally
+        {
+            _cameraPushActive = false;
+        }
     }
 
     private async void StylePicker_SelectionChanged(object sender, SelectionChangedEventArgs eventArgs)

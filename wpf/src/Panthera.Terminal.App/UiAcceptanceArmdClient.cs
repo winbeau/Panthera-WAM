@@ -5,6 +5,16 @@ namespace Panthera.Terminal.App;
 
 internal sealed class UiAcceptanceArmdClient : IArmdClient
 {
+    private static readonly (double Minimum, double Maximum)[] JointLimits =
+    [
+        (-2.4, 2.4),
+        (-0.1, 3.2),
+        (-0.1, 4.0),
+        (-1.6, 1.6),
+        (-1.7, 1.7),
+        (-2.5, 2.5),
+    ];
+
     private bool _held;
     private bool _estopEngaged;
     private bool _teachActive;
@@ -60,8 +70,8 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
 
     public Task<SoftLimitSnapshot> GetSoftLimitsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new SoftLimitSnapshot(
-            Enumerable.Range(1, 6)
-                .Select(index => new JointLimitSnapshot($"joint{index}", -3.14, 3.14, 1.0, 10.0))
+            JointLimits.Select((limit, index) =>
+                    new JointLimitSnapshot($"joint{index + 1}", limit.Minimum, limit.Maximum, 1.0, 10.0))
                 .ToArray(),
             0.0,
             2.0,

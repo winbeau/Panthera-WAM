@@ -182,6 +182,8 @@ public sealed class CockpitUiTests
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("CancelExecutionButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("GripperOpenButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("GripperCloseButton")));
+            Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("CadStyleSelector")));
+            Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("CadCameraSelector")));
 
             var dataTab = window.FindFirstDescendant(condition => condition.ByAutomationId("DataTabButton"));
             Assert.NotNull(dataTab);

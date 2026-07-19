@@ -10,7 +10,7 @@
   </style>
 </head>
 <body>
-  <iframe id="triview" src="docs/mockups/panthera-six-axis-three-view.html?camera=fixed-base&amp;style=sketch" title="Panthera-HT 精确 CAD 三视图"></iframe>
+  <iframe id="triview" src="docs/mockups/panthera-six-axis-three-view.html?camera=fixed-base&amp;style=material" title="Panthera-HT 精确 CAD 三视图"></iframe>
   <script>
     (() => {
       'use strict';
@@ -26,27 +26,32 @@
         .app { width:100%!important; height:100vh!important; min-height:0!important; margin:0!important; border:0!important; border-radius:0!important; box-shadow:none!important; background:transparent!important; }
         .topbar,.controls,.statusline { display:none!important; }
         .stage-shell { height:100vh!important; min-height:0!important; padding:0!important; }
-        .stage { height:100vh!important; min-height:0!important; padding:7px!important; gap:7px!important; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(230px,.96fr)!important; grid-template-rows:auto minmax(0,1fr)!important; grid-template-areas:'side front top' 'side front facts'!important; }
-        .side { grid-area:side!important; }
-        .front { grid-area:front!important; }
-        .top { grid-area:top!important; width:100%!important; aspect-ratio:1/1!important; align-self:start!important; }
-        .facts { grid-area:facts!important; padding:10px!important; overflow:auto!important; }
-        .facts-title { display:flex; align-items:center; gap:7px; }
-        .facts-title h2 { margin:0; }
-        .gripper-chip { margin-left:auto; padding:3px 6px; border-radius:999px; color:var(--good); background:color-mix(in srgb,var(--good) 13%,transparent); font:650 8.5px var(--mono); white-space:nowrap; }
-        .gripper-chip[data-state='closed'] { color:var(--danger); background:color-mix(in srgb,var(--danger) 12%,transparent); }
-        .gripper-chip[data-state='partial'] { color:var(--warn); background:color-mix(in srgb,var(--warn) 13%,transparent); }
-        .facts .meta { font-size:9px!important; line-height:1.3!important; }
-        .tcp-grid { margin-top:8px!important; gap:5px!important; }
-        .tcp-cell { padding:6px!important; }
-        .tcp-cell b { font-size:10px!important; }
-        .live-meta { margin-top:7px!important; gap:7px!important; font-size:8px!important; }
-        .kinematic-chain { margin-top:8px!important; gap:3px!important; }
-        .kinematic-chain li { font-size:8.5px!important; }
-        .kinematic-chain li.gripper-state .axis i { background:var(--good)!important; }
-        .kinematic-chain li.gripper-state code:last-child { min-width:70px; text-align:right; }
-        .facts .api { display:none!important; }
-        .view-head { top:7px!important; left:9px!important; }
+        .stage { height:100vh!important; min-height:0!important; padding:6px!important; gap:6px!important; grid-template-columns:minmax(0,1.22fr) minmax(0,1.22fr) minmax(215px,.72fr)!important; grid-template-rows:minmax(0,1fr) minmax(0,1fr)!important; grid-template-areas:'side front top' 'side front facts'!important; }
+        .side { grid-area:side!important; height:100%!important; aspect-ratio:auto!important; align-self:stretch!important; }
+        .front { grid-area:front!important; height:100%!important; aspect-ratio:auto!important; align-self:stretch!important; }
+        .top { grid-area:top!important; width:100%!important; height:100%!important; aspect-ratio:auto!important; align-self:stretch!important; }
+        .facts { grid-area:facts!important; min-height:0!important; padding:0!important; overflow:hidden!important; background:#0b1014!important; }
+        .wpf-state-cache { display:none!important; }
+        .camera-panel { width:100%; height:100%; min-height:0; display:grid; grid-template-rows:38px minmax(0,1fr) 28px; background:#0b1014; }
+        .camera-head { display:flex; align-items:center; gap:8px; padding:0 10px; color:#f4f7f8; background:#182126; border-bottom:1px solid rgba(255,255,255,.10); }
+        .camera-head strong { font-size:13px; font-weight:650; }
+        .camera-head span { margin-left:auto; color:#92d5f2; font:650 10px var(--mono); }
+        .camera-frame { position:relative; min-height:0; overflow:hidden; background:linear-gradient(145deg,#10181d,#080d10); }
+        .camera-frame img { width:100%; height:100%; display:block; object-fit:cover; opacity:0; transition:opacity .16s ease; }
+        .camera-frame.has-frame img { opacity:1; }
+        .camera-empty { position:absolute; inset:0; display:grid; place-items:center; color:#8d9aa2; font:11px var(--mono); letter-spacing:.25px; }
+        .camera-frame.has-frame .camera-empty { display:none; }
+        .camera-meta { display:flex; align-items:center; gap:8px; padding:0 10px; color:#9eabb2; background:#11191d; border-top:1px solid rgba(255,255,255,.08); font:10px var(--mono); }
+        .camera-meta b { color:#eef4f6; font-weight:600; }
+        .view-head { top:8px!important; left:10px!important; }
+        .view-head strong { font-size:13px!important; letter-spacing:.35px!important; }
+        .view-head span { font-size:11px!important; }
+        .viewport .view-note,.viewport .scale { font-size:10.5px!important; }
+        @media (max-width:980px) {
+          .stage { grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important; grid-template-rows:minmax(0,1.18fr) minmax(210px,.82fr)!important; grid-template-areas:'side front' 'top facts'!important; }
+          .top { height:100%!important; aspect-ratio:auto!important; align-self:stretch!important; }
+          .facts { overflow:hidden!important; }
+        }
       `;
 
       function post(message) {
@@ -57,7 +62,7 @@
         const percent = Math.max(0, Math.min(100, Math.round(Number(opening || 0) * 100)));
         const state = percent <= 8 ? 'closed' : percent >= 92 ? 'open' : 'partial';
         const label = state === 'closed' ? 'CLOSED' : state === 'open' ? 'OPEN' : 'PARTIAL';
-        return { percent, state, text:`${label} · ${percent}%` };
+        return { percent, state, text:`${percent}%` };
       }
 
       function updateGripper(opening) {
@@ -89,29 +94,53 @@
         return true;
       }
 
+      function applyCameraFrame(dataUrl) {
+        const doc = frame.contentDocument;
+        const image = doc?.getElementById('wpf-d405-rgb');
+        const viewport = image?.closest('.camera-frame');
+        const state = doc?.getElementById('wpf-d405-state');
+        if (!image || !viewport || !dataUrl) return false;
+        image.onload = () => {
+          viewport.classList.add('has-frame');
+          if (state) state.textContent = 'LIVE RGB8';
+        };
+        image.src = dataUrl;
+        return true;
+      }
+
+      function applyWpfCameraFraming() {
+        try {
+          frame.contentWindow.eval(`
+            fixedFrames.side.worldHeight = .70;
+            fixedFrames.front.worldHeight = .68;
+          `);
+        } catch {
+          // The embedded viewer keeps these values private; retain its defaults if they change upstream.
+        }
+      }
+
       function configure() {
         if (configured || !frame.contentDocument || !frame.contentWindow?.PantheraThreeView) return false;
         configured = true;
         api = frame.contentWindow.PantheraThreeView;
+        applyWpfCameraFraming();
         const doc = frame.contentDocument;
         const style = doc.createElement('style');
         style.textContent = childCss;
         doc.head.appendChild(style);
 
         const facts = doc.querySelector('.facts');
-        const title = facts?.querySelector('h2');
-        if (facts && title) {
-          const titleRow = doc.createElement('div');
-          titleRow.className = 'facts-title';
-          title.textContent = '六轴 + 夹爪实时状态';
-          title.parentNode.insertBefore(titleRow, title);
-          titleRow.appendChild(title);
-          const chip = doc.createElement('span');
-          chip.id = 'wpf-gripper-state';
-          chip.className = 'gripper-chip';
-          chip.dataset.state = 'open';
-          chip.textContent = 'OPEN · 100%';
-          titleRow.appendChild(chip);
+        if (facts && !doc.getElementById('wpf-d405-rgb')) {
+          const cache = doc.createElement('div');
+          cache.className = 'wpf-state-cache';
+          while (facts.firstChild) cache.appendChild(facts.firstChild);
+          facts.appendChild(cache);
+          const panel = doc.createElement('section');
+          panel.className = 'camera-panel';
+          panel.innerHTML = `<div class="camera-head"><strong>D405 彩色画面</strong><span id="wpf-d405-state">WAITING</span></div>
+            <div class="camera-frame"><img id="wpf-d405-rgb" alt="D405 RGB 实时画面"><div class="camera-empty">D405 RGB · 等待帧</div></div>
+            <div class="camera-meta"><b>RGB8</b><span>640 × 480</span><span>WPF camera stream</span></div>`;
+          facts.appendChild(panel);
         }
         const list = doc.getElementById('chain-list');
         if (list && !doc.getElementById('wpf-gripper-chain')) {
@@ -121,7 +150,7 @@
           list.appendChild(row);
         }
         api.setCameraMode('fixed-base');
-        api.setStyle('sketch');
+        api.setStyle('material');
         applyTheme(pendingTheme);
         applyState(pendingState);
         api.render();
@@ -148,6 +177,7 @@
         setStyle: style => api?.setStyle(style),
         setCameraMode: mode => api?.setCameraMode(mode),
         setTheme: applyTheme,
+        setCameraFrame: applyCameraFrame,
         getState: () => api?.getState?.() || null,
       };
     })();
