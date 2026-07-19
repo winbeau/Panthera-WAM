@@ -54,6 +54,7 @@ EXPECTED_COMMANDS = {
     "safety limits show",
     "state get",
     "state watch",
+    "trajectory run-waypoints",
 }
 
 

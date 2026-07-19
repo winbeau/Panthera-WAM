@@ -271,6 +271,128 @@ class KinematicsEngine:
         return None
 
     @staticmethod
+    def septic_interpolation(
+        start_pos: np.ndarray,
+        end_pos: np.ndarray,
+        duration: float,
+        current_time: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        start = np.asarray(start_pos, dtype=np.float64)
+        end = np.asarray(end_pos, dtype=np.float64)
+        if current_time <= 0:
+            return start, np.zeros_like(start), np.zeros_like(start)
+        if current_time >= duration:
+            return end, np.zeros_like(end), np.zeros_like(end)
+        t = current_time / duration
+        t2, t3, t4 = t * t, t**3, t**4
+        t5, t6, t7 = t**5, t**6, t**7
+        a0 = 1 - 35 * t4 + 84 * t5 - 70 * t6 + 20 * t7
+        a1 = 35 * t4 - 84 * t5 + 70 * t6 - 20 * t7
+        da0 = -140 * t3 + 420 * t4 - 420 * t5 + 140 * t6
+        da1 = -da0
+        dda0 = -420 * t2 + 1680 * t3 - 2100 * t4 + 840 * t5
+        dda1 = -dda0
+        return (
+            a0 * start + a1 * end,
+            (da0 * start + da1 * end) / duration,
+            (dda0 * start + dda1 * end) / duration**2,
+        )
+
+    @staticmethod
+    def septic_interpolation_with_velocity(
+        start_pos: np.ndarray,
+        end_pos: np.ndarray,
+        start_vel: np.ndarray,
+        end_vel: np.ndarray,
+        duration: float,
+        current_time: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        start = np.asarray(start_pos, dtype=np.float64)
+        end = np.asarray(end_pos, dtype=np.float64)
+        start_velocity = np.asarray(start_vel, dtype=np.float64)
+        end_velocity = np.asarray(end_vel, dtype=np.float64)
+        if current_time <= 0:
+            return start, start_velocity, np.zeros_like(start)
+        if current_time >= duration:
+            return end, end_velocity, np.zeros_like(end)
+        t = current_time / duration
+        p0, p1 = start, end
+        v0, v1 = start_velocity * duration, end_velocity * duration
+        a0 = p0
+        a1 = v0
+        a4 = 35 * (p1 - p0) - 20 * v0 - 15 * v1
+        a5 = -84 * (p1 - p0) + 45 * v0 + 39 * v1
+        a6 = 70 * (p1 - p0) - 36 * v0 - 34 * v1
+        a7 = -20 * (p1 - p0) + 10 * v0 + 10 * v1
+        position = a0 + a1 * t + a4 * t**4 + a5 * t**5 + a6 * t**6 + a7 * t**7
+        velocity = (a1 + 4 * a4 * t**3 + 5 * a5 * t**4 + 6 * a6 * t**5 + 7 * a7 * t**6) / duration
+        acceleration = (12 * a4 * t**2 + 20 * a5 * t**3 + 30 * a6 * t**4 + 42 * a7 * t**5) / duration**2
+        return position, velocity, acceleration
+
+    def build_joint_trajectory(
+        self,
+        *,
+        waypoints: list[np.ndarray],
+        velocities: list[np.ndarray | None],
+        durations: list[float],
+    ) -> dict[str, list[Any]]:
+        if len(waypoints) < 2 or len(durations) != len(waypoints) - 1:
+            raise ValueError("waypoints 数量必须比 durations 多 1")
+        if len(velocities) != len(waypoints):
+            raise ValueError("velocities 必须与 waypoints 等长")
+        points = [np.asarray(value, dtype=np.float64) for value in waypoints]
+        if any(value.shape != (6,) or not np.all(np.isfinite(value)) for value in points):
+            raise ValueError("每个 waypoint 必须包含 6 个有限数值")
+        if np.any(np.asarray(durations) <= 0) or not np.all(np.isfinite(durations)):
+            raise ValueError("durations 必须全部为正有限数值")
+        with_velocity = any(value is not None for value in velocities)
+        boundary_velocities = [
+            np.zeros(6) if value is None else np.asarray(value, dtype=np.float64) for value in velocities
+        ]
+        if any(value.shape != (6,) or not np.all(np.isfinite(value)) for value in boundary_velocities):
+            raise ValueError("每个 waypoint velocity 必须包含 6 个有限数值")
+
+        positions: list[np.ndarray] = []
+        sampled_velocities: list[np.ndarray] = []
+        timestamps: list[float] = []
+        elapsed = 0.0
+        for index, duration in enumerate(durations):
+            steps = max(1, int(np.ceil(duration / self.resample_dt)))
+            for step in range(steps):
+                local_time = duration * step / steps
+                if with_velocity:
+                    position, velocity, _ = self.septic_interpolation_with_velocity(
+                        points[index],
+                        points[index + 1],
+                        boundary_velocities[index],
+                        boundary_velocities[index + 1],
+                        duration,
+                        local_time,
+                    )
+                else:
+                    position, velocity, _ = self.septic_interpolation(
+                        points[index],
+                        points[index + 1],
+                        duration,
+                        local_time,
+                    )
+                positions.append(position)
+                sampled_velocities.append(velocity)
+                timestamps.append(elapsed + local_time)
+            elapsed += duration
+        positions.append(points[-1])
+        sampled_velocities.append(boundary_velocities[-1])
+        timestamps.append(elapsed)
+        scale = self._trajectory_limit_scale(positions, timestamps, sampled_velocities)
+        if scale > 1.0 + 1e-6:
+            raise ValueError(f"durations 过短，至少需整体放大约 {scale * 1.02:.3f} 倍")
+        return {
+            "positions": positions,
+            "velocities": sampled_velocities,
+            "timestamps": timestamps,
+        }
+
+    @staticmethod
     def rotation_from_euler(roll: float, pitch: float, yaw: float) -> np.ndarray:
         return Rotation.from_euler("xyz", [roll, pitch, yaw]).as_matrix()
 
@@ -469,6 +591,8 @@ def _worker_call(operation: str, payload: dict[str, Any]) -> Any:
             "timestamps": timestamps,
             "fraction": fraction,
         }
+    if operation == "joint_trajectory":
+        return _ENGINE.build_joint_trajectory(**payload)
     raise ValueError(f"未知运动学操作: {operation}")
 
 

@@ -287,6 +287,7 @@ class CartesianTrajectoryMotion:
         max_torque: np.ndarray,
         tolerance: float = 0.01,
         settle_timeout_s: float = 2.0,
+        operation_name: str = "moveL",
     ) -> None:
         if not positions or len(positions) != len(velocities) or len(positions) != len(timestamps):
             raise ValueError("笛卡尔轨迹位置、速度、时间戳长度必须一致且非空")
@@ -298,6 +299,7 @@ class CartesianTrajectoryMotion:
         self.max_torque = np.asarray(max_torque, dtype=np.float64).copy()
         self.tolerance = tolerance
         self.settle_timeout_s = settle_timeout_s
+        self.operation_name = operation_name
         self.reject_reason = ""
         self.errors = np.full(6, np.inf, dtype=np.float64)
         self._fraction = 0.0
@@ -367,7 +369,7 @@ class CartesianTrajectoryMotion:
             return MotionStepResult.DONE
         if elapsed >= self.timestamps[-1] + self.settle_timeout_s:
             hold_current_position(backend)
-            self.reject_reason = "moveL 末点收敛超时"
+            self.reject_reason = f"{self.operation_name} 末点收敛超时"
             return MotionStepResult.FAILED
         backend.write_frame(
             position_frame(

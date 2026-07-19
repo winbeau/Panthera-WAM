@@ -6,9 +6,18 @@ import threading
 import uuid
 from concurrent.futures import Future
 from dataclasses import dataclass
+from typing import Protocol
 
 from .hardware_loop import CancelReason, MotionStepResult
-from .motion import CartesianTrajectoryMotion
+
+
+class TrackedMotion(Protocol):
+    reject_reason: str
+
+    @property
+    def fraction(self) -> float: ...
+
+    def request_cancel(self, reason: CancelReason) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +32,7 @@ class ExecutionSnapshot:
 @dataclass(slots=True)
 class _ExecutionRecord:
     execution_id: str
-    motion: CartesianTrajectoryMotion
+    motion: TrackedMotion
     completion: Future[MotionStepResult]
 
 
@@ -34,7 +43,7 @@ class ExecutionRegistry:
 
     def register(
         self,
-        motion: CartesianTrajectoryMotion,
+        motion: TrackedMotion,
         completion: Future[MotionStepResult],
     ) -> str:
         execution_id = uuid.uuid4().hex

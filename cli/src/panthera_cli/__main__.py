@@ -42,6 +42,7 @@ cartesian_app = typer.Typer(no_args_is_help=True)
 execution_app = typer.Typer(no_args_is_help=True)
 camera_app = typer.Typer(no_args_is_help=True)
 dynamics_app = typer.Typer(no_args_is_help=True)
+trajectory_app = typer.Typer(no_args_is_help=True)
 app.add_typer(control_app, name="control")
 app.add_typer(estop_app, name="estop")
 app.add_typer(safety_app, name="safety")
@@ -55,6 +56,7 @@ app.add_typer(cartesian_app, name="cartesian")
 app.add_typer(execution_app, name="execution")
 app.add_typer(camera_app, name="camera")
 app.add_typer(dynamics_app, name="dynamics")
+app.add_typer(trajectory_app, name="trajectory")
 safety_app.add_typer(limits_app, name="limits")
 console = Console()
 
@@ -1093,6 +1095,74 @@ def cartesian_movel(
         channel.close()
     if final.state != arm_pb2.EXEC_STATE_DONE:
         console.print(f"[yellow]moveL 终态={arm_pb2.ExecState.Name(final.state)}[/yellow]")
+        raise typer.Exit(2)
+
+
+@trajectory_app.command("run-waypoints")
+def trajectory_run_waypoints(
+    waypoints_file: Path = typer.Option(..., "--waypoints-file", exists=True, dir_okay=False),
+    durations: str | None = typer.Option(None, "--durations"),
+) -> None:
+    try:
+        payload = json.loads(waypoints_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"waypoints 文件必须是 JSON: {exc}") from exc
+    if isinstance(payload, dict):
+        raw_waypoints = payload.get("waypoints")
+        raw_durations = payload.get("durations", [])
+    else:
+        raw_waypoints = payload
+        raw_durations = []
+    if not isinstance(raw_waypoints, list) or len(raw_waypoints) < 2:
+        raise typer.BadParameter("waypoints 文件至少需要 2 个路径点")
+    if durations is not None:
+        try:
+            raw_durations = [float(value.strip()) for value in durations.split(",") if value.strip()]
+        except ValueError as exc:
+            raise typer.BadParameter("durations 必须是逗号分隔数值") from exc
+    if not isinstance(raw_durations, list) or len(raw_durations) != len(raw_waypoints) - 1:
+        raise typer.BadParameter("durations 数量必须比 waypoints 少 1")
+    request = arm_pb2.RunJointTrajectoryRequest(durations=raw_durations)
+    for index, item in enumerate(raw_waypoints):
+        if isinstance(item, list):
+            positions_value = item
+            velocities_value = []
+        elif isinstance(item, dict):
+            positions_value = item.get("positions", item.get("pos"))
+            velocities_value = item.get("velocities", item.get("vel", []))
+        else:
+            raise typer.BadParameter(f"waypoints[{index}] 必须是数组或对象")
+        if positions_value is None:
+            raise typer.BadParameter(f"waypoints[{index}] 缺少 positions")
+        request.waypoints.add(
+            positions=list(positions_value),
+            velocities=list(velocities_value),
+        )
+
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        with maintain_heartbeat(lease):
+            accepted = stub.RunJointTrajectory(
+                request,
+                metadata=lease_metadata(lease),
+                timeout=20.0,
+            )
+            console.print(f"execution_id={accepted.execution_id}")
+            try:
+                final = _watch_execution(stub, accepted.execution_id)
+            except KeyboardInterrupt:
+                stub.CancelExecution(
+                    arm_pb2.CancelExecutionRequest(execution_id=accepted.execution_id),
+                    metadata=lease_metadata(lease),
+                )
+                final = _watch_execution(stub, accepted.execution_id)
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if final.state != arm_pb2.EXEC_STATE_DONE:
+        console.print(f"[yellow]trajectory 终态={arm_pb2.ExecState.Name(final.state)}[/yellow]")
         raise typer.Exit(2)
 
 

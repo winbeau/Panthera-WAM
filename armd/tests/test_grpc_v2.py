@@ -110,3 +110,81 @@ async def test_m5_joint_and_gripper_mit(v2_stack) -> None:
         metadata=metadata,
     )
     assert gripper.accepted
+
+
+@pytest.mark.asyncio
+async def test_m6_joint_trajectory_zero_velocity_and_cancel(v2_stack) -> None:
+    _, stub, metadata = v2_stack
+    completed = await stub.RunJointTrajectory(
+        arm_pb2.RunJointTrajectoryRequest(
+            waypoints=[
+                arm_pb2.WaypointSpec(positions=[0.0] * 6),
+                arm_pb2.WaypointSpec(positions=[0.02, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            ],
+            durations=[0.3],
+        ),
+        metadata=metadata,
+        timeout=5.0,
+    )
+    final = None
+    fractions = []
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=completed.execution_id)
+    ):
+        fractions.append(status.fraction)
+        final = status
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+    assert fractions == sorted(fractions)
+
+    current = await stub.GetJointState(arm_pb2.Empty())
+    start = [motor.position for motor in current.joints]
+    target = start.copy()
+    target[0] += 0.08
+    running = await stub.RunJointTrajectory(
+        arm_pb2.RunJointTrajectoryRequest(
+            waypoints=[
+                arm_pb2.WaypointSpec(positions=start, velocities=[0.0] * 6),
+                arm_pb2.WaypointSpec(positions=target, velocities=[0.0] * 6),
+            ],
+            durations=[1.0],
+        ),
+        metadata=metadata,
+        timeout=5.0,
+    )
+    await asyncio.sleep(0.1)
+    cancelled = await stub.CancelExecution(
+        arm_pb2.CancelExecutionRequest(execution_id=running.execution_id),
+        metadata=metadata,
+    )
+    assert cancelled.cancelled
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=running.execution_id)
+    ):
+        final = status
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_m6_joint_trajectory_with_middle_velocity(v2_stack) -> None:
+    _, stub, metadata = v2_stack
+    accepted = await stub.RunJointTrajectory(
+        arm_pb2.RunJointTrajectoryRequest(
+            waypoints=[
+                arm_pb2.WaypointSpec(positions=[0.0] * 6, velocities=[0.0] * 6),
+                arm_pb2.WaypointSpec(
+                    positions=[0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    velocities=[0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
+                ),
+                arm_pb2.WaypointSpec(positions=[0.02, 0.0, 0.0, 0.0, 0.0, 0.0], velocities=[0.0] * 6),
+            ],
+            durations=[0.4, 0.4],
+        ),
+        metadata=metadata,
+        timeout=5.0,
+    )
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE

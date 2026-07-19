@@ -947,6 +947,71 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         execution_id = self._executions.register(motion, completion)
         return arm_pb2.ExecutionAccepted(execution_id=execution_id)
 
+    async def RunJointTrajectory(self, request, context):
+        if self._hardware_loop.has_active_motion:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
+        if len(request.waypoints) < 2:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "至少需要 2 个 waypoint")
+        if len(request.durations) != len(request.waypoints) - 1:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "durations 数量必须比 waypoints 少 1")
+        try:
+            positions = [
+                finite_vector(waypoint.positions, name=f"waypoints[{index}].positions")
+                for index, waypoint in enumerate(request.waypoints)
+            ]
+            velocities = [
+                (
+                    finite_vector(waypoint.velocities, name=f"waypoints[{index}].velocities")
+                    if waypoint.velocities
+                    else None
+                )
+                for index, waypoint in enumerate(request.waypoints)
+            ]
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        durations = np.asarray(request.durations, dtype=np.float64)
+        if not np.all(np.isfinite(durations)) or np.any(durations <= 0):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "durations 必须全部为正有限数值")
+        limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
+        for values in positions:
+            reason = arm_position_reject_reason(values, limits)
+            if reason:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, reason)
+        for values in velocities:
+            if values is None:
+                continue
+            reason = arm_magnitude_reject_reason(values, limits.joint_velocity, label="边界速度")
+            if reason:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, reason)
+        try:
+            result = await self._kinematics.call(
+                "joint_trajectory",
+                {
+                    "waypoints": positions,
+                    "velocities": velocities,
+                    "durations": durations.tolist(),
+                },
+            )
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        motion = CartesianTrajectoryMotion(
+            positions=[np.asarray(value) for value in result["positions"]],
+            velocities=[np.asarray(value) for value in result["velocities"]],
+            timestamps=list(result["timestamps"]),
+            max_torque=limits.joint_torque,
+            operation_name="trajectory",
+        )
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        execution_id = self._executions.register(motion, completion)
+        return arm_pb2.ExecutionAccepted(execution_id=execution_id)
+
     async def StreamExecution(self, request, context) -> AsyncIterator[arm_pb2.ExecutionStatus]:
         while True:
             snapshot = self._executions.snapshot(request.execution_id)
