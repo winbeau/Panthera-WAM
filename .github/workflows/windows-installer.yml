@@ -1,0 +1,122 @@
+name: Windows Installer
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Installer version without the leading v
+        required: true
+        default: "1.0.0"
+        type: string
+      release_tag:
+        description: Existing or new GitHub Release tag; leave empty to only build the artifact
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Resolve release metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq "push") {
+            $releaseTag = $env:GITHUB_REF_NAME
+            $version = $releaseTag -replace '^v', ''
+          } else {
+            $version = "${{ inputs.version }}"
+            $releaseTag = "${{ inputs.release_tag }}"
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+            throw "Invalid installer version: $version"
+          }
+          $fileVersion = (($version -split '[-]')[0]) + ".0"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "file_version=$fileVersion" >> $env:GITHUB_OUTPUT
+          "release_tag=$releaseTag" >> $env:GITHUB_OUTPUT
+
+      - name: Restore and test WPF
+        shell: pwsh
+        run: |
+          dotnet restore wpf/Panthera.Terminal.sln
+          dotnet build wpf/Panthera.Terminal.sln --configuration Release --no-restore
+          dotnet test wpf/tests/Panthera.Terminal.Tests/Panthera.Terminal.Tests.csproj --configuration Release --no-build
+
+      - name: Publish self-contained application
+        shell: pwsh
+        run: >-
+          dotnet publish wpf/src/Panthera.Terminal.App/Panthera.Terminal.App.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          -p:Version=${{ steps.metadata.outputs.version }}
+          --output wpf/installer/publish
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Compile installer
+        id: package
+        shell: pwsh
+        env:
+          PANTHERA_INSTALLER_VERSION: ${{ steps.metadata.outputs.version }}
+          PANTHERA_INSTALLER_FILE_VERSION: ${{ steps.metadata.outputs.file_version }}
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler was not found at $iscc"
+          }
+          & $iscc "wpf\installer\Panthera-Terminal.iss"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE"
+          }
+          $installers = @(Get-ChildItem "wpf\installer\output\*-setup.exe")
+          if ($installers.Count -ne 1) {
+            throw "Expected one installer, found $($installers.Count)"
+          }
+          $installer = $installers[0]
+          $checksum = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$checksum  $($installer.Name)" | Set-Content "wpf\installer\output\SHA256SUMS.txt" -Encoding ascii
+          "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+          "checksum_file=$((Resolve-Path 'wpf\installer\output\SHA256SUMS.txt').Path)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: panthera-terminal-v${{ steps.metadata.outputs.version }}-installer
+          path: |
+            wpf/installer/output/*-setup.exe
+            wpf/installer/output/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Upload installer to GitHub Release
+        if: steps.metadata.outputs.release_tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.release_tag }}
+          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
+          CHECKSUM_PATH: ${{ steps.package.outputs.checksum_file }}
+        run: |
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --title "Panthera-WAM $env:RELEASE_TAG" --generate-notes
+          }
+          gh release upload $env:RELEASE_TAG $env:INSTALLER_PATH $env:CHECKSUM_PATH --repo $env:GITHUB_REPOSITORY --clobber

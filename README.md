@@ -15,8 +15,8 @@ Panthera-HT 六轴机械臂的控制底座与 World Action Model 数据平台。
 真机验收已完成夹爪限位拒绝、MoveL DONE/CANCELLED、全体非持久化归零及断电恢复。
 证据见 [`docs/V1_ACCEPTANCE.md`](docs/V1_ACCEPTANCE.md)，唯一进度来源是
 [`docs/MILESTONES.md`](docs/MILESTONES.md)。Windows 用户可从
-[GitHub Releases](https://github.com/winbeau/Panthera-WAM/releases/latest) 下载自包含
-`win-x64` 控制终端，无需预装 .NET SDK。
+[GitHub Releases](https://github.com/winbeau/Panthera-WAM/releases/latest) 下载单文件
+`win-x64-setup.exe` 安装程序，无需预装 .NET SDK。
 
 ## 架构
 
@@ -72,6 +72,10 @@ wpf\tools\run-tests.cmd
 四主题测试，并验证获取/释放控制、主题、复位、EStop、MoveJ、MoveL、取消、夹爪和
 12 个 Jog 按钮都能通过 Tab 到达且焦点可循环。截图写入
 `%USERPROFILE%\Desktop\Panthera-Design\ui-artifacts`。同一门禁已纳入 GitHub Actions。
+
+正式 Windows 安装程序由
+[`windows-installer.yml`](.github/workflows/windows-installer.yml) 使用 Inno Setup 构建；
+未来 `v*` 标签会自动生成并上传安装 EXE，也支持手动附加到已有 Release。
 
 ## 安全红线
 

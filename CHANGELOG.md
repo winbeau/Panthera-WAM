@@ -12,7 +12,7 @@ All notable changes to Panthera-WAM are documented in this file.
   gripper, Cartesian motion, kinematics and safety checks.
 - .NET 9 WPF cockpit with WSL TCP bridge, System/Light/Dark/HighContrast themes, MoveJ/MoveL,
   gripper, EStop, cancellation and twelve keyboard-accessible Jog controls.
-- Self-contained `win-x64` terminal package produced by GitHub Actions.
+- Single-file Inno Setup `win-x64` installer produced and attached to Releases by GitHub Actions.
 - MIT license and public SDK submodule pin.
 
 ### Safety and validation
