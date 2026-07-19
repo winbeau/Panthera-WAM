@@ -261,7 +261,7 @@
                                 <Border Style="{StaticResource CardHeaderStyle}"><DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding GripperOpeningState}" Style="{StaticResource MetaTextStyle}" /><TextBlock Text="夹爪" Style="{StaticResource SectionHeaderTextStyle}" /></DockPanel></Border>
                                 <Grid Grid.Row="1" Margin="11,7"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                     <DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding GripperTorque, StringFormat={}力矩 {0:F1} N·m}" Style="{StaticResource MetaTextStyle}" /><TextBlock Text="{Binding GripperPercent, StringFormat={}{0:F0}%}" FontFamily="Cascadia Mono, Consolas" FontSize="22" FontWeight="Bold" /></DockPanel>
-                                    <ProgressBar Grid.Row="1" Height="7" Maximum="100" Value="{Binding GripperPercent}" />
+                                    <ProgressBar Grid.Row="1" Height="7" Maximum="100" Value="{Binding GripperPercent, Mode=OneWay}" />
                                     <UniformGrid Grid.Row="2" Columns="2" Margin="0,7,0,0">
                                         <ui:Button Content="张开" Command="{Binding GripperOpenCommand}" Appearance="Secondary" Margin="0,0,3,0" AutomationProperties.AutomationId="GripperOpenButton" />
                                         <ui:Button Content="闭合" Command="{Binding GripperCloseCommand}" Appearance="Secondary" Margin="3,0,0,0" AutomationProperties.AutomationId="GripperCloseButton" />
