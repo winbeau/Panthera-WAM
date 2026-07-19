@@ -123,6 +123,41 @@ class KinematicsEngine:
         determinant = np.linalg.det(jacobian @ jacobian.T)
         return float(np.sqrt(max(determinant, 0.0)))
 
+    def cartesian_jog(
+        self,
+        *,
+        q: np.ndarray,
+        twist: np.ndarray,
+        damping: float,
+    ) -> dict[str, Any]:
+        joint_q = np.asarray(q, dtype=np.float64)
+        target_twist = np.asarray(twist, dtype=np.float64)
+        if joint_q.shape != (6,) or target_twist.shape != (6,):
+            raise ValueError("q/twist 必须分别包含 6 个数值")
+        if damping < 0 or not np.isfinite(damping):
+            raise ValueError("damping 必须是非负有限数值")
+        jacobian = self.jacobian(joint_q)
+        jjt = jacobian @ jacobian.T
+        determinant = np.linalg.det(jjt)
+        manipulability = float(np.sqrt(max(determinant, 0.0)))
+        effective_damping = damping
+        speed_scale = 1.0
+        if manipulability < 0.01:
+            effective_damping *= 1.0 + (0.01 - manipulability) * 100.0
+            speed_scale = manipulability / 0.01
+        regularized = jjt + effective_damping**2 * np.eye(jacobian.shape[0])
+        try:
+            solved = np.linalg.solve(regularized, target_twist * speed_scale)
+        except np.linalg.LinAlgError:
+            regularized = jjt + (max(effective_damping, 1e-6) * 10.0) ** 2 * np.eye(jacobian.shape[0])
+            solved = np.linalg.solve(regularized, target_twist * speed_scale)
+        joint_velocity = jacobian.T @ solved
+        joint_velocity = np.clip(joint_velocity, -self.velocity_limits, self.velocity_limits)
+        return {
+            "joint_velocity": joint_velocity,
+            "manipulability": manipulability,
+        }
+
     def dynamics(
         self,
         *,
@@ -571,6 +606,8 @@ def _worker_call(operation: str, payload: dict[str, Any]) -> Any:
         return _ENGINE.jacobian(payload["q"])
     if operation == "manipulability":
         return _ENGINE.manipulability(payload["q"])
+    if operation == "cartesian_jog":
+        return _ENGINE.cartesian_jog(**payload)
     if operation == "dynamics":
         return _ENGINE.dynamics(**payload)
     if operation == "ik":

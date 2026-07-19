@@ -8,9 +8,10 @@ Panthera-HT 六轴机械臂的控制底座与 World Action Model 数据平台。
 
 ## 当前状态
 
-**v1.0.0 已完成**：armd、27 条 CLI 命令、WPF 控制闭环和自包含 Windows Release
-均已交付。自动化覆盖仿真后端、真实后端 fake、lease/watchdog/EStop、状态与标定、
-关节/夹爪、运动学、MoveL 执行状态，以及 WPF 四主题和完整键盘焦点循环。
+**v2 实现已完成**：armd/camerad、50 条 CLI 命令、WPF 双端口视频驾驶舱和
+LeRobotDataset v3 导出均已接入。自动化覆盖仿真后端、真实后端 fake、
+lease/watchdog/EStop、MIT/动力学、笛卡尔 jog、多点轨迹、示教录制回放、
+D405 帧流、数据导出，以及 42 项 SDK 能力的机器可执行审计。
 
 真机验收已完成夹爪限位拒绝、MoveL DONE/CANCELLED、全体非持久化归零及断电恢复。
 证据见 [`docs/V1_ACCEPTANCE.md`](docs/V1_ACCEPTANCE.md)，唯一进度来源是
@@ -21,17 +22,20 @@ Panthera-HT 六轴机械臂的控制底座与 World Action Model 数据平台。
 ## 架构
 
 ```text
-Windows: WPF 可视化终端 ── WSL bridge ──┬→ armd :50051 → ArmService → Panthera-HT SDK → 机械臂
-WSL:     panthera-cli ─────────────────────┤
-未来:    树莓派 5 / WAM 数据工具 ───────┴→ camerad :50052 → CameraService → librealsense → D405
+Windows: WPF 可视化终端 ── arm bridge :50050 ───→ armd :50051 → Arm/DatasetService → 机械臂/数据
+                       └─ camera bridge :50049 → camerad :50052 → CameraService → D405
+Linux:   panthera-cli ───────────────────────────→ 同一 Linux 后端（WSL / 未来树莓派 5）
 ```
 
 - **armd**：200Hz 单硬件线程守护服务，提供 lease、watchdog、软限位和 EStop 安全层。
-- **panthera-cli**：27 条 v1 命令，纯 gRPC 客户端，不直接访问硬件。
+- **panthera-cli**：50 条 v1/v2 命令，纯 gRPC 客户端，不直接访问硬件。
 - **WPF 终端**：.NET 9 Fluent 驾驶舱，只通过 gRPC 做状态/视频可视化与控制意图下发。
-- **D405 v2 基础链路**：D405 与机械臂同时 attach 到同一 Linux；`camerad:50052`
-  隔离 librealsense 采集，和 `armd:50051` 由同一启动命令统一管理。
-- **v2 后续**：阻抗与动力学、多点轨迹、拖动示教、WPF 视频、LeRobot/WAM 数据能力。
+- **D405 视频链路**：D405 与机械臂同时 attach 到同一 Linux；`camerad:50052`
+  隔离 librealsense 采集，WPF 以 RGB/深度 latest-frame 双画面显示。
+- **v2 控制与数据**：MIT/动力学、笛卡尔 jog、多点轨迹、拖动示教录制回放，
+  以及独立 `dataset.proto` 的 LeRobotDataset v3 异步导出。
+- **无损审计**：[`docs/sdk-capability-audit.json`](docs/sdk-capability-audit.json)
+  逐项记录 42 个 SDK 方法；`make check` 自动验证 SDK 源码、RPC、CLI 和内部覆盖。
 
 ## 仿真开发
 

@@ -21,6 +21,7 @@ EXPECTED_COMMANDS = {
     "camera status",
     "camera stream",
     "cartesian movel",
+    "cartesian jog",
     "cartesian plan-preview",
     "control acquire",
     "control heartbeat",

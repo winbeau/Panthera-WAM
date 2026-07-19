@@ -577,9 +577,7 @@ class TeachPlaybackMotion:
         now: float,
     ) -> MotionStepResult:
         first = self.frames[0]
-        gripper_target = (
-            first.gripper_position if first.gripper_position is not None else states[6].position
-        )
+        gripper_target = first.gripper_position if first.gripper_position is not None else states[6].position
         arm_reached = np.all(np.abs(first.position - current) <= 0.05)
         gripper_reached = abs(gripper_target - states[6].position) <= 0.05
         if arm_reached and gripper_reached:

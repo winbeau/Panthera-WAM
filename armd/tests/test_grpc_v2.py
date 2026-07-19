@@ -116,6 +116,28 @@ async def test_m5_joint_and_gripper_mit(v2_stack) -> None:
 
 
 @pytest.mark.asyncio
+async def test_m5_cartesian_jog(v2_stack) -> None:
+    loop, stub, metadata, _ = v2_stack
+    call = stub.CartesianJog(metadata=metadata)
+    await call.write(
+        arm_pb2.CartesianJogCommand(
+            linear_velocity=[0.005, 0.0, 0.0],
+            angular_velocity=[0.0, 0.0, 0.0],
+            damping=0.02,
+        )
+    )
+    feedback = await call.read()
+    assert len(feedback.joint_state.joints) == 6
+    assert feedback.manipulability >= 0.0
+    await asyncio.sleep(0.1)
+    await call.done_writing()
+    while await call.read() is not grpc.aio.EOF:
+        pass
+    await asyncio.sleep(0.05)
+    assert not loop.has_active_motion
+
+
+@pytest.mark.asyncio
 async def test_m6_joint_trajectory_zero_velocity_and_cancel(v2_stack) -> None:
     _, stub, metadata, _ = v2_stack
     completed = await stub.RunJointTrajectory(
@@ -293,9 +315,7 @@ async def test_m7_teach_play_posvel_and_cancel(v2_stack) -> None:
         ),
         metadata=metadata,
     )
-    async for status in stub.StreamExecution(
-        arm_pb2.StreamExecutionRequest(execution_id=mit.execution_id)
-    ):
+    async for status in stub.StreamExecution(arm_pb2.StreamExecutionRequest(execution_id=mit.execution_id)):
         final = status
     assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
 

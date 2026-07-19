@@ -177,9 +177,7 @@ class DatasetJobManager:
         uv = shutil.which("uv")
         project = Path(__file__).resolve().parents[2]
         if uv is None or not (project / "pyproject.toml").is_file():
-            raise RuntimeError(
-                "未安装 LeRobot；请安装 lerobot>=0.4,<0.5，或配置 PANTHERA_LEROBOT_RUNNER"
-            )
+            raise RuntimeError("未安装 LeRobot；请安装 lerobot>=0.4,<0.5，或配置 PANTHERA_LEROBOT_RUNNER")
         return [
             uv,
             "run",
@@ -240,7 +238,12 @@ class DatasetService(dataset_pb2_grpc.DatasetServiceServicer):
             ("vel + gripper_vel", "action.velocity"),
             ("t", "panthera.timestamp"),
         ):
-            response.fields.add(source=source, target=target, dtype="float32", shape=[7 if target != "panthera.timestamp" else 1])
+            response.fields.add(
+                source=source,
+                target=target,
+                dtype="float32",
+                shape=[7 if target != "panthera.timestamp" else 1],
+            )
         return response
 
     async def _require_job(self, job_id: str, context) -> DatasetJob:

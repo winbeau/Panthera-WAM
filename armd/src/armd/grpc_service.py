@@ -613,6 +613,95 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             except (TimeoutError, asyncio.TimeoutError, RuntimeError):
                 pass
 
+    async def CartesianJog(
+        self,
+        request_iterator,
+        context,
+    ) -> AsyncIterator[arm_pb2.CartesianJogFeedback]:
+        iterator = request_iterator.__aiter__()
+        try:
+            first = await iterator.__anext__()
+        except StopAsyncIteration:
+            return
+        limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
+
+        async def command_values(command) -> tuple[np.ndarray, float]:
+            linear = finite_vector(command.linear_velocity, name="linear_velocity", length=3)
+            angular = finite_vector(command.angular_velocity, name="angular_velocity", length=3)
+            damping = optional_double(command, "damping", 0.01)
+            if damping < 0 or not np.isfinite(damping):
+                raise ValueError("damping 必须是非负有限数值")
+            cached = self._hardware_loop.latest_state()
+            if cached is None or not all(state.valid for state in cached.motors[:6]):
+                raise ValueError("关节状态无效或连接不完整")
+            q = np.asarray([state.position for state in cached.motors[:6]], dtype=np.float64)
+            result = await self._kinematics.call(
+                "cartesian_jog",
+                {
+                    "q": q,
+                    "twist": np.concatenate((linear, angular)),
+                    "damping": damping,
+                },
+            )
+            velocity = np.asarray(result["joint_velocity"], dtype=np.float64)
+            reason = arm_magnitude_reject_reason(velocity, limits.joint_velocity, label="关节速度")
+            if reason:
+                raise ValueError(reason)
+            return velocity, float(result["manipulability"])
+
+        try:
+            first_velocity, manipulability = await command_values(first)
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        motion = JointJogMotion(freshness_s=0.12)
+        motion.update(first_velocity)
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+
+        async def consume_commands() -> None:
+            nonlocal manipulability
+            async for command in iterator:
+                velocity, current_mu = await command_values(command)
+                if not self._leases.heartbeat(token):
+                    raise PermissionError("控制权 lease 已失效")
+                manipulability = current_mu
+                motion.update(velocity)
+
+        consumer = asyncio.create_task(consume_commands(), name="panthera-cartesian-jog-consumer")
+        try:
+            while not completion.done():
+                if consumer.done():
+                    error = consumer.exception()
+                    if isinstance(error, ValueError):
+                        await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(error))
+                    if isinstance(error, PermissionError):
+                        await context.abort(grpc.StatusCode.PERMISSION_DENIED, str(error))
+                    break
+                cached = self._hardware_loop.latest_state()
+                if cached is not None:
+                    yield arm_pb2.CartesianJogFeedback(
+                        joint_state=joint_state_message(cached),
+                        manipulability=manipulability,
+                    )
+                await asyncio.sleep(0.05)
+        finally:
+            motion.request_cancel(CancelReason.CLIENT)
+            consumer.cancel()
+            try:
+                await consumer
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+            try:
+                await asyncio.wait_for(asyncio.wrap_future(completion), timeout=0.5)
+            except (TimeoutError, asyncio.TimeoutError, RuntimeError):
+                pass
+
     async def JointJogStep(self, request, context):
         limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
         try:
@@ -1030,16 +1119,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         try:
             kp = finite_vector(request.kp, name="kp") if request.kp else np.zeros(6)
             kd = finite_vector(request.kd, name="kd") if request.kd else np.zeros(6)
-            fc = (
-                finite_vector(request.fc, name="fc")
-                if request.fc
-                else DEFAULT_FRICTION_FC.copy()
-            )
-            fv = (
-                finite_vector(request.fv, name="fv")
-                if request.fv
-                else DEFAULT_FRICTION_FV.copy()
-            )
+            fc = finite_vector(request.fc, name="fc") if request.fc else DEFAULT_FRICTION_FC.copy()
+            fv = finite_vector(request.fv, name="fv") if request.fv else DEFAULT_FRICTION_FV.copy()
             motion = TeachMotion(kp=kp, kd=kd, fc=fc, fv=fv)
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
@@ -1124,16 +1205,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 raise ValueError("MIT 回放必须提供 kp 和 kd")
             kp = finite_vector(request.kp, name="kp") if request.kp else np.zeros(6)
             kd = finite_vector(request.kd, name="kd") if request.kd else np.zeros(6)
-            fc = (
-                finite_vector(request.fc, name="fc")
-                if request.fc
-                else DEFAULT_FRICTION_FC.copy()
-            )
-            fv = (
-                finite_vector(request.fv, name="fv")
-                if request.fv
-                else DEFAULT_FRICTION_FV.copy()
-            )
+            fc = finite_vector(request.fc, name="fc") if request.fc else DEFAULT_FRICTION_FC.copy()
+            fv = finite_vector(request.fv, name="fv") if request.fv else DEFAULT_FRICTION_FV.copy()
             tau_limit = (
                 finite_vector(request.tau_limit, name="tau_limit")
                 if request.tau_limit

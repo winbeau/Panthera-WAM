@@ -25,7 +25,7 @@
 | 阶段 1 | 契约与仓库骨架 | 6 / 6 ✅ |
 | 阶段 2 | v1：armd + CLI（M1–M4） | 4 / 4 ✅ |
 | 阶段 3 | WPF v1（M-W0 – M-W3） | 5 / 5 ✅ |
-| 阶段 4 | v2（M5–M9） | 0 / 5 |
+| 阶段 4 | v2（M5–M9） | 5 / 5（实现）✅；真机运动验收待用户在场 |
 
 ---
 
@@ -116,17 +116,18 @@
 
 ## 阶段 4：v2
 
-- [ ] **M5 阻抗/动力学**：`joint mit`/`gripper mit`、`dynamics *`（6 条）。`friction` 缺 `--fc/--fv` 用配置默认兜底不抛异常（默认值取核实结论 §V5 参考系数）
-- [ ] **M6 多点轨迹**：`trajectory run-waypoints`（自建执行循环，`Joint_Pos_Vel` 而非 MIT）
-- [ ] **M7 拖动示教录制回放**：`teach start/stop/record*/play/list`（自由拖动＝kp/kd 全零 + 重力/摩擦前馈）
-- [ ] **M8 相机流 + LeRobot 导出（进行中）**：`camera stream`、`dataset export-lerobot`
+- [x] **M5 阻抗/动力学** ✅ `joint mit`/`gripper mit`、`cartesian jog` 与 6 项 `dynamics *` 已落地；流式新鲜度、软限位、默认 Fc/Fv 和仿真覆盖通过。🔒 真机 MIT/笛卡尔 jog 仅待用户在场逐次验收
+- [x] **M6 多点轨迹** ✅ `trajectory run-waypoints` 复现两种 septic 插值分支，支持 execution 进度与 12 周期取消减速
+- [x] **M7 拖动示教录制回放** ✅ 自由拖动补偿、非阻塞 JSONL writer、MIT/POS-VEL 回放、列表和取消已通过仿真。🔒 徒手阻力与真机回放误差待用户在场验收
+- [x] **M8 相机流 + LeRobot 导出** ✅ `camera stream`、WPF 视频与 `dataset export-lerobot`
   - [x] D405 已在 Windows 识别为 `Intel(R) RealSense(TM) Depth Camera 405 Depth`（USB PID `0x0B5B`）；官方 `realsenseai/librealsense` 已 fork 到 `winbeau/librealsense`，并以 submodule 固定稳定版 `v2.58.1`
   - [x] 独立 `camera.proto`、WSL `camerad:50052`、gRPC 状态/快照/帧流，以及 `camera status/snapshot/stream` CLI 已接入；与 `armd:50051` 同属统一 Linux 后端
   - [x] WSL 默认/PyPI 采集路径曾出现 5s 帧超时；改用 `vendor/librealsense` v2.58.1 源码构建 `FORCE_RSUSB_BACKEND=ON` 后，libusb 持续双流通过
   - [x] WPF 环境引导按 `VID_8086&PID_0B5B` 发现 D405，并与机械臂一起 attach 到 WSL；WPF 分别通过 `armd:50051` 与 `camerad:50052` 查看状态
   - [x] WSL 统一后端真机验收：D405 序列号 `260422273428`、固件 `5.13.0.55`、USB 3.2；普通 detach/attach 冷重连后 `640x480@30` depth Z16 + color RGB8 连续 300 帧，0 次超时
-  - [ ] WPF 视频面板、独立 `dataset.proto` 与 LeRobot 导出
-- [ ] **M9 无损审计收尾**：逐行核对 42 项方法清单 vs 已实现 rpc，0 遗漏、0 无理由
+  - [x] WPF 使用独立 `CameraEndpoint` 与第二条 WSL TCP bridge，显示 RGB8/Z16 双画面；相机不再误走机械臂端口
+  - [x] 独立 `dataset.proto`、异步作业、取消/观察、字段映射与官方 LeRobotDataset v3 隔离 worker 已落地
+- [x] **M9 无损审计收尾** ✅ `tools/audit_sdk_contract.py` 对 42 项方法逐条验证 SDK 源码、RPC 实现、CLI 与内部覆盖；结果 35 direct + 6 internal + 1 lifecycle，0 遗漏、0 无理由
 
 ---
 

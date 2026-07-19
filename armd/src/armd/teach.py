@@ -207,9 +207,7 @@ def prepare_playback_frames(
                 timestamp_s=0.0,
                 position=np.asarray(frame["pos"], dtype=np.float64),
                 velocity=velocity,
-                gripper_position=(
-                    float(frame["gripper_pos"]) if "gripper_pos" in frame else None
-                ),
+                gripper_position=(float(frame["gripper_pos"]) if "gripper_pos" in frame else None),
                 gripper_velocity=float(frame.get("gripper_vel", 0.0)),
             )
         ]

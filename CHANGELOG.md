@@ -10,6 +10,11 @@ All notable changes to Panthera-WAM are documented in this file.
 - Added vendored librealsense RSUSB source build and an isolated WSL `camerad` that owns D405 acquisition without disturbing the arm control loop.
 - Added CameraService status, snapshot and frame streaming on the dedicated `camerad:50052` endpoint alongside `armd:50051` in the same Linux backend.
 - Added `panthera camera status`, `snapshot` and `stream`; WPF attaches both devices to WSL and remains a pure gRPC visualization terminal.
+- Added MIT joint/gripper control, six dynamics diagnostics and damped-pseudoinverse Cartesian jog.
+- Added cancellable multi-waypoint septic trajectories and drag-teach JSONL recording with MIT/POS-VEL playback.
+- Added independent `dataset.proto` jobs and an isolated official LeRobotDataset v3 exporter.
+- Added WPF dual TCP bridges plus RGB8/Z16 latest-frame video panels for the dedicated camera endpoint.
+- Added an executable 42-method SDK capability audit, including verified inherited `set_stop` and zero-reset signatures.
 
 ## [1.0.0] - 2026-07-18
 

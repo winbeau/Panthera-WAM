@@ -1105,6 +1105,44 @@ def cartesian_movel(
         raise typer.Exit(2)
 
 
+@cartesian_app.command("jog")
+def cartesian_jog(
+    linear_velocity: str = typer.Option("0,0,0", "--linear-vel"),
+    angular_velocity: str = typer.Option("0,0,0", "--angular-vel"),
+    damping: float = typer.Option(0.01, "--damping", min=0.0),
+    duration: float | None = typer.Option(None, "--duration", min=0.0),
+) -> None:
+    linear = float_list(linear_velocity, name="linear-vel", length=3)
+    angular = float_list(angular_velocity, name="angular-vel", length=3)
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+
+    def commands():
+        started = time.monotonic()
+        while duration is None or time.monotonic() - started < duration:
+            yield arm_pb2.CartesianJogCommand(
+                linear_velocity=linear,
+                angular_velocity=angular,
+                damping=damping,
+            )
+            time.sleep(0.05)
+
+    feedback_count = 0
+    last_mu = 0.0
+    try:
+        with maintain_heartbeat(lease):
+            for feedback in stub.CartesianJog(commands(), metadata=lease_metadata(lease)):
+                feedback_count += 1
+                last_mu = feedback.manipulability
+    except KeyboardInterrupt:
+        pass
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(f"[green]笛卡尔 jog 已停止[/green] feedback={feedback_count} manipulability={last_mu:.6g}")
+
+
 @trajectory_app.command("run-waypoints")
 def trajectory_run_waypoints(
     waypoints_file: Path = typer.Option(..., "--waypoints-file", exists=True, dir_okay=False),
@@ -1259,9 +1297,7 @@ def teach_record_stop() -> None:
     if not response.accepted:
         console.print("[yellow]当前没有示教录制[/yellow]")
         raise typer.Exit(2)
-    console.print(
-        f"[green]示教轨迹已保存[/green]: {response.saved_path} frames={response.frame_count}"
-    )
+    console.print(f"[green]示教轨迹已保存[/green]: {response.saved_path} frames={response.frame_count}")
 
 
 @teach_app.command("play")
@@ -1286,11 +1322,7 @@ def teach_play(
         raise typer.BadParameter("MIT 回放必须显式提供 --kp 和 --kd")
     request = arm_pb2.TeachPlayRequest(
         path=path,
-        mode=(
-            arm_pb2.PLAYBACK_MODE_MIT
-            if normalized_mode == "mit"
-            else arm_pb2.PLAYBACK_MODE_POSVEL
-        ),
+        mode=(arm_pb2.PLAYBACK_MODE_MIT if normalized_mode == "mit" else arm_pb2.PLAYBACK_MODE_POSVEL),
         kp=optional_float_list(kp, name="kp"),
         kd=optional_float_list(kd, name="kd"),
         fc=optional_float_list(fc, name="fc"),
@@ -1470,10 +1502,13 @@ def _watch_dataset_job(stub, job_id: str):
         console.print(
             f"{dataset_pb2.DatasetJobState.Name(status.state)} progress={status.progress:.3f} "
             f"frames={status.frame_count}",
-            end="\r" if status.state in {
+            end="\r"
+            if status.state
+            in {
                 dataset_pb2.DATASET_JOB_STATE_QUEUED,
                 dataset_pb2.DATASET_JOB_STATE_RUNNING,
-            } else "\n",
+            }
+            else "\n",
         )
     return final
 
