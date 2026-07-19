@@ -21,15 +21,15 @@ Panthera-HT 六轴机械臂的控制底座与 World Action Model 数据平台。
 ## 架构
 
 ```text
-Windows: WPF 控制终端 ───────────────┐
-WSL:     panthera-cli ───────────────┤→ gRPC → armd → 官方 SDK → usbipd → Panthera-HT
+Windows: WPF 控制终端 ───────────────┬→ CameraService → camerad → RealSense D405
+WSL:     panthera-cli ───────────────┼→ ArmService → armd → 官方 SDK → usbipd → Panthera-HT
 未来:    WAM 训练/推理与数据工具 ────┘
 ```
 
 - **armd**：200Hz 单硬件线程守护服务，提供 lease、watchdog、软限位和 EStop 安全层。
 - **panthera-cli**：27 条 v1 命令，纯 gRPC 客户端，不直接访问硬件。
 - **WPF 终端**：.NET 9 Fluent 驾驶舱，系统/浅色/深色主题，关节、夹爪和 MoveL 控制。
-- **D405 v2 基础链路**：usbipd → 独立 CameraWorker → gRPC 状态/快照/帧流 → CLI。
+- **D405 v2 基础链路**：Windows 原生 camerad → gRPC 状态/快照/帧流 → CLI/WPF。
 - **v2 后续**：阻抗与动力学、多点轨迹、拖动示教、WPF 视频、LeRobot/WAM 数据能力。
 
 ## 仿真开发
@@ -47,12 +47,11 @@ make check
 uv run --package panthera-armd armd --sim
 uv run panthera daemon status
 uv run panthera --help
-uv run --package panthera-armd armd --sim --camera-mode sim
-uv run panthera camera status --json
+uv run --package panthera-camera camerad --mode sim --check
 ```
 
 `make check` 执行 Ruff、全部 Python 测试和 200Hz 仿真自检，不接触真机。
-D405 的 Windows/WSL 挂载与采集命令见 [`docs/D405_WORKFLOW.md`](docs/D405_WORKFLOW.md)。
+D405 的 Windows 原生采集命令见 [`docs/D405_WORKFLOW.md`](docs/D405_WORKFLOW.md)。
 
 ## WSL 真机部署
 

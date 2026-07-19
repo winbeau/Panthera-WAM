@@ -54,13 +54,10 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         steps.Add(Step("机械臂 USB 挂载", attached, attached ? stateLine.Trim() : "设备尚未 attach 到 WSL", "usbipd list"));
 
         var cameraLine = camera is null ? string.Empty : FindBusLine(usbList.Output, camera.BusId);
-        var cameraShared = cameraLine.Contains("Shared", StringComparison.OrdinalIgnoreCase)
-            || cameraLine.Contains("Attached", StringComparison.OrdinalIgnoreCase);
         var cameraAttached = cameraLine.Contains("Attached", StringComparison.OrdinalIgnoreCase);
-        steps.Add(Step("D405 USB 共享", cameraShared,
-            cameraShared ? cameraLine.Trim() : "设备尚未 bind", "usbipd list"));
-        steps.Add(Step("D405 USB 挂载", cameraAttached,
-            cameraAttached ? cameraLine.Trim() : "设备尚未 attach 到 WSL", "usbipd list"));
+        steps.Add(Step("D405 Windows", camera is not null && !cameraAttached,
+            cameraAttached ? "D405 当前已 attach 到 WSL；camerad 需要相机留在 Windows" : cameraLine.Trim(),
+            camera is null ? "usbipd list" : $"usbipd detach --busid {camera.BusId}"));
 
         var tty = await RunWslAsync(settings, "compgen -G '/dev/ttyACM*' | wc -l", cancellationToken);
         var ttyCount = 0;
@@ -68,10 +65,6 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         steps.Add(Step("串口与权限", ttyReady,
             ttyReady ? $"检测到 {ttyCount} 个 ttyACM 设备" : $"需要至少 4 个 ttyACM 设备；当前输出：{tty.Output.Trim()}",
             tty.Command));
-
-        var d405 = await RunWslAsync(settings, "lsusb | grep -qi '8086:0b5b'", cancellationToken);
-        steps.Add(Step("D405 WSL", d405.Success,
-            d405.Success ? "D405 已在 WSL 可见" : "WSL 尚未发现 8086:0b5b", d405.Command));
 
         try
         {
@@ -127,7 +120,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         }
 
         if (!await EnsureUsbAttachedAsync("机械臂 USB", device, steps, cancellationToken)
-            || !await EnsureUsbAttachedAsync("D405 USB", camera, steps, cancellationToken))
+            || !await EnsureUsbDetachedAsync("D405 Windows", camera, steps, cancellationToken))
         {
             return new EnvironmentGuideResult(steps);
         }
@@ -141,14 +134,6 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
                 : "串口未就绪；请安装 udev 规则 KERNEL==\"ttyACM*\", MODE=\"0777\"",
             tty.Command));
         if (!ttyReady)
-        {
-            return new EnvironmentGuideResult(steps);
-        }
-
-        var d405 = await RunWslAsync(settings, "lsusb | grep -qi '8086:0b5b'", cancellationToken);
-        steps.Add(Step("D405 WSL", d405.Success,
-            d405.Success ? "D405 已在 WSL 可见" : "D405 attach 后仍不可见", d405.Command));
-        if (!d405.Success)
         {
             return new EnvironmentGuideResult(steps);
         }
@@ -298,6 +283,32 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         steps.Add(Step($"{label} attach", true, stateLine.Trim(),
             $"usbipd attach --wsl --busid {device.BusId}"));
         return true;
+    }
+
+    private static async Task<bool> EnsureUsbDetachedAsync(
+        string label,
+        UsbDevice device,
+        ICollection<EnvironmentGuideStep> steps,
+        CancellationToken cancellationToken)
+    {
+        var list = await RunAsync("usbipd", ["list"], cancellationToken);
+        var stateLine = FindBusLine(list.Output, device.BusId);
+        if (!stateLine.Contains("Attached", StringComparison.OrdinalIgnoreCase))
+        {
+            steps.Add(Step(label, true,
+                string.IsNullOrWhiteSpace(stateLine) ? "D405 已保留在 Windows" : stateLine.Trim(),
+                $"usbipd detach --busid {device.BusId}"));
+            return true;
+        }
+
+        var detach = await RunAsync(
+            "usbipd",
+            ["detach", "--busid", device.BusId],
+            cancellationToken);
+        steps.Add(Step(label, detach.Success,
+            detach.Success ? $"busid {device.BusId} 已归还 Windows" : detach.Error,
+            detach.Command));
+        return detach.Success;
     }
 
     private static Task<ProcessResult> RunWslAsync(

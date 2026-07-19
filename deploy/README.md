@@ -11,8 +11,6 @@ uv python install 3.11
 uv sync --all-packages --all-extras
 ./deploy/install-wsl.sh
 sudo install -m 0644 deploy/99-panthera-ht.rules /etc/udev/rules.d/
-sudo install -m 0644 vendor/librealsense/config/99-realsense-libusb.rules \
-  /etc/udev/rules.d/99-realsense-libusb.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
@@ -23,7 +21,6 @@ sudo udevadm trigger
 systemctl --user start armd
 systemctl --user status armd --no-pager
 uv run panthera daemon status
-uv run panthera camera status --json
 ```
 
 安装脚本默认不启动服务，避免在机械臂尚未完成 USB 挂载或现场检查时访问硬件。
@@ -41,7 +38,7 @@ Windows 侧先用 WPF 一键引导，或以管理员 PowerShell 执行
 `usbipd attach --wsl --busid <BUSID>`。程序按 VID/PID 与序列号发现设备，
 不应把当前 busid 写进长期配置。
 
-D405 的完整安装、挂载、采集和故障定位流程见
+D405 不 attach 到 WSL；其 Windows 原生安装、采集和故障定位流程见
 [`docs/D405_WORKFLOW.md`](../docs/D405_WORKFLOW.md)。
 
 ## 安全约束

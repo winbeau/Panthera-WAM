@@ -9,12 +9,12 @@
 ## 总览与架构回顾
 
 ```
-Windows: WPF 控制终端 (Fluent, 三主题) ──┐
-WSL2:    panthera-cli (typer)  ─────────┤→ gRPC (localhost:50051) → armd 守护 → 官方 SDK(零修改*) → usbipd → Panthera-HT
-未来:    WAM 训练/推理 ──────────────────┘                                              └ RealSense D405 (v2)
+Windows: WPF 控制终端 + camerad(D405) ──┬→ CameraService (:50052) → RealSense D405
+WSL2:    panthera-cli (typer) ──────────┼→ ArmService (:50051) → armd → 官方 SDK(零修改*) → usbipd → Panthera-HT
+未来:    WAM 训练/推理 ─────────────────┘
 ```
 
-- **硬件**：Panthera-HT 六轴机械臂（高擎，7×USB 串口）+ Intel RealSense D405，单臂。WSL2 经 usbipd 独占硬件。
+- **硬件**：Panthera-HT 六轴机械臂（高擎，7×USB 串口）由 WSL2 经 usbipd 独占；Intel RealSense D405 留在 Windows，由独立 `camerad` 采集，避免 USB/IP 持续视频帧超时。
 - **armd**：WSL2 内常驻守护，独占硬件，对外只暴露 gRPC+protobuf。安全层 = 控制权互斥 / watchdog 心跳 / 软限位预检 / EStop。
 - **客户端**：`panthera-cli`（Python typer）+ WPF 控制终端（.NET 9，Fluent，系统/浅色/深色三主题）。两者都是纯 gRPC 客户端，不直接碰硬件。
 - **零修改\* 的边界**：官方 SDK 源码零修改，但 armd **不能**直接调用 SDK 的阻塞式方法（`iswait=True` 等待、`moveL()`、`Recorder.play()`）——这些方法会把唯一的硬件线程钉死数秒到整条轨迹，破坏可抢占安全层。armd 改为**用 SDK 的公开规划/控制原语（`compute_cartesian_path` / `septic_interpolation` / `Joint_Pos_Vel(iswait=False)` / `check_position_reached`）在自己的控制循环里逐周期步进**。M0-2 真机结果进一步否决了 SDK moveL 内部的 MIT 执行路径，详见 §V9。

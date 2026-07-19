@@ -20,20 +20,6 @@ if [[ ! -f "$config_dir/armd.env" ]]; then
     chmod 600 "$config_dir/armd.env"
 fi
 
-ensure_env_default() {
-    local key=$1
-    local value=$2
-    if ! grep -q "^${key}=" "$config_dir/armd.env"; then
-        printf '%s=%s\n' "$key" "$value" >> "$config_dir/armd.env"
-    fi
-}
-
-ensure_env_default PANTHERA_CAMERA_MODE auto
-ensure_env_default PANTHERA_CAMERA_SERIAL ""
-ensure_env_default PANTHERA_CAMERA_WIDTH 640
-ensure_env_default PANTHERA_CAMERA_HEIGHT 480
-ensure_env_default PANTHERA_CAMERA_FPS 30
-
 escaped_repo_root=${repo_root//&/\\&}
 sed "s|@REPO_ROOT@|$escaped_repo_root|g" \
     "$repo_root/deploy/armd.service.in" > "$systemd_dir/armd.service"
@@ -45,7 +31,6 @@ echo "armd user service installed: $systemd_dir/armd.service"
 echo "environment file: $config_dir/armd.env"
 echo "install the serial rule once with:"
 echo "  sudo install -m 0644 '$repo_root/deploy/99-panthera-ht.rules' /etc/udev/rules.d/"
-echo "  sudo install -m 0644 '$repo_root/vendor/librealsense/config/99-realsense-libusb.rules' /etc/udev/rules.d/"
 echo "  sudo udevadm control --reload-rules && sudo udevadm trigger"
 
 if $start_service; then

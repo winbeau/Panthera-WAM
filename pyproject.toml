@@ -1,10 +1,11 @@
 # Panthera-WAM uv workspace 根。
 # 成员各自独立发布，共享同一份由 proto/arm.proto 生成的 stub 包。
 [tool.uv.workspace]
-members = ["armd", "cli", "proto/gen/python"]
+members = ["armd", "camera", "cli", "proto/gen/python"]
 
 [tool.uv.sources]
 panthera-arm-proto = { workspace = true }
+panthera-camera = { workspace = true }
 
 [tool.ruff]
 line-length = 110

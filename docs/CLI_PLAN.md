@@ -5,7 +5,7 @@
 > 都必须在本文档中落到下列三种归宿之一：
 > **(a) 有对应的 panthera-cli 命令 + arm.proto rpc**；
 > **(b) 显式标注"不暴露"并给出理由**（私有实现细节 / 双臂功能单臂不适用 / 已被更高阶封装 / 纯工具函数无独立语义）；
-> **(c) 显式标注"v2 占位"**（非本仓库当前 SDK 清单内、但架构文档明确要求的能力，如 D405 视频流、LeRobot 导出，留待独立 proto 契约）。
+> **(c) 显式标注"v2 扩展"**（非机械臂 SDK 清单内、但架构文档要求的能力；D405 已由独立 `camera.proto` 落地，LeRobot 仍待 `dataset.proto`）。
 >
 > 覆盖状态可在第 2 章的总映射表中逐行核对，第 7 章给出已知信息缺口与后续核实动作。
 
@@ -16,7 +16,7 @@
 - 硬件与线程模型、安全层（AcquireControl 互斥 / watchdog / 软限位预检 / EStop 直通）均沿用 README 已定架构，不重新论证。
 - 本计划中的 "SDK" 特指任务给出的方法清单：`Panthera.py`（38 个方法，含 4 个 staticmethod）+ `recorder.py`（`Recorder` 类 4 个方法）。
 - `Panthera` 继承自 `htr.Robot`（pybind11 编译扩展），示例脚本里直接调用的 `set_stop()` / `set_reset_zero()` / `motor_send_cmd()` 等继承/组合层方法**不在**给定清单内、其真实签名未核实。架构明确要求 EStop 与回零两项能力，因此第 2.3 节把它们作为"补充映射"单列，并在第 7 章标注核实动作，不假装已完整覆盖这一整层。
-- D405 视频流、LeRobot 数据导出不是 `Panthera`/`Recorder` 的方法，是 README 里明确的 v2 路线图条目；本计划仅给出 CLI 占位与字段草图，详细契约建议独立成 `camera.proto` / `dataset.proto`，不在 `arm.proto` 的"无损"核对范围内计数。
+- D405 视频流、LeRobot 数据导出不是 `Panthera`/`Recorder` 的方法，是 README 里明确的 v2 路线图条目；D405 已以独立 `camera.proto` + Windows `camerad` 实现，LeRobot 仍建议使用独立 `dataset.proto`，两者不在 `arm.proto` 的"无损"核对范围内计数。
 
 ---
 
@@ -230,7 +230,9 @@ panthera teach record stop
 panthera teach play PATH [--kp FLOAT_LIST] [--kd FLOAT_LIST] [--mode mit|posvel] [--playback-dt FLOAT=0.01] [--smooth-window INT=7]
 panthera teach list [--json]
 
-panthera camera stream [--encode h264]                         # 占位，详见 camera.proto（未来）
+panthera camera status [--json]
+panthera camera snapshot [--stream depth|color] [--out PATH]
+panthera camera stream [--stream depth|color] [--frames INT] [--out-dir DIR]
 panthera dataset export-lerobot --traj PATH --out DIR           # 占位，详见 dataset.proto（未来）
 ```
 
@@ -581,8 +583,8 @@ service ArmService {
   验收：给定含/不含中间速度的 waypoint 列表，服务端正确选择两种插值分支；执行状态可流式观察、可取消。
 - **M7 拖动示教录制回放**：`teach start/stop/record start/record stop/play/list`。
   验收：`teach start` 后徒手拖动阻力明显降低（重力+摩擦补偿生效）；录制的 jsonl 字段与 `Recorder.log` 一致；`teach play` 能回放且末端误差在可接受范围内；回放中途 `CancelExecution` 能安全收尾（明确定义的减速停止策略，而非让机械臂悬停在危险位置）。
-- **M8 相机流与 LeRobot 导出（占位落地）**：`camera stream`、`dataset export-lerobot`。
-  验收：本阶段只要求接口占位打通与"录制轨迹→LeRobot 字段映射"草图明确；具体验收标准留给独立的 `camera.proto`/`dataset.proto` 计划。
+- **M8 相机流与 LeRobot 导出**：Windows `camerad` + `camera status/snapshot/stream` 已落地；`dataset export-lerobot` 待实现。
+  验收：D405 留在 Windows，状态、快照与持续帧流通过独立 CameraService；LeRobot 字段映射与导出标准留给 `dataset.proto` 计划。
 - **M9 无损审计收尾**：核对 `.pyi`/`bindings.cpp` 确认 `set_stop`/`set_reset_zero`/电机层方法的真实签名，更新第 2.11 节为最终版；逐行核对"方法清单 vs 已实现 rpc"，确保 0 条遗漏、0 条无理由。
 
 ---
@@ -591,5 +593,5 @@ service ArmService {
 
 1. **继承层签名未核实**（第 2.11 节 S1/S2）：`set_stop()`/`set_reset_zero()` 来自 `htr.Robot`，需要核对 `.pyi` 桩文件或 `src/bindings.cpp` 才能确认参数与返回值，当前 `EStop`/`SetZero` 的 request/response 字段是按"最小可用"猜测的占位设计。
 2. **`MotorState` 字段草案未核实**：`get_current_state` 返回的电机状态对象具体字段（是否含温度/电压/使能位等）未知，`arm.proto` 里的 `MotorState` 是保守占位，实现阶段需要对照真实返回对象补全或裁剪。
-3. **D405 视频流 / LeRobot 导出不在本次核对范围**：它们不是 `Panthera`/`Recorder` 的方法，是 README 的 v2 路线图条目；`arm.proto` 仅留最小占位 rpc，正式契约建议独立成文件，不与本次"无损"核对的 42 项 SDK 清单混计。
+3. **D405 视频流 / LeRobot 导出不在本次机械臂 SDK 核对范围**：D405 已由独立 `camera.proto` 实现，LeRobot 仍待 `dataset.proto`；二者均不与 42 项机械臂 SDK 清单混计。
 4. **`moveL`/`teach play` 取消时的安全收尾策略未定义**：`CancelExecution` 在轨迹执行到一半时如何安全停止（原地悬停 vs 减速停止 vs 回到最近安全点）需要在 M4/M7 实现前单独设计，本计划只标注了"需要"，未给出算法。

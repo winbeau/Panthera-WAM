@@ -7,7 +7,7 @@ import asyncio
 import grpc
 from panthera_arm import camera_pb2, camera_pb2_grpc
 
-from .camera import CameraFrameSnapshot, CameraPixelFormat, CameraStream, CameraWorker
+from .backend import CameraFrameSnapshot, CameraPixelFormat, CameraStream, CameraWorker
 
 
 def camera_stream(value: int) -> CameraStream:

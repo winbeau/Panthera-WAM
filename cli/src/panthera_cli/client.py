@@ -28,6 +28,10 @@ def endpoint() -> str:
     return os.environ.get("PANTHERA_ENDPOINT", "127.0.0.1:50051")
 
 
+def camera_endpoint() -> str:
+    return os.environ.get("PANTHERA_CAMERA_ENDPOINT", "127.0.0.1:50052")
+
+
 def default_client_id() -> str:
     return os.environ.get("PANTHERA_CLIENT_ID", f"cli@{socket.gethostname()}")
 
@@ -68,7 +72,7 @@ def create_stub(target: str | None = None):
 
 
 def create_camera_stub(target: str | None = None):
-    channel = grpc.insecure_channel(target or endpoint(), options=LOCAL_CHANNEL_OPTIONS)
+    channel = grpc.insecure_channel(target or camera_endpoint(), options=LOCAL_CHANNEL_OPTIONS)
     return channel, camera_pb2_grpc.CameraServiceStub(channel)
 
 

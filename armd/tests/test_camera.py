@@ -5,9 +5,9 @@ import asyncio
 import grpc
 import pytest
 from panthera_arm import camera_pb2, camera_pb2_grpc
+from panthera_camera.backend import CameraStream, CameraWorker, SimCameraBackend
 
 from armd.backend import SimBackend
-from armd.camera import CameraStream, CameraWorker, SimCameraBackend
 from armd.hardware_loop import HardwareLoop
 from armd.server import ArmdServer
 

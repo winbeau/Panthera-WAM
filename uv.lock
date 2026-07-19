@@ -11,6 +11,7 @@ resolution-markers = [
 members = [
     "panthera-arm-proto",
     "panthera-armd",
+    "panthera-camera",
     "panthera-cli",
 ]
 
@@ -470,6 +471,7 @@ dependencies = [
     { name = "grpcio" },
     { name = "numpy" },
     { name = "panthera-arm-proto" },
+    { name = "panthera-camera" },
     { name = "pin" },
     { name = "protobuf" },
     { name = "pyyaml" },
@@ -478,9 +480,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-camera = [
-    { name = "pyrealsense2" },
-]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -492,16 +491,48 @@ requires-dist = [
     { name = "grpcio", specifier = ">=1.82.1" },
     { name = "numpy", specifier = ">=1.19,<2" },
     { name = "panthera-arm-proto", editable = "proto/gen/python" },
+    { name = "panthera-camera", editable = "camera" },
     { name = "pin", specifier = ">=2.6.0" },
     { name = "protobuf", specifier = ">=4.25" },
-    { name = "pyrealsense2", marker = "extra == 'camera'", specifier = "==2.58.1.10581" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "scipy", specifier = ">=1.10,<2.0" },
 ]
-provides-extras = ["camera", "dev"]
+provides-extras = ["dev"]
+
+[[package]]
+name = "panthera-camera"
+version = "0.1.0"
+source = { editable = "camera" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "panthera-arm-proto" },
+    { name = "protobuf" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+realsense = [
+    { name = "pyrealsense2" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grpcio", specifier = ">=1.82.1" },
+    { name = "panthera-arm-proto", editable = "proto/gen/python" },
+    { name = "protobuf", specifier = ">=4.25" },
+    { name = "pyrealsense2", marker = "extra == 'realsense'", specifier = "==2.58.1.10581" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+]
+provides-extras = ["realsense", "dev"]
 
 [[package]]
 name = "panthera-cli"
