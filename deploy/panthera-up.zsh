@@ -195,9 +195,6 @@ panthera-up() {
                 print "Panthera 统一后端已恢复：armd PID=$pid，camerad PID=$camera_pid"
                 print "  机械臂：localhost:50051；WSL 探活：$endpoint"
                 print "  D405：  localhost:50052；WSL 探活：$camera_endpoint"
-                print "  机械臂：$daemon_status"
-                print "  D405：    $camera_status"
-                print "  日志：    $log / $camera_log"
                 export PANTHERA_ENDPOINT="$endpoint"
                 export PANTHERA_CAMERA_ENDPOINT="$camera_endpoint"
                 return 0
