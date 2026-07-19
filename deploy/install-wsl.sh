@@ -24,11 +24,15 @@ fi
 escaped_repo_root=${repo_root//&/\\&}
 sed "s|@REPO_ROOT@|$escaped_repo_root|g" \
     "$repo_root/deploy/armd.service.in" > "$systemd_dir/armd.service"
+sed "s|@REPO_ROOT@|$escaped_repo_root|g" \
+    "$repo_root/deploy/camerad.service.in" > "$systemd_dir/camerad.service"
 
 systemctl --user daemon-reload
-systemctl --user enable armd.service
+systemctl --user enable camerad.service armd.service
 
-echo "armd user service installed: $systemd_dir/armd.service"
+echo "user services installed:"
+echo "  $systemd_dir/camerad.service"
+echo "  $systemd_dir/armd.service"
 echo "environment file: $config_dir/armd.env"
 echo "install the robot and D405 rules once with:"
 echo "  sudo install -m 0644 '$repo_root/deploy/99-panthera-ht.rules' /etc/udev/rules.d/"
@@ -36,8 +40,9 @@ echo "  sudo install -m 0644 '$repo_root/vendor/librealsense/config/99-realsense
 echo "  sudo udevadm control --reload-rules && sudo udevadm trigger"
 
 if $start_service; then
-    systemctl --user restart armd.service
+    systemctl --user restart camerad.service armd.service
+    systemctl --user --no-pager --full status camerad.service
     systemctl --user --no-pager --full status armd.service
 else
-    echo "service was not started; use: systemctl --user start armd"
+    echo "services were not started; use: systemctl --user start camerad armd"
 fi

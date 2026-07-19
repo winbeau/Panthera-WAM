@@ -151,3 +151,43 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
         if self._worker is None:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "相机采集未启用")
         return self._worker
+
+
+class CameraProxyService(camera_pb2_grpc.CameraServiceServicer):
+    """armd 公开端点到 WSL 内部 camerad 的异步代理。"""
+
+    def __init__(self, endpoint: str) -> None:
+        self.endpoint = endpoint
+        self._channel = grpc.aio.insecure_channel(
+            endpoint,
+            options=(("grpc.enable_http_proxy", 0),),
+        )
+        self._stub = camera_pb2_grpc.CameraServiceStub(self._channel)
+
+    async def close(self) -> None:
+        await self._channel.close()
+
+    async def GetStatus(self, request, context):
+        del context
+        try:
+            return await self._stub.GetStatus(request)
+        except grpc.aio.AioRpcError as exc:
+            return camera_pb2.CameraStatus(
+                enabled=True,
+                available=False,
+                streaming=False,
+                error=f"camerad {self.endpoint} 不可用: {exc.details()}",
+            )
+
+    async def CaptureFrame(self, request, context):
+        try:
+            return await self._stub.CaptureFrame(request)
+        except grpc.aio.AioRpcError as exc:
+            await context.abort(exc.code(), exc.details())
+
+    async def StreamFrames(self, request, context):
+        try:
+            async for frame in self._stub.StreamFrames(request):
+                yield frame
+        except grpc.aio.AioRpcError as exc:
+            await context.abort(exc.code(), exc.details())

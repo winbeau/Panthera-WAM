@@ -1,0 +1,17 @@
+[Unit]
+Description=Panthera-WAM RealSense D405 capture service
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/panthera-wam/armd.env
+ExecStart=/usr/bin/env uv run --package panthera-armd camerad --mode auto --bind 127.0.0.1:50052
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGINT
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

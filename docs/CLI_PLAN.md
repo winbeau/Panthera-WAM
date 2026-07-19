@@ -16,7 +16,7 @@
 - 硬件与线程模型、安全层（AcquireControl 互斥 / watchdog / 软限位预检 / EStop 直通）均沿用 README 已定架构，不重新论证。
 - 本计划中的 "SDK" 特指任务给出的方法清单：`Panthera.py`（38 个方法，含 4 个 staticmethod）+ `recorder.py`（`Recorder` 类 4 个方法）。
 - `Panthera` 继承自 `htr.Robot`（pybind11 编译扩展），示例脚本里直接调用的 `set_stop()` / `set_reset_zero()` / `motor_send_cmd()` 等继承/组合层方法**不在**给定清单内、其真实签名未核实。架构明确要求 EStop 与回零两项能力，因此第 2.3 节把它们作为"补充映射"单列，并在第 7 章标注核实动作，不假装已完整覆盖这一整层。
-- D405 视频流、LeRobot 数据导出不是 `Panthera`/`Recorder` 的方法，是 README 里明确的 v2 路线图条目；D405 已以独立 `camera.proto` + `armd` 内部 CameraService 实现，LeRobot 仍建议使用独立 `dataset.proto`，两者不在 `arm.proto` 的"无损"核对范围内计数。
+- D405 视频流、LeRobot 数据导出不是 `Panthera`/`Recorder` 的方法，是 README 里明确的 v2 路线图条目；D405 已以独立 `camera.proto` + WSL `camerad` + `armd` CameraService 代理实现，LeRobot 仍建议使用独立 `dataset.proto`，两者不在 `arm.proto` 的"无损"核对范围内计数。
 
 ---
 
@@ -583,8 +583,8 @@ service ArmService {
   验收：给定含/不含中间速度的 waypoint 列表，服务端正确选择两种插值分支；执行状态可流式观察、可取消。
 - **M7 拖动示教录制回放**：`teach start/stop/record start/record stop/play/list`。
   验收：`teach start` 后徒手拖动阻力明显降低（重力+摩擦补偿生效）；录制的 jsonl 字段与 `Recorder.log` 一致；`teach play` 能回放且末端误差在可接受范围内；回放中途 `CancelExecution` 能安全收尾（明确定义的减速停止策略，而非让机械臂悬停在危险位置）。
-- **M8 相机流与 LeRobot 导出**：`armd` 统一 CameraService + `camera status/snapshot/stream` 已落地；`dataset export-lerobot` 待实现。
-  验收：D405 与机械臂同时 attach 到 WSL，状态、快照与持续帧流通过同一 `armd` 端点的 CameraService；LeRobot 字段映射与导出标准留给 `dataset.proto` 计划。
+- **M8 相机流与 LeRobot 导出**：`camerad` 采集、`armd` 统一代理 CameraService + `camera status/snapshot/stream` 已落地；`dataset export-lerobot` 待实现。
+  验收：D405 与机械臂同时 attach 到 WSL，状态、快照与持续帧流通过同一公开 `armd` 端点的 CameraService 代理；LeRobot 字段映射与导出标准留给 `dataset.proto` 计划。
 - **M9 无损审计收尾**：核对 `.pyi`/`bindings.cpp` 确认 `set_stop`/`set_reset_zero`/电机层方法的真实签名，更新第 2.11 节为最终版；逐行核对"方法清单 vs 已实现 rpc"，确保 0 条遗漏、0 条无理由。
 
 ---

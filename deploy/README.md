@@ -1,7 +1,7 @@
 # WSL 部署
 
-`armd` 以 systemd user service 运行，与 WPF 环境引导中的
-`systemctl --user start armd` 保持一致。
+`armd` 与 `camerad` 以 systemd user service 运行。两者都在同一 WSL
+后端内，WPF 只连接 `armd` 的公开端点。
 
 ## 首次安装
 
@@ -22,8 +22,8 @@ sudo udevadm trigger
 检查 `~/.config/panthera-wam/armd.env` 中的 SDK 与机器人配置路径，然后执行：
 
 ```bash
-systemctl --user start armd
-systemctl --user status armd --no-pager
+systemctl --user start camerad armd
+systemctl --user status camerad armd --no-pager
 uv run panthera daemon status
 ```
 
@@ -33,9 +33,9 @@ uv run panthera daemon status
 ## 日常操作
 
 ```bash
-systemctl --user restart armd
-journalctl --user -u armd -f
-systemctl --user stop armd
+systemctl --user restart camerad armd
+journalctl --user -u camerad -u armd -f
+systemctl --user stop armd camerad
 ```
 
 也可在 `~/.zshrc` 中加载仓库内的统一恢复命令：
@@ -46,14 +46,15 @@ systemctl --user stop armd
 ```
 
 之后执行 `panthera-up`，会依次检查机械臂 USB、D405 USB、Python 3.11、
-电机 SDK 与 vendored librealsense，然后启动同一 `armd` 进程内的
-ArmService 和 CameraService。
+电机 SDK 与 vendored librealsense，然后在同一 WSL 内启动隔离的 `armd` 和
+`camerad`。WPF 仍只连接 `armd` 公开端点。
 
 Windows 侧先用 WPF 一键引导，或以管理员 PowerShell 将机械臂与 D405
 都执行 `usbipd attach --wsl --busid <BUSID>`。程序按 VID/PID 与序列号发现
 设备，不应把当前 busid 写进长期配置。
 
-D405 使用 vendored librealsense RSUSB/libusb 后端，由同一 `armd` 进程托管；
+D405 使用 vendored librealsense RSUSB/libusb 后端，由 WSL `camerad` 独占，
+`armd` 在公开端点代理 CameraService；
 安装、采集和故障定位流程见 [`docs/D405_WORKFLOW.md`](../docs/D405_WORKFLOW.md)。
 
 ## 安全约束

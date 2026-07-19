@@ -1,13 +1,14 @@
 [Unit]
 Description=Panthera-WAM hardware control daemon
-After=default.target
+Wants=camerad.service
+After=default.target camerad.service
 
 [Service]
 Type=simple
 WorkingDirectory=@REPO_ROOT@
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-%h/.config/panthera-wam/armd.env
-ExecStart=/usr/bin/env uv run --package panthera-armd armd --bind 127.0.0.1:50051
+ExecStart=/usr/bin/env uv run --package panthera-armd armd --bind 127.0.0.1:50051 --camera-mode proxy --camera-endpoint 127.0.0.1:50052
 Restart=on-failure
 RestartSec=2
 KillSignal=SIGINT

@@ -9,13 +9,15 @@ Windows
 WSL2 / Ubuntu                                  ▼
   panthera-cli ───────────────────────────────── armd
                                                  ├─ ArmService → HardwareLoop → Panthera-HT SDK → 机械臂
-                                                 └─ CameraService → CameraWorker → librealsense RSUSB → D405
+                                                 └─ CameraService proxy ── localhost:50052 ── camerad
+                                                                                              └─ librealsense RSUSB → D405
 ```
 
-机械臂与 D405 都由 WSL2 中的同一个 `armd` 进程独占。ArmService 与
-CameraService 共享端口、进程生命周期和部署服务。WPF 和 CLI 都是纯 gRPC
-客户端；WPF 只做环境引导、状态/视频可视化和控制意图下发，不直接打开
-RealSense SDK，也不存在独立 `camerad` 或 `:50052` 端口。
+机械臂与 D405 都由同一套 WSL2 后端控制，但使用两个隔离进程：`armd` 独占
+机械臂，`camerad` 独占 D405。`armd` 在公开的 `:50051` 端点代理 CameraService，
+内部 `:50052` 只绑定 localhost，避免 librealsense/Python GIL 负载影响 200Hz
+HardwareLoop。WPF 和普通 CLI 都是纯 gRPC 客户端，只访问 `armd`；WPF 只做
+环境引导、状态/视频可视化和控制意图下发，不直接打开任何硬件 SDK。
 
 ## 一次性 WSL 安装
 
@@ -60,20 +62,19 @@ usbipd attach --wsl --busid <D405_BUSID>
 
 ## 启动与验收
 
-`~/.config/panthera-wam/armd.env` 默认启用：
+`~/.config/panthera-wam/armd.env` 可配置 D405：
 
 ```dotenv
-PANTHERA_CAMERA_MODE=auto
 PANTHERA_CAMERA_WIDTH=640
 PANTHERA_CAMERA_HEIGHT=480
 PANTHERA_CAMERA_FPS=30
 ```
 
-启动唯一后端：
+启动统一 WSL 后端：
 
 ```bash
-systemctl --user restart armd
-systemctl --user status armd --no-pager
+systemctl --user restart camerad armd
+systemctl --user status camerad armd --no-pager
 uv run panthera daemon status
 uv run panthera camera status --json
 ```
@@ -92,9 +93,10 @@ uv run panthera camera stream --stream depth --frames 300 --rate-hz 30
 uv run panthera camera stream --stream color --frames 300 --rate-hz 30
 ```
 
-所有命令都使用 `PANTHERA_ENDPOINT` 的同一个 `armd` 端点，不再使用
-`PANTHERA_CAMERA_ENDPOINT`。深度帧为 Z16 PGM，像素值乘 JSON 中的
-`depth_scale` 得到米；彩色帧为 RGB8 PPM。
+所有正常客户端命令都使用 `PANTHERA_ENDPOINT` 的同一个公开 `armd` 端点。
+`PANTHERA_CAMERA_ENDPOINT=127.0.0.1:50052` 仅用于 WSL 内启动脚本和故障诊断，
+不提供给 WPF。深度帧为 Z16 PGM，像素值乘 JSON 中的 `depth_scale` 得到米；
+彩色帧为 RGB8 PPM。
 
 ## 仿真开发
 
@@ -104,7 +106,8 @@ uv run --package panthera-armd armd --sim
 uv run panthera camera status --json
 ```
 
-仿真时机械臂和 D405 仍由同一 `armd` 托管，但不访问 USB。
+仿真快捷模式仍可由单个 `armd` 托管机械臂和相机模拟器，不访问 USB；真机部署
+固定使用 `camerad` 进程隔离。
 
 ## 2026-07-19 真机验收
 
@@ -126,4 +129,5 @@ uv run panthera camera status --json
   udev 规则和重新 attach。
 - 帧超时：确认 Windows RealSense Viewer 等程序已关闭，然后执行一次
   `usbipd detach` / `usbipd attach`；保持默认 `640x480@30`。
-- CameraService 显示未启用：检查 `PANTHERA_CAMERA_MODE=auto` 并重启 `armd`。
+- CameraService 显示 camerad 不可用：检查 `systemctl --user status camerad`、
+  `ss -ltnp | grep 50052` 和 camerad 日志，再重启 `camerad armd`。

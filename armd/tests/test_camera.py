@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import subprocess
+import sys
 import threading
 import time
 
@@ -17,6 +20,7 @@ from armd.camera.backend import (
     CameraWorker,
     SimCameraBackend,
 )
+from armd.camera.service import CameraService
 from armd.hardware_loop import HardwareLoop
 from armd.server import ArmdServer
 
@@ -90,6 +94,35 @@ def test_camera_worker_stop_interrupts_blocking_backend() -> None:
     assert time.monotonic() - started < 1.0
 
 
+def test_camerad_sim_check() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "armd.camera",
+            "--mode",
+            "sim",
+            "--width",
+            "8",
+            "--height",
+            "6",
+            "--check",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert json.loads(result.stdout) == {
+        "available": True,
+        "streaming": True,
+        "model": "RealSense D405 Simulator",
+        "width": 8,
+        "height": 6,
+        "bytes": 96,
+    }
+
+
 @pytest.mark.asyncio
 async def test_camera_grpc_status_snapshot_and_finite_stream() -> None:
     hardware_loop = HardwareLoop(SimBackend, control_hz=200.0)
@@ -142,3 +175,48 @@ async def test_camera_grpc_status_snapshot_and_finite_stream() -> None:
         await channel.close()
         await server.stop()
         hardware_loop.stop()
+
+
+@pytest.mark.asyncio
+async def test_armd_proxies_internal_camerad() -> None:
+    camera_worker = CameraWorker(lambda: SimCameraBackend(width=8, height=6, fps=60))
+    camera_server = grpc.aio.server()
+    camera_pb2_grpc.add_CameraServiceServicer_to_server(CameraService(camera_worker), camera_server)
+    camera_port = camera_server.add_insecure_port("127.0.0.1:0")
+    camera_worker.start()
+    await camera_server.start()
+
+    hardware_loop = HardwareLoop(SimBackend, control_hz=200.0)
+    server = ArmdServer(
+        hardware_loop,
+        bind="127.0.0.1:0",
+        camera_endpoint=f"127.0.0.1:{camera_port}",
+    )
+    hardware_loop.start()
+    await server.start()
+    channel = grpc.aio.insecure_channel(
+        f"127.0.0.1:{server.port}",
+        options=(("grpc.enable_http_proxy", 0),),
+    )
+    await channel.channel_ready()
+    stub = camera_pb2_grpc.CameraServiceStub(channel)
+    try:
+        for _ in range(20):
+            status = await stub.GetStatus(camera_pb2.CameraStatusRequest())
+            if status.available and status.streaming:
+                break
+            await asyncio.sleep(0.01)
+        assert status.model == "RealSense D405 Simulator"
+        depth = await stub.CaptureFrame(
+            camera_pb2.CaptureFrameRequest(
+                stream=camera_pb2.CAMERA_STREAM_TYPE_DEPTH,
+                timeout_ms=1000,
+            )
+        )
+        assert len(depth.data) == 8 * 6 * 2
+    finally:
+        await channel.close()
+        await server.stop()
+        hardware_loop.stop()
+        await camera_server.stop(0)
+        camera_worker.stop()

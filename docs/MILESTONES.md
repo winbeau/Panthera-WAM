@@ -121,7 +121,7 @@
 - [ ] **M7 拖动示教录制回放**：`teach start/stop/record*/play/list`（自由拖动＝kp/kd 全零 + 重力/摩擦前馈）
 - [ ] **M8 相机流 + LeRobot 导出（进行中）**：`camera stream`、`dataset export-lerobot`
   - [x] D405 已在 Windows 识别为 `Intel(R) RealSense(TM) Depth Camera 405 Depth`（USB PID `0x0B5B`）；官方 `realsenseai/librealsense` 已 fork 到 `winbeau/librealsense`，并以 submodule 固定稳定版 `v2.58.1`
-  - [x] 独立 `camera.proto`、`armd` 内部 CameraWorker/CameraService、gRPC 状态/快照/帧流，以及 `camera status/snapshot/stream` CLI 已接入；ArmService 与 CameraService 共享同一进程和端口
+  - [x] 独立 `camera.proto`、WSL `camerad`、`armd` CameraService 代理、gRPC 状态/快照/帧流，以及 `camera status/snapshot/stream` CLI 已接入；客户端统一使用 `armd` 公开端口
   - [x] WSL 默认/PyPI 采集路径曾出现 5s 帧超时；改用 `vendor/librealsense` v2.58.1 源码构建 `FORCE_RSUSB_BACKEND=ON` 后，libusb 持续双流通过
   - [x] WPF 环境引导按 `VID_8086&PID_0B5B` 发现 D405，并与机械臂一起 attach 到 WSL；WPF 只通过同一 armd gRPC 端点查看 D405 状态
   - [x] WSL 统一后端真机验收：D405 序列号 `260422273428`、固件 `5.13.0.55`、USB 3.2；普通 detach/attach 冷重连后 `640x480@30` depth Z16 + color RGB8 连续 300 帧，0 次超时

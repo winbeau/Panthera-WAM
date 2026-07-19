@@ -8,7 +8,7 @@ import grpc
 from panthera_arm import arm_pb2_grpc, camera_pb2_grpc
 
 from .camera.backend import CameraWorker
-from .camera.service import CameraService
+from .camera.service import CameraProxyService, CameraService
 from .control import LeaseManager
 from .execution import ExecutionRegistry
 from .grpc_service import ArmService, SafetyInterceptor
@@ -28,13 +28,17 @@ class ArmdServer:
         sdk_root: str | None = None,
         config_path: str | None = None,
         camera_worker: CameraWorker | None = None,
+        camera_endpoint: str | None = None,
     ) -> None:
+        if camera_worker is not None and camera_endpoint is not None:
+            raise ValueError("camera_worker 与 camera_endpoint 不能同时设置")
         self.hardware_loop = hardware_loop
         self.bind = bind
         self.leases = LeaseManager(timeout_s=lease_timeout_s)
         self.executions = ExecutionRegistry()
         self.kinematics = KinematicsWorker(sdk_root=sdk_root, config_path=config_path)
         self.camera_worker = camera_worker
+        self.camera_proxy = CameraProxyService(camera_endpoint) if camera_endpoint else None
         self._watchdog_poll_s = watchdog_poll_s
         self._server = grpc.aio.server(interceptors=[SafetyInterceptor(self.leases, hardware_loop)])
         arm_pb2_grpc.add_ArmServiceServicer_to_server(
@@ -42,7 +46,7 @@ class ArmdServer:
             self._server,
         )
         camera_pb2_grpc.add_CameraServiceServicer_to_server(
-            CameraService(camera_worker),
+            self.camera_proxy or CameraService(camera_worker),
             self._server,
         )
         self.port = self._server.add_insecure_port(bind)
@@ -68,6 +72,8 @@ class ArmdServer:
         await self._server.stop(grace)
         if self.camera_worker is not None:
             self.camera_worker.stop()
+        if self.camera_proxy is not None:
+            await self.camera_proxy.close()
         self.kinematics.close()
 
     async def wait_for_termination(self) -> None:

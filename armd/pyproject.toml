@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 armd = "armd.__main__:main"
+camerad = "armd.camera.__main__:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.6"]

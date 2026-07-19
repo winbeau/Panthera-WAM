@@ -52,9 +52,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lease-timeout", type=float, default=2.0, help="控制权心跳超时秒数")
     parser.add_argument(
         "--camera-mode",
-        choices=("off", "auto", "sim"),
-        default=os.environ.get("PANTHERA_CAMERA_MODE", "auto"),
-        help="D405 采集模式：off/auto/sim（默认 auto；--sim 时 auto 使用仿真相机）",
+        choices=("off", "auto", "proxy", "sim"),
+        default=os.environ.get("PANTHERA_CAMERA_MODE", "proxy"),
+        help="D405 模式：off/auto/proxy/sim（真机默认代理 WSL camerad）",
+    )
+    parser.add_argument(
+        "--camera-endpoint",
+        default=os.environ.get("PANTHERA_CAMERA_ENDPOINT", "127.0.0.1:50052"),
+        help="proxy 模式的 WSL 内部 camerad 端点",
     )
     parser.add_argument(
         "--camera-serial",
@@ -98,7 +103,7 @@ async def run(args: argparse.Namespace) -> None:
     loop = HardwareLoop(backend_factory, control_hz=args.control_hz)
     if args.camera_width <= 0 or args.camera_height <= 0 or args.camera_fps <= 0:
         raise SystemExit("camera width/height/fps 必须为正整数")
-    camera_mode = "sim" if args.sim and args.camera_mode == "auto" else args.camera_mode
+    camera_mode = "sim" if args.sim and args.camera_mode in ("auto", "proxy") else args.camera_mode
     camera_worker = None
     if camera_mode == "sim":
         camera_worker = CameraWorker(
@@ -119,6 +124,7 @@ async def run(args: argparse.Namespace) -> None:
                 fps=args.camera_fps,
             )
         )
+    camera_endpoint = args.camera_endpoint if camera_mode == "proxy" else None
     bind = "127.0.0.1:0" if args.check else args.bind
     server = ArmdServer(
         loop,
@@ -127,6 +133,7 @@ async def run(args: argparse.Namespace) -> None:
         sdk_root=args.sdk_root,
         config_path=args.config,
         camera_worker=camera_worker,
+        camera_endpoint=camera_endpoint,
     )
     loop.start()
     try:
