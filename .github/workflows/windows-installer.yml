@@ -51,117 +51,17 @@ jobs:
           "file_version=$fileVersion" >> $env:GITHUB_OUTPUT
           "release_tag=$releaseTag" >> $env:GITHUB_OUTPUT
 
-      - name: Restore and test WPF
-        shell: pwsh
-        run: |
-          dotnet restore wpf/Panthera.Terminal.sln
-          dotnet build wpf/Panthera.Terminal.sln --configuration Release --no-restore
-          dotnet test wpf/tests/Panthera.Terminal.Tests/Panthera.Terminal.Tests.csproj --configuration Release --no-build
-
-      - name: Publish self-contained application
-        shell: pwsh
-        run: >-
-          dotnet publish wpf/src/Panthera.Terminal.App/Panthera.Terminal.App.csproj
-          --configuration Release
-          --runtime win-x64
-          --self-contained true
-          -p:Version=${{ steps.metadata.outputs.version }}
-          --output wpf/installer/publish
-
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --yes --no-progress
 
-      - name: Download Simplified Chinese messages
-        shell: pwsh
-        run: |
-          $url = "https://raw.githubusercontent.com/jrsoftware/issrc/683ee7eabfbce807f901c5da83fc5ff1a3ecb693/Files/Languages/ChineseSimplified.isl"
-          $path = "wpf\installer\ChineseSimplified.isl"
-          Invoke-WebRequest $url -OutFile $path
-          $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
-          $expected = "6753be2c5e2740d859900fd902824db2ec568da5c5b52486524c9762d778b0b0"
-          if ($actual -ne $expected) {
-            throw "ChineseSimplified.isl checksum mismatch: $actual"
-          }
-
-      - name: Compile installer
+      - name: Build and smoke-test installer
         id: package
         shell: pwsh
-        env:
-          PANTHERA_INSTALLER_VERSION: ${{ steps.metadata.outputs.version }}
-          PANTHERA_INSTALLER_FILE_VERSION: ${{ steps.metadata.outputs.file_version }}
-        run: |
-          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) {
-            throw "Inno Setup compiler was not found at $iscc"
-          }
-          & $iscc "wpf\installer\Panthera-Terminal.iss"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Inno Setup failed with exit code $LASTEXITCODE"
-          }
-          $installers = @(Get-ChildItem "wpf\installer\output\*-setup.exe")
-          if ($installers.Count -ne 1) {
-            throw "Expected one installer, found $($installers.Count)"
-          }
-          $installer = $installers[0]
-          $checksum = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$checksum  $($installer.Name)" | Set-Content "wpf\installer\output\SHA256SUMS.txt" -Encoding ascii
-          "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
-          "checksum_file=$((Resolve-Path 'wpf\installer\output\SHA256SUMS.txt').Path)" >> $env:GITHUB_OUTPUT
-
-      - name: Smoke-test installed application
-        shell: pwsh
-        env:
-          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
-        run: |
-          $installDir = Join-Path $env:RUNNER_TEMP "Panthera-Terminal-Installed"
-          $installLog = Join-Path $env:RUNNER_TEMP "panthera-installer.log"
-          $install = Start-Process $env:INSTALLER_PATH -ArgumentList @(
-            "/VERYSILENT",
-            "/SUPPRESSMSGBOXES",
-            "/NORESTART",
-            "/SP-",
-            "/DIR=$installDir",
-            "/LOG=$installLog"
-          ) -PassThru -Wait
-          if ($install.ExitCode -ne 0) {
-            Get-Content $installLog -ErrorAction SilentlyContinue
-            throw "Installer exited with code $($install.ExitCode)"
-          }
-
-          $app = Join-Path $installDir "Panthera.Terminal.App.exe"
-          if (-not (Test-Path $app)) {
-            throw "Installed application was not found at $app"
-          }
-          $screenshot = Join-Path $env:RUNNER_TEMP "installed-highcontrast.png"
-          $env:PANTHERA_UI_TEST = "1"
-          $env:PANTHERA_UI_ACCEPTANCE = "1"
-          $env:PANTHERA_SCREENSHOT_THEME = "HighContrast"
-          $env:PANTHERA_SCREENSHOT_PATH = $screenshot
-          $application = Start-Process $app -PassThru
-          if (-not $application.WaitForExit(30000)) {
-            $application.Kill($true)
-            throw "Installed application did not finish its screenshot smoke test"
-          }
-          if ($application.ExitCode -ne 0 -or -not (Test-Path $screenshot)) {
-            throw "Installed application smoke test failed with code $($application.ExitCode)"
-          }
-
-          $uninstaller = Join-Path $installDir "unins000.exe"
-          if (-not (Test-Path $uninstaller)) {
-            throw "Uninstaller was not found at $uninstaller"
-          }
-          $uninstall = Start-Process $uninstaller -ArgumentList @(
-            "/VERYSILENT",
-            "/SUPPRESSMSGBOXES",
-            "/NORESTART"
-          ) -PassThru -Wait
-          if ($uninstall.ExitCode -ne 0) {
-            throw "Uninstaller exited with code $($uninstall.ExitCode)"
-          }
-          if (Test-Path $app) {
-            throw "Application files remain after uninstall"
-          }
+        run: >-
+          ./deploy/build-wpf.ps1
+          -Mode Installer
+          -Version "${{ steps.metadata.outputs.version }}"
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7

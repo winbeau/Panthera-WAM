@@ -1,4 +1,45 @@
-# WSL 部署
+# 部署
+
+## Windows WPF 快速发布
+
+首次在 Windows PowerShell / PowerShell 7 中执行：
+
+```powershell
+.\deploy\setup-dotnet9.ps1
+```
+
+该脚本会在 PowerShell 7 与 Windows PowerShell 的当前用户 Profile 中写入受标记管理的
+配置块，固定优先使用 `$HOME\.dotnet\dotnet.exe` 的 .NET 9 SDK，清理会导致 SDK 误选的
+`MSBuildSDKsPath`，并注册 `panthera-wpf` 快捷命令。重新打开终端后可直接使用：
+
+```powershell
+# 最快：初始化 CAD 子模块并生成自包含 win-x64 程序
+panthera-wpf
+
+# 与 GitHub CI 同口径：Release 构建、单测、FlaUI 四主题验收、发布
+panthera-wpf -Mode Ci
+
+# 与 Windows Installer workflow 同口径：测试、发布、Inno 安装包、SHA256、安装/卸载烟测
+panthera-wpf -Mode Installer
+```
+
+默认可执行文件位于：
+
+```text
+wpf\installer\publish\Panthera.Terminal.App.exe
+```
+
+安装包位于 `wpf\installer\output\Panthera-Terminal-v*-win-x64-setup.exe`。本地生成安装包前
+需安装 Inno Setup 6：
+
+```powershell
+winget install JRSoftware.InnoSetup
+```
+
+GitHub 的 `CI` workflow 也会上传名为 `panthera-terminal-win-x64` 的自包含程序 artifact，
+不再只构建而不保留可下载执行程序。
+
+## WSL 部署
 
 `armd` 与 `camerad` 以 systemd user service 运行。两者都在同一 Linux
 后端内，分别提供 `:50051` 机械臂服务和 `:50052` D405 服务。WPF 只作为

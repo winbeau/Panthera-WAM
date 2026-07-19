@@ -28,32 +28,24 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "9.0.x"
-      - name: Restore WPF solution
-        run: dotnet restore wpf/Panthera.Terminal.sln
-      - name: Build WPF release
-        run: dotnet build wpf/Panthera.Terminal.sln --configuration Release --no-restore
-      - name: Run WPF unit tests
-        run: >-
-          dotnet test wpf/tests/Panthera.Terminal.Tests/Panthera.Terminal.Tests.csproj
-          --configuration Release --no-build
-      - name: Run WPF UI tests
+      - name: Build, test, and publish WPF release
+        shell: pwsh
         env:
-          PANTHERA_RUN_UI_TESTS: "1"
           PANTHERA_UI_ARTIFACTS: ${{ runner.temp }}\ui-artifacts
         run: >-
-          dotnet test wpf/tests/Panthera.Terminal.UiTests/Panthera.Terminal.UiTests.csproj
-          --configuration Release --no-build
-      - name: Publish self-contained WPF release
-        run: >-
-          dotnet publish wpf/src/Panthera.Terminal.App/Panthera.Terminal.App.csproj
-          --configuration Release
-          --runtime win-x64
-          --self-contained true
-          --output ${{ runner.temp }}\panthera-terminal-win-x64
+          ./deploy/build-wpf.ps1
+          -Mode Ci
+          -PublishPath "${{ runner.temp }}\panthera-terminal-win-x64"
       - name: Upload WPF UI artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: wpf-ui-artifacts
           path: ${{ runner.temp }}\ui-artifacts
+          if-no-files-found: error
+      - name: Upload self-contained WPF executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: panthera-terminal-win-x64
+          path: ${{ runner.temp }}\panthera-terminal-win-x64
           if-no-files-found: error

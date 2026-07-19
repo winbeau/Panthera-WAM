@@ -9,15 +9,16 @@ entry all use the shared `Assets/Brand/Panthera.Terminal.ico` multi-resolution i
 
 The GitHub workflow `.github/workflows/windows-installer.yml` runs automatically for future `v*`
 tags and can also be dispatched manually. A manual dispatch can attach the generated installer and
-`SHA256SUMS.txt` to an existing GitHub Release by setting `release_tag`. Before upload, the workflow
-silently installs the package, launches the installed application for a HighContrast screenshot,
-and silently uninstalls it again.
+`SHA256SUMS.txt` to an existing GitHub Release by setting `release_tag`. The workflow and local
+builds both call `deploy/build-wpf.ps1`, so restore, tests, self-contained publish, Inno Setup
+packaging, checksum generation, screenshot smoke test, and uninstall verification cannot drift.
 
 Local Windows build outline:
 
 ```powershell
-dotnet publish ..\src\Panthera.Terminal.App\Panthera.Terminal.App.csproj `
-  --configuration Release --runtime win-x64 --self-contained true --output publish
-$env:PANTHERA_INSTALLER_VERSION = "1.0.0"
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" .\Panthera-Terminal.iss
+.\deploy\setup-dotnet9.ps1
+panthera-wpf -Mode Installer
 ```
+
+The installer is written to `wpf/installer/output/`; the unpacked runnable application is kept in
+`wpf/installer/publish/`.
