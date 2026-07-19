@@ -36,6 +36,7 @@ WSL:     panthera-cli ───────────────┤→ gRPC �
 
 ```bash
 git submodule update --init --recursive
+uv python install 3.11
 uv sync --all-packages --all-extras
 make check
 ```

@@ -19,6 +19,7 @@ CameraWorker 不进入 200Hz HardwareLoop，也不持有机械臂 lease。相机
 
 ```bash
 git submodule update --init --recursive
+uv python install 3.11
 uv sync --all-packages --all-extras
 ./deploy/install-wsl.sh
 sudo install -m 0644 vendor/librealsense/config/99-realsense-libusb.rules \

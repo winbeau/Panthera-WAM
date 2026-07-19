@@ -7,6 +7,7 @@
 
 ```bash
 git submodule update --init --recursive
+uv python install 3.11
 uv sync --all-packages --all-extras
 ./deploy/install-wsl.sh
 sudo install -m 0644 deploy/99-panthera-ht.rules /etc/udev/rules.d/
