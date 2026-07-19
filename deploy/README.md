@@ -38,6 +38,17 @@ journalctl --user -u armd -f
 systemctl --user stop armd
 ```
 
+也可在 `~/.zshrc` 中加载仓库内的统一恢复命令：
+
+```zsh
+[[ -r "$HOME/Panthera-WAM-v2/deploy/panthera-up.zsh" ]] && \
+    source "$HOME/Panthera-WAM-v2/deploy/panthera-up.zsh"
+```
+
+之后执行 `panthera-up`，会依次检查机械臂 USB、D405 USB、Python 3.11、
+电机 SDK 与 vendored librealsense，然后启动同一 `armd` 进程内的
+ArmService 和 CameraService。
+
 Windows 侧先用 WPF 一键引导，或以管理员 PowerShell 将机械臂与 D405
 都执行 `usbipd attach --wsl --busid <BUSID>`。程序按 VID/PID 与序列号发现
 设备，不应把当前 busid 写进长期配置。
