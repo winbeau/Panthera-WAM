@@ -12,6 +12,7 @@ obj/
 *.user
 wpf/installer/publish/
 wpf/installer/output/
+wpf/installer/ChineseSimplified.isl
 
 # 官方 SDK 的临时根目录克隆不入库；正式依赖由 vendor/ git submodule 管理。
 /Panthera-HT_SDK/

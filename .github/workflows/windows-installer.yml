@@ -72,6 +72,18 @@ jobs:
         shell: pwsh
         run: choco install innosetup --yes --no-progress
 
+      - name: Download Simplified Chinese messages
+        shell: pwsh
+        run: |
+          $url = "https://raw.githubusercontent.com/jrsoftware/issrc/683ee7eabfbce807f901c5da83fc5ff1a3ecb693/Files/Languages/ChineseSimplified.isl"
+          $path = "wpf\installer\ChineseSimplified.isl"
+          Invoke-WebRequest $url -OutFile $path
+          $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = "6753be2c5e2740d859900fd902824db2ec568da5c5b52486524c9762d778b0b0"
+          if ($actual -ne $expected) {
+            throw "ChineseSimplified.isl checksum mismatch: $actual"
+          }
+
       - name: Compile installer
         id: package
         shell: pwsh
