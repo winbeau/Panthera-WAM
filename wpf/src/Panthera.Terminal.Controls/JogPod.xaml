@@ -47,9 +47,10 @@
                                     ReleaseCommand="{Binding ReleaseCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
             </UniformGrid>
             <Grid Grid.Row="1" Grid.ColumnSpan="3" Height="6" Margin="0,9,0,1"
-                  ToolTip="当前位置相对零位：左侧为负方向，右侧为正方向">
-                <ProgressBar Maximum="100"
-                             Value="{Binding PositionPercent, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                  ToolTip="当前位置在软限位区间中的相对位置">
+                <ProgressBar Minimum="{Binding Minimum, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                             Maximum="{Binding Maximum, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                             Value="{Binding Position, RelativeSource={RelativeSource AncestorType=UserControl}}">
                     <ProgressBar.Template>
                         <ControlTemplate TargetType="ProgressBar">
                             <Grid SnapsToDevicePixels="True" ClipToBounds="True">
@@ -61,8 +62,6 @@
                         </ControlTemplate>
                     </ProgressBar.Template>
                 </ProgressBar>
-                <Border Width="1" HorizontalAlignment="Center"
-                        Background="{DynamicResource ControlStrokeColorStrongBrush}" />
             </Grid>
         </Grid>
     </Border>
