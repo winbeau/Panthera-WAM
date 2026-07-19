@@ -89,7 +89,7 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
             stream = camera_stream(request.stream)
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
-        timeout_ms = request.timeout_ms or 2000
+        timeout_ms = request.timeout_ms or 5000
         if not 100 <= timeout_ms <= 10000:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "timeout_ms 必须在 100–10000 之间")
         frame = await asyncio.to_thread(worker.wait_for_frame, stream, timeout_s=timeout_ms / 1000)

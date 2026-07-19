@@ -105,7 +105,7 @@ class RealSenseCameraBackend:
         width: int = 640,
         height: int = 480,
         fps: int = 30,
-        timeout_ms: int = 2000,
+        timeout_ms: int = 5000,
     ) -> None:
         self.serial = serial
         self.width = width
@@ -332,7 +332,12 @@ class CameraWorker:
         self._sequences = {CameraStream.DEPTH: 0, CameraStream.COLOR: 0}
         self._frame_times: deque[float] = deque(maxlen=60)
         self._last_frame_at = 0.0
-        self._status = CameraStatusSnapshot(enabled=True, available=False, streaming=False)
+        self._status = CameraStatusSnapshot(
+            enabled=True,
+            available=False,
+            streaming=False,
+            error="D405 正在启动",
+        )
 
     def start(self) -> None:
         with self._condition:

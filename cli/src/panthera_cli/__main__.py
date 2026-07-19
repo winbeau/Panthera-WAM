@@ -393,8 +393,8 @@ def camera_status(as_json: bool = typer.Option(False, "--json")) -> None:
     data = camera_status_data(status)
     if as_json:
         console.print_json(json.dumps(data, ensure_ascii=False))
-        return
-    console.print(data)
+    else:
+        console.print(data)
     if not status.available:
         raise typer.Exit(2)
 
@@ -403,7 +403,7 @@ def camera_status(as_json: bool = typer.Option(False, "--json")) -> None:
 def camera_snapshot(
     stream: str = typer.Option("depth", "--stream"),
     output: Path | None = typer.Option(None, "--out"),
-    timeout_ms: int = typer.Option(2000, "--timeout-ms", min=100, max=10000),
+    timeout_ms: int = typer.Option(5000, "--timeout-ms", min=100, max=10000),
 ) -> None:
     stream_type = camera_stream_type(stream)
     channel, stub = create_camera_stub()
