@@ -88,5 +88,5 @@ wpf\tools\run-tests.cmd
 
 ## License
 
-本项目以 [MIT License](LICENSE) 开源。官方 Panthera-HT SDK 作为 git submodule 引用，
-其许可证与使用条件以对应 SDK 仓库为准。
+本项目以 [MIT License](LICENSE) 开源。Panthera-HT SDK 与 Apache-2.0 的 RealSense SDK 2.0
+均通过 `vendor/` 下的 git submodule 引用，其许可证与使用条件以对应 SDK 仓库为准。

@@ -119,7 +119,9 @@
 - [ ] **M5 阻抗/动力学**：`joint mit`/`gripper mit`、`dynamics *`（6 条）。`friction` 缺 `--fc/--fv` 用配置默认兜底不抛异常（默认值取核实结论 §V5 参考系数）
 - [ ] **M6 多点轨迹**：`trajectory run-waypoints`（自建执行循环，`Joint_Pos_Vel` 而非 MIT）
 - [ ] **M7 拖动示教录制回放**：`teach start/stop/record*/play/list`（自由拖动＝kp/kd 全零 + 重力/摩擦前馈）
-- [ ] **M8 相机流 + LeRobot 导出（占位落地）**：`camera stream`、`dataset export-lerobot`
+- [ ] **M8 相机流 + LeRobot 导出（进行中）**：`camera stream`、`dataset export-lerobot`
+  - [x] D405 已在 Windows 识别为 `Intel(R) RealSense(TM) Depth Camera 405 Depth`（USB PID `0x0B5B`）；官方 `realsenseai/librealsense` 已 fork 到 `winbeau/librealsense`，并以 submodule 固定稳定版 `v2.58.1`
+  - [ ] 独立 `camera.proto` / `dataset.proto` 契约、流服务与 CLI 接入
 - [ ] **M9 无损审计收尾**：逐行核对 42 项方法清单 vs 已实现 rpc，0 遗漏、0 无理由
 
 ---

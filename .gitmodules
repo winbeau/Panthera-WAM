@@ -2,3 +2,6 @@
 	path = vendor/Panthera-HT_SDK
 	url = https://github.com/winbeau/Panthera-HT_SDK.git
 	branch = main
+[submodule "vendor/librealsense"]
+	path = vendor/librealsense
+	url = https://github.com/winbeau/librealsense.git

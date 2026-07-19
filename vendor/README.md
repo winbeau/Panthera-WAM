@@ -1,10 +1,21 @@
 # Third-Party Dependencies
 
-`Panthera-HT_SDK` is tracked as a git submodule rather than copied into this repository.
+Third-party SDKs are tracked as git submodules rather than copied into this repository.
+
+## Panthera-HT SDK
 
 - Fork: `https://github.com/winbeau/Panthera-HT_SDK`
 - Upstream: `https://github.com/HighTorque-Robotics/Panthera-HT_SDK`
-- Update checkout: `git submodule update --init --recursive`
+- Tracked branch: `main`
 - Sync fork: `gh repo sync winbeau/Panthera-HT_SDK --source HighTorque-Robotics/Panthera-HT_SDK`
 
-SDK changes belong in the fork first. Commit the updated submodule gitlink separately in this repository.
+## RealSense SDK 2.0
+
+- Fork: `https://github.com/winbeau/librealsense`
+- Upstream: `https://github.com/realsenseai/librealsense`
+- Pinned release: `v2.58.1` (`bf2778061d5dd29776e9aca8765f75852671760b`)
+- License: Apache-2.0
+- Sync fork: `gh repo sync winbeau/librealsense --source realsenseai/librealsense`
+
+Initialize both SDKs with `git submodule update --init --recursive`. SDK changes belong in the
+corresponding fork first; commit an updated submodule gitlink separately in this repository.
