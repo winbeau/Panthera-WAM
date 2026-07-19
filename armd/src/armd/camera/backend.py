@@ -196,10 +196,11 @@ class RealSenseCameraBackend:
         deadline = time.monotonic() + self.timeout_ms / 1000.0
         frames = None
         while not self._interrupt.is_set() and time.monotonic() < deadline:
-            frames = pipeline.poll_for_frames()
-            if frames:
+            remaining_ms = max(1, round((deadline - time.monotonic()) * 1000))
+            success, candidate = pipeline.try_wait_for_frames(min(100, remaining_ms))
+            if success:
+                frames = candidate
                 break
-            self._interrupt.wait(0.005)
         if self._interrupt.is_set():
             raise CameraUnavailableError("D405 采集已中断")
         if not frames:
