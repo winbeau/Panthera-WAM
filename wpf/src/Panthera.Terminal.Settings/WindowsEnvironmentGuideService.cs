@@ -84,11 +84,11 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             var detail = healthy
                 ? $"{status.Model} · {status.ActualFps:F1} fps · {status.LastFrameAgeMs} ms"
                 : status.Error;
-            steps.Add(Step("D405 / armd", healthy, detail, $"CameraService {settings.Endpoint}"));
+            steps.Add(Step("D405 / camerad", healthy, detail, $"CameraService {settings.CameraEndpoint}"));
         }
         catch (Exception exception)
         {
-            steps.Add(Step("D405 / armd", false, exception.Message, $"CameraService {settings.Endpoint}"));
+            steps.Add(Step("D405 / camerad", false, exception.Message, $"CameraService {settings.CameraEndpoint}"));
         }
         return new EnvironmentGuideResult(steps);
     }
@@ -160,11 +160,14 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             return new EnvironmentGuideResult(steps);
         }
 
-        var startArmd = await RunWslAsync(settings, "systemctl --user start armd", cancellationToken);
-        steps.Add(Step("启动 armd", startArmd.Success,
-            startArmd.Success ? "systemd user service 已启动" : startArmd.Error,
-            startArmd.Command));
-        if (!startArmd.Success)
+        var startServices = await RunWslAsync(
+            settings,
+            "systemctl --user start armd camerad",
+            cancellationToken);
+        steps.Add(Step("启动 Linux 后端", startServices.Success,
+            startServices.Success ? "armd 与 camerad systemd user service 已启动" : startServices.Error,
+            startServices.Command));
+        if (!startServices.Success)
         {
             return new EnvironmentGuideResult(steps);
         }
@@ -189,8 +192,8 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
                 var cameraDetail = cameraHealthy
                     ? $"{cameraStatus.Model} · {cameraStatus.ActualFps:F1} fps"
                     : cameraStatus.Error;
-                steps.Add(Step("D405 / armd", cameraHealthy, cameraDetail,
-                    $"CameraService {settings.Endpoint}"));
+                steps.Add(Step("D405 / camerad", cameraHealthy, cameraDetail,
+                    $"CameraService {settings.CameraEndpoint}"));
                 return new EnvironmentGuideResult(steps);
             }
             catch (Exception exception)

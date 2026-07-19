@@ -55,6 +55,16 @@ public sealed class MainWindowViewModelTests
         public Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
+        public async IAsyncEnumerable<CameraFrameSnapshot> StreamCameraFramesAsync(
+            CameraStreamKind stream,
+            double maxRateHz = 15,
+            [EnumeratorCancellation]
+            CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+
         public Task<ControlSnapshot> GetControlStatusAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 

@@ -37,9 +37,10 @@ public partial class App : Application
                 services.AddSingleton(settings);
                 services.AddSingleton<IArmdClient>(_ => uiAcceptanceMode
                     ? new UiAcceptanceArmdClient()
-                    : new ArmdClient(settings.Endpoint));
+                    : new ArmdClient(settings.Endpoint, settings.CameraEndpoint));
                 services.AddSingleton<IEnvironmentGuideService, WindowsEnvironmentGuideService>();
                 services.AddSingleton<LatestStateSlot<RobotSnapshot>>();
+                services.AddSingleton<LatestCameraFrames>();
                 services.AddSingleton<MainWindowViewModel>();
                 services.AddSingleton<MainWindow>();
                 if (!uiAcceptanceMode)
@@ -47,6 +48,7 @@ public partial class App : Application
                     services.AddHostedService<WslTcpBridgeHostedService>();
                 }
                 services.AddHostedService<StateStreamHostedService>();
+                services.AddHostedService<CameraStreamHostedService>();
             })
             .Build();
         await _host.StartAsync();

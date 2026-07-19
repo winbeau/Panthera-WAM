@@ -44,7 +44,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Theme = settings.Theme;
         JogSpeed = settings.JogSpeed;
         TargetDuration = 3.0;
-        ConnectionDetail = settings.Endpoint;
+        ConnectionDetail = $"arm {settings.Endpoint} · camera {settings.CameraEndpoint}";
     }
 
     public TerminalSettings Settings { get; private set; }
@@ -80,7 +80,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool _cameraAvailable;
 
     [ObservableProperty]
-    private string _cameraSummary = "等待 armd";
+    private string _cameraSummary = "等待 camerad";
 
     [ObservableProperty]
     private string _connectionDetail = string.Empty;
@@ -223,9 +223,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 : $"真机 {(daemon.HardwareConnected ? "在线" : "未连接")} · {daemon.ControlHz:F0} Hz";
             CameraAvailable = camera.Available && camera.Streaming;
             CameraSummary = CameraAvailable
-                ? $"armd 采集 · {camera.ActualFps:F1} fps"
-                : camera.Enabled ? camera.Error : "armd 未启用相机";
-            ConnectionDetail = Settings.Endpoint;
+                ? $"camerad 采集 · {camera.ActualFps:F1} fps"
+                : camera.Enabled ? camera.Error : "camerad 未启用相机";
+            ConnectionDetail = $"arm {Settings.Endpoint} · camera {Settings.CameraEndpoint}";
             _gripperMinimum = limits.GripperMinimum;
             _gripperMaximum = limits.GripperMaximum;
             OnPropertyChanged(nameof(GripperPercent));
@@ -234,7 +234,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 Joints[index].Minimum = limits.Joints[index].Minimum;
                 Joints[index].Maximum = limits.Joints[index].Maximum;
             }
-            AddLog("Info", "Connection", $"已连接 {Settings.Endpoint}");
+            AddLog("Info", "Connection", $"机械臂 {Settings.Endpoint}");
+            AddLog("Info", "Connection", $"相机 {Settings.CameraEndpoint}");
             AddLog(CameraAvailable ? "Info" : "Warning", "D405", CameraSummary);
         }
         catch (Exception exception)

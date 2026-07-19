@@ -28,6 +28,10 @@ EXPECTED_COMMANDS = {
     "control status",
     "daemon status",
     "daemon version",
+    "dataset cancel",
+    "dataset export-lerobot",
+    "dataset mapping",
+    "dataset status",
     "dynamics coriolis",
     "dynamics friction",
     "dynamics gravity",
@@ -136,6 +140,11 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
         camera = runner.invoke(app, ["camera", "status", "--json"])
         assert camera.exit_code == 0, camera.output
         assert '"available": true' in camera.output
+
+        mapping = runner.invoke(app, ["dataset", "mapping", "--json"])
+        assert mapping.exit_code == 0, mapping.output
+        assert '"format_version": "LeRobotDataset v3.0"' in mapping.output
+        assert '"target": "observation.state"' in mapping.output
 
         snapshot_path = tmp_path / "depth.pgm"
         snapshot = runner.invoke(

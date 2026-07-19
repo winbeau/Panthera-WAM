@@ -17,6 +17,36 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
         Task.FromResult(new CameraSnapshot(
             true, true, true, "RealSense D405 Simulator", "SIM-D405-0001", "sim", "sim", "sim", "", 8, 30.0));
 
+    public async IAsyncEnumerable<CameraFrameSnapshot> StreamCameraFramesAsync(
+        CameraStreamKind stream,
+        double maxRateHz = 15,
+        [EnumeratorCancellation]
+        CancellationToken cancellationToken = default)
+    {
+        const int width = 160;
+        const int height = 120;
+        var delay = TimeSpan.FromSeconds(1.0 / Math.Clamp(maxRateHz, 1.0, 30.0));
+        long sequence = 0;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            sequence++;
+            var data = stream == CameraStreamKind.Color
+                ? CreateColorFrame(width, height, sequence)
+                : CreateDepthFrame(width, height, sequence);
+            yield return new CameraFrameSnapshot(
+                stream,
+                stream == CameraStreamKind.Color ? CameraPixelKind.Rgb8 : CameraPixelKind.Z16,
+                sequence,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000,
+                width,
+                height,
+                stream == CameraStreamKind.Color ? width * 3 : width * 2,
+                stream == CameraStreamKind.Depth ? 0.001 : 0.0,
+                data);
+            await Task.Delay(delay, cancellationToken);
+        }
+    }
+
     public Task<ControlSnapshot> GetControlStatusAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(CurrentControl());
 
@@ -129,5 +159,33 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
             .ToArray();
         var gripper = new MotorSnapshot("joint7", 7, 0.8, 0.0, 0.0, 21, 0, 0, 0, true);
         return new RobotSnapshot(joints, gripper, 0, _estopEngaged, DateTimeOffset.UtcNow);
+    }
+
+    private static byte[] CreateColorFrame(int width, int height, long sequence)
+    {
+        var data = new byte[width * height * 3];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var offset = (y * width + x) * 3;
+                data[offset] = (byte)((x + sequence) % 256);
+                data[offset + 1] = (byte)((y * 2 + sequence) % 256);
+                data[offset + 2] = (byte)((x + y) % 256);
+            }
+        }
+        return data;
+    }
+
+    private static byte[] CreateDepthFrame(int width, int height, long sequence)
+    {
+        var data = new byte[width * height * 2];
+        for (var index = 0; index < width * height; index++)
+        {
+            var depth = (ushort)(250 + (index % width) * 4 + sequence % 80);
+            data[index * 2] = (byte)(depth & 0xff);
+            data[index * 2 + 1] = (byte)(depth >> 8);
+        }
+        return data;
     }
 }

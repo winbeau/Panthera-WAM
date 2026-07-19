@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package panthera.dataset.v1;
+
+option csharp_namespace = "Panthera.Dataset.V1";
+
+enum DatasetJobState {
+  DATASET_JOB_STATE_UNSPECIFIED = 0;
+  DATASET_JOB_STATE_QUEUED = 1;
+  DATASET_JOB_STATE_RUNNING = 2;
+  DATASET_JOB_STATE_DONE = 3;
+  DATASET_JOB_STATE_FAILED = 4;
+  DATASET_JOB_STATE_CANCELLED = 5;
+}
+
+message ExportLeRobotRequest {
+  string trajectory_path = 1; // TeachList 返回的 Linux 路径
+  string output_dir = 2;      // 空或相对路径；必须位于 PANTHERA_DATASET_DIR
+  string repo_id = 3;         // 未设 → local/panthera-wam
+  string task = 4;            // 未设 → Panthera demonstration
+  bool overwrite = 5;
+}
+
+message DatasetJobAccepted { string job_id = 1; }
+message DatasetJobRequest { string job_id = 1; }
+message DatasetCancelResponse { bool cancelled = 1; }
+
+message DatasetJobStatus {
+  string job_id = 1;
+  DatasetJobState state = 2;
+  double progress = 3;
+  string output_dir = 4;
+  int64 frame_count = 5;
+  string error_message = 6;
+}
+
+message DatasetMappingRequest {}
+message DatasetFieldMapping {
+  string source = 1;
+  string target = 2;
+  string dtype = 3;
+  repeated int32 shape = 4;
+}
+message DatasetMappingResponse {
+  string format_version = 1;
+  repeated DatasetFieldMapping fields = 2;
+}
+
+service DatasetService {
+  rpc ExportLeRobot(ExportLeRobotRequest) returns (DatasetJobAccepted);
+  rpc GetJob(DatasetJobRequest) returns (DatasetJobStatus);
+  rpc WatchJob(DatasetJobRequest) returns (stream DatasetJobStatus);
+  rpc CancelJob(DatasetJobRequest) returns (DatasetCancelResponse);
+  rpc GetMapping(DatasetMappingRequest) returns (DatasetMappingResponse);
+}

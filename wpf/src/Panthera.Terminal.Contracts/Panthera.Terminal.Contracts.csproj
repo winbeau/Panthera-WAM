@@ -5,5 +5,6 @@
     <PackageReference Include="Grpc.Tools" Version="2.66.0" PrivateAssets="All" />
     <Protobuf Include="../../../proto/arm.proto" GrpcServices="Client" Link="Protos/arm.proto" />
     <Protobuf Include="../../../proto/camera.proto" GrpcServices="Client" Link="Protos/camera.proto" />
+    <Protobuf Include="../../../proto/dataset.proto" GrpcServices="Client" Link="Protos/dataset.proto" />
   </ItemGroup>
 </Project>

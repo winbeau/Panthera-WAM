@@ -8,6 +8,11 @@ public interface IArmdClient : IAsyncDisposable
 
     Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default);
 
+    IAsyncEnumerable<CameraFrameSnapshot> StreamCameraFramesAsync(
+        CameraStreamKind stream,
+        double maxRateHz = 15,
+        CancellationToken cancellationToken = default);
+
     Task<ControlSnapshot> GetControlStatusAsync(CancellationToken cancellationToken = default);
 
     Task<SoftLimitSnapshot> GetSoftLimitsAsync(CancellationToken cancellationToken = default);

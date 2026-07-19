@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 从 proto/arm.proto 与 proto/camera.proto 生成两端 stub。
+# 从 proto/*.proto 生成两端 stub。
 #
 # CLAUDE.md 开发约定：改动 arm.proto 后必须重新生成 Python 与 C# stub，两端一起提交。
 #
@@ -21,7 +21,8 @@ uv run --with grpcio-tools==1.82.1 python -m grpc_tools.protoc \
     --pyi_out="$OUT" \
     --grpc_python_out="$OUT" \
     "$ROOT/proto/arm.proto" \
-    "$ROOT/proto/camera.proto"
+    "$ROOT/proto/camera.proto" \
+    "$ROOT/proto/dataset.proto"
 
 # grpc_tools 生成的 arm_pb2_grpc.py 里是顶层 `import arm_pb2`，
 # 放进包内会 ImportError；改成包内相对导入。
@@ -39,9 +40,16 @@ cat > "$OUT/__init__.py" <<'PYEOF'
 
 重新生成： ./proto/gen.sh
 """
-from . import arm_pb2, arm_pb2_grpc, camera_pb2, camera_pb2_grpc
+from . import arm_pb2, arm_pb2_grpc, camera_pb2, camera_pb2_grpc, dataset_pb2, dataset_pb2_grpc
 
-__all__ = ["arm_pb2", "arm_pb2_grpc", "camera_pb2", "camera_pb2_grpc"]
+__all__ = [
+    "arm_pb2",
+    "arm_pb2_grpc",
+    "camera_pb2",
+    "camera_pb2_grpc",
+    "dataset_pb2",
+    "dataset_pb2_grpc",
+]
 PYEOF
 
 echo "==> 完成："

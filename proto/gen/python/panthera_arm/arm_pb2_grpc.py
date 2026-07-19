@@ -248,16 +248,6 @@ class ArmServiceStub:
                 request_serializer=arm__pb2.CancelExecutionRequest.SerializeToString,
                 response_deserializer=arm__pb2.CancelExecutionResponse.FromString,
                 _registered_method=True)
-        self.StreamCamera = channel.unary_stream(
-                '/panthera.arm.v1.ArmService/StreamCamera',
-                request_serializer=arm__pb2.CameraStreamRequest.SerializeToString,
-                response_deserializer=arm__pb2.Empty.FromString,
-                _registered_method=True)
-        self.ExportLeRobotDataset = channel.unary_unary(
-                '/panthera.arm.v1.ArmService/ExportLeRobotDataset',
-                request_serializer=arm__pb2.DatasetExportRequest.SerializeToString,
-                response_deserializer=arm__pb2.ExecutionAccepted.FromString,
-                _registered_method=True)
 
 
 class ArmServiceServicer:
@@ -551,19 +541,6 @@ class ArmServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def StreamCamera(self, request, context):
-        """---------- 占位（详见未来 camera.proto / dataset.proto）----------
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ExportLeRobotDataset(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
 
 def add_ArmServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -776,16 +753,6 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     servicer.CancelExecution,
                     request_deserializer=arm__pb2.CancelExecutionRequest.FromString,
                     response_serializer=arm__pb2.CancelExecutionResponse.SerializeToString,
-            ),
-            'StreamCamera': grpc.unary_stream_rpc_method_handler(
-                    servicer.StreamCamera,
-                    request_deserializer=arm__pb2.CameraStreamRequest.FromString,
-                    response_serializer=arm__pb2.Empty.SerializeToString,
-            ),
-            'ExportLeRobotDataset': grpc.unary_unary_rpc_method_handler(
-                    servicer.ExportLeRobotDataset,
-                    request_deserializer=arm__pb2.DatasetExportRequest.FromString,
-                    response_serializer=arm__pb2.ExecutionAccepted.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1926,60 +1893,6 @@ class ArmService:
             '/panthera.arm.v1.ArmService/CancelExecution',
             arm__pb2.CancelExecutionRequest.SerializeToString,
             arm__pb2.CancelExecutionResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def StreamCamera(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/panthera.arm.v1.ArmService/StreamCamera',
-            arm__pb2.CameraStreamRequest.SerializeToString,
-            arm__pb2.Empty.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ExportLeRobotDataset(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/panthera.arm.v1.ArmService/ExportLeRobotDataset',
-            arm__pb2.DatasetExportRequest.SerializeToString,
-            arm__pb2.ExecutionAccepted.FromString,
             options,
             channel_credentials,
             insecure,

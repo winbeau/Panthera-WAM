@@ -478,13 +478,6 @@ message DaemonStatus {
 }
 
 // ============================================================
-// 占位（v2 路线图，正式契约独立成 camera.proto / dataset.proto）
-// ============================================================
-
-message CameraStreamRequest { string encode = 1; }
-message DatasetExportRequest { string traj_path = 1; string out_dir = 2; }
-
-// ============================================================
 // Service
 // ============================================================
 
@@ -551,7 +544,4 @@ service ArmService {
   rpc StreamExecution(StreamExecutionRequest) returns (stream ExecutionStatus); // 只读
   rpc CancelExecution(CancelExecutionRequest) returns (CancelExecutionResponse);// 需 lease
 
-  // ---------- 占位（详见未来 camera.proto / dataset.proto）----------
-  rpc StreamCamera(CameraStreamRequest) returns (stream Empty);
-  rpc ExportLeRobotDataset(DatasetExportRequest) returns (ExecutionAccepted);
 }

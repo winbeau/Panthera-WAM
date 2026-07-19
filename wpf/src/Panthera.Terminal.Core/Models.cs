@@ -55,6 +55,29 @@ public sealed record CameraSnapshot(
     long LastFrameAgeMs,
     double ActualFps);
 
+public enum CameraStreamKind
+{
+    Depth,
+    Color,
+}
+
+public enum CameraPixelKind
+{
+    Z16,
+    Rgb8,
+}
+
+public sealed record CameraFrameSnapshot(
+    CameraStreamKind Stream,
+    CameraPixelKind PixelFormat,
+    long Sequence,
+    long CapturedAtNs,
+    int Width,
+    int Height,
+    int Stride,
+    double DepthScale,
+    byte[] Data);
+
 public sealed record ControlSnapshot(
     bool Held,
     string HolderClientId,
@@ -104,6 +127,7 @@ public sealed record CartesianTarget(
 
 public sealed record TerminalSettings(
     string Endpoint = "http://127.0.0.1:50050",
+    string CameraEndpoint = "http://127.0.0.1:50049",
     string Theme = "System",
     string WslDistribution = "Ubuntu-22.04",
     string WslUser = "",

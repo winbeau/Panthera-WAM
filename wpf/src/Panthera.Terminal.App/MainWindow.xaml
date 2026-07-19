@@ -41,7 +41,7 @@
             <RowDefinition Height="54" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="116" />
+            <RowDefinition Height="220" />
         </Grid.RowDefinitions>
 
         <ui:TitleBar Grid.Row="0" Title="Panthera-HT 控制终端">
@@ -331,7 +331,7 @@
                     </Grid>
                 </Border>
 
-                <!-- 夹爪 + armd 统一托管的 D405 状态 -->
+                <!-- 夹爪 + Linux camerad 托管的 D405 状态 -->
                 <Grid Grid.Column="2" Grid.Row="2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*" />
@@ -501,6 +501,53 @@
                                 </GridView>
                             </ListView.View>
                         </ListView>
+                    </Grid>
+                </TabItem>
+                <TabItem Header="D405 视频">
+                    <Grid Margin="10,6,10,9">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="24" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="双端口 · camerad:50052 · latest frame"
+                                       Style="{StaticResource MetaTextStyle}" />
+                            <TextBlock Text="{Binding CameraSummary}" FontSize="10.5"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                        </DockPanel>
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" CornerRadius="5" ClipToBounds="True"
+                                    Background="#FF101418" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <Grid>
+                                    <Image x:Name="ColorCameraImage" Stretch="Uniform"
+                                           AutomationProperties.AutomationId="ColorCameraImage" />
+                                    <Border VerticalAlignment="Top" HorizontalAlignment="Left" Margin="7"
+                                            Padding="6,2" CornerRadius="3" Background="#AA000000">
+                                        <TextBlock Text="COLOR · RGB8" Foreground="White" FontSize="10"
+                                                   FontFamily="Cascadia Mono, Consolas" />
+                                    </Border>
+                                </Grid>
+                            </Border>
+                            <Border Grid.Column="2" CornerRadius="5" ClipToBounds="True"
+                                    Background="#FF101418" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <Grid>
+                                    <Image x:Name="DepthCameraImage" Stretch="Uniform"
+                                           AutomationProperties.AutomationId="DepthCameraImage" />
+                                    <Border VerticalAlignment="Top" HorizontalAlignment="Left" Margin="7"
+                                            Padding="6,2" CornerRadius="3" Background="#AA000000">
+                                        <TextBlock Text="DEPTH · Z16" Foreground="White" FontSize="10"
+                                                   FontFamily="Cascadia Mono, Consolas" />
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </Grid>
                     </Grid>
                 </TabItem>
             </TabControl>

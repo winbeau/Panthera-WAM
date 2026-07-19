@@ -10,7 +10,7 @@ from pathlib import Path
 
 import grpc
 import typer
-from panthera_arm import arm_pb2, camera_pb2
+from panthera_arm import arm_pb2, camera_pb2, dataset_pb2
 from rich.console import Console
 from rich.table import Table
 
@@ -18,6 +18,7 @@ from .client import (
     SavedLease,
     clear_lease,
     create_camera_stub,
+    create_dataset_stub,
     create_stub,
     default_client_id,
     endpoint,
@@ -45,6 +46,7 @@ dynamics_app = typer.Typer(no_args_is_help=True)
 trajectory_app = typer.Typer(no_args_is_help=True)
 teach_app = typer.Typer(no_args_is_help=True)
 teach_record_app = typer.Typer(no_args_is_help=True)
+dataset_app = typer.Typer(no_args_is_help=True)
 app.add_typer(control_app, name="control")
 app.add_typer(estop_app, name="estop")
 app.add_typer(safety_app, name="safety")
@@ -61,6 +63,7 @@ app.add_typer(dynamics_app, name="dynamics")
 app.add_typer(trajectory_app, name="trajectory")
 app.add_typer(teach_app, name="teach")
 teach_app.add_typer(teach_record_app, name="record")
+app.add_typer(dataset_app, name="dataset")
 safety_app.add_typer(limits_app, name="limits")
 console = Console()
 
@@ -1356,6 +1359,123 @@ def teach_list(as_json: bool = typer.Option(False, "--json")) -> None:
             str(item["frame_count"]),
         )
     console.print(table)
+
+
+@dataset_app.command("export-lerobot")
+def dataset_export_lerobot(
+    trajectory_path: str = typer.Argument(...),
+    output_dir: str = typer.Option("", "--out-dir"),
+    repo_id: str = typer.Option("local/panthera-wam", "--repo-id"),
+    task: str = typer.Option("Panthera demonstration", "--task"),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+) -> None:
+    channel, stub = create_dataset_stub()
+    try:
+        accepted = stub.ExportLeRobot(
+            dataset_pb2.ExportLeRobotRequest(
+                trajectory_path=trajectory_path,
+                output_dir=output_dir,
+                repo_id=repo_id,
+                task=task,
+                overwrite=overwrite,
+            )
+        )
+        console.print(f"job_id={accepted.job_id}")
+        try:
+            final = _watch_dataset_job(stub, accepted.job_id)
+        except KeyboardInterrupt:
+            stub.CancelJob(dataset_pb2.DatasetJobRequest(job_id=accepted.job_id))
+            final = _watch_dataset_job(stub, accepted.job_id)
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if final.state != dataset_pb2.DATASET_JOB_STATE_DONE:
+        console.print(
+            f"[yellow]dataset 终态={dataset_pb2.DatasetJobState.Name(final.state)}[/yellow] "
+            f"{final.error_message}"
+        )
+        raise typer.Exit(2)
+    console.print(f"[green]LeRobot v3 导出完成[/green]: {final.output_dir}")
+
+
+@dataset_app.command("status")
+def dataset_status(job_id: str = typer.Argument(...), watch: bool = typer.Option(False, "--watch")) -> None:
+    channel, stub = create_dataset_stub()
+    try:
+        status = (
+            _watch_dataset_job(stub, job_id)
+            if watch
+            else stub.GetJob(dataset_pb2.DatasetJobRequest(job_id=job_id))
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(
+        {
+            "job_id": status.job_id,
+            "state": dataset_pb2.DatasetJobState.Name(status.state),
+            "progress": status.progress,
+            "output_dir": status.output_dir,
+            "frame_count": status.frame_count,
+            "error_message": status.error_message,
+        }
+    )
+
+
+@dataset_app.command("cancel")
+def dataset_cancel(job_id: str = typer.Argument(...)) -> None:
+    channel, stub = create_dataset_stub()
+    try:
+        response = stub.CancelJob(dataset_pb2.DatasetJobRequest(job_id=job_id))
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(f"cancelled={response.cancelled}")
+
+
+@dataset_app.command("mapping")
+def dataset_mapping(as_json: bool = typer.Option(False, "--json")) -> None:
+    channel, stub = create_dataset_stub()
+    try:
+        response = stub.GetMapping(dataset_pb2.DatasetMappingRequest())
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    data = {
+        "format_version": response.format_version,
+        "fields": [
+            {
+                "source": field.source,
+                "target": field.target,
+                "dtype": field.dtype,
+                "shape": list(field.shape),
+            }
+            for field in response.fields
+        ],
+    }
+    if as_json:
+        console.print_json(json.dumps(data, ensure_ascii=False))
+    else:
+        console.print(data)
+
+
+def _watch_dataset_job(stub, job_id: str):
+    final = None
+    for status in stub.WatchJob(dataset_pb2.DatasetJobRequest(job_id=job_id)):
+        final = status
+        console.print(
+            f"{dataset_pb2.DatasetJobState.Name(status.state)} progress={status.progress:.3f} "
+            f"frames={status.frame_count}",
+            end="\r" if status.state in {
+                dataset_pb2.DATASET_JOB_STATE_QUEUED,
+                dataset_pb2.DATASET_JOB_STATE_RUNNING,
+            } else "\n",
+        )
+    return final
 
 
 @execution_app.command("watch")

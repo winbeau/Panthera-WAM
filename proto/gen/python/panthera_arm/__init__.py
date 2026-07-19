@@ -2,6 +2,13 @@
 
 重新生成： ./proto/gen.sh
 """
-from . import arm_pb2, arm_pb2_grpc, camera_pb2, camera_pb2_grpc
+from . import arm_pb2, arm_pb2_grpc, camera_pb2, camera_pb2_grpc, dataset_pb2, dataset_pb2_grpc
 
-__all__ = ["arm_pb2", "arm_pb2_grpc", "camera_pb2", "camera_pb2_grpc"]
+__all__ = [
+    "arm_pb2",
+    "arm_pb2_grpc",
+    "camera_pb2",
+    "camera_pb2_grpc",
+    "dataset_pb2",
+    "dataset_pb2_grpc",
+]

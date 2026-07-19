@@ -14,6 +14,7 @@ public sealed class ArmdClient : IArmdClient
     private readonly GrpcChannel _heartbeatChannel;
     private readonly GrpcChannel _jogChannel;
     private readonly GrpcChannel _executionChannel;
+    private readonly GrpcChannel _cameraChannel;
     private readonly ArmService.ArmServiceClient _client;
     private readonly ArmService.ArmServiceClient _stateClient;
     private readonly ArmService.ArmServiceClient _heartbeatClient;
@@ -25,19 +26,20 @@ public sealed class ArmdClient : IArmdClient
     private Task? _heartbeatTask;
     private string _leaseToken = string.Empty;
 
-    public ArmdClient(string endpoint)
+    public ArmdClient(string endpoint, string? cameraEndpoint = null)
     {
         _channel = CreateChannel(endpoint);
         _stateChannel = CreateChannel(endpoint);
         _heartbeatChannel = CreateChannel(endpoint);
         _jogChannel = CreateChannel(endpoint);
         _executionChannel = CreateChannel(endpoint);
+        _cameraChannel = CreateChannel(cameraEndpoint ?? endpoint);
         _client = new ArmService.ArmServiceClient(_channel);
         _stateClient = new ArmService.ArmServiceClient(_stateChannel);
         _heartbeatClient = new ArmService.ArmServiceClient(_heartbeatChannel);
         _jogClient = new ArmService.ArmServiceClient(_jogChannel);
         _executionClient = new ArmService.ArmServiceClient(_executionChannel);
-        _cameraClient = new CameraService.CameraServiceClient(_channel);
+        _cameraClient = new CameraService.CameraServiceClient(_cameraChannel);
     }
 
     public TerminalConnectionState ConnectionState { get; private set; } = TerminalConnectionState.Disconnected;
@@ -77,6 +79,43 @@ public sealed class ArmdClient : IArmdClient
             response.Error,
             response.LastFrameAgeMs,
             response.ActualFps);
+    }
+
+    public async IAsyncEnumerable<CameraFrameSnapshot> StreamCameraFramesAsync(
+        CameraStreamKind stream,
+        double maxRateHz = 15,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (maxRateHz <= 0 || maxRateHz > 90)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxRateHz));
+        }
+        var request = new StreamFramesRequest
+        {
+            Stream = stream == CameraStreamKind.Depth
+                ? CameraStreamType.Depth
+                : CameraStreamType.Color,
+            MaxRateHz = maxRateHz,
+        };
+        using var call = _cameraClient.StreamFrames(request, cancellationToken: cancellationToken);
+        while (await call.ResponseStream.MoveNext(cancellationToken))
+        {
+            var frame = call.ResponseStream.Current;
+            yield return new CameraFrameSnapshot(
+                frame.Stream == CameraStreamType.Depth
+                    ? CameraStreamKind.Depth
+                    : CameraStreamKind.Color,
+                frame.PixelFormat == CameraPixelFormat.Z16
+                    ? CameraPixelKind.Z16
+                    : CameraPixelKind.Rgb8,
+                frame.Sequence,
+                frame.CapturedAtNs,
+                frame.Width,
+                frame.Height,
+                frame.Stride,
+                frame.DepthScale,
+                frame.Data.ToByteArray());
+        }
     }
 
     public async Task<ControlSnapshot> GetControlStatusAsync(CancellationToken cancellationToken = default)
@@ -366,6 +405,7 @@ public sealed class ArmdClient : IArmdClient
         _heartbeatChannel.Dispose();
         _jogChannel.Dispose();
         _executionChannel.Dispose();
+        _cameraChannel.Dispose();
         _lifetime.Dispose();
     }
 

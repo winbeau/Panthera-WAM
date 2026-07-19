@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import grpc
-from panthera_arm import arm_pb2, arm_pb2_grpc, camera_pb2_grpc
+from panthera_arm import arm_pb2, arm_pb2_grpc, camera_pb2_grpc, dataset_pb2_grpc
 
 LEASE_METADATA_KEY = "x-panthera-lease"
 LOCAL_CHANNEL_OPTIONS = (("grpc.enable_http_proxy", 0),)
@@ -81,6 +81,11 @@ def create_stub(target: str | None = None):
 def create_camera_stub(target: str | None = None):
     channel = grpc.insecure_channel(target or camera_endpoint(), options=LOCAL_CHANNEL_OPTIONS)
     return channel, camera_pb2_grpc.CameraServiceStub(channel)
+
+
+def create_dataset_stub(target: str | None = None):
+    channel = grpc.insecure_channel(target or endpoint(), options=LOCAL_CHANNEL_OPTIONS)
+    return channel, dataset_pb2_grpc.DatasetServiceStub(channel)
 
 
 @contextmanager

@@ -753,17 +753,3 @@ class DaemonStatus(_message.Message):
     estop_latch_hazard_present: bool
     hardware_connected: bool
     def __init__(self, version: _Optional[str] = ..., sim: _Optional[bool] = ..., control_hz: _Optional[float] = ..., uptime_ms: _Optional[int] = ..., sdk_version: _Optional[str] = ..., estop_latch_hazard_present: _Optional[bool] = ..., hardware_connected: _Optional[bool] = ...) -> None: ...
-
-class CameraStreamRequest(_message.Message):
-    __slots__ = ("encode",)
-    ENCODE_FIELD_NUMBER: _ClassVar[int]
-    encode: str
-    def __init__(self, encode: _Optional[str] = ...) -> None: ...
-
-class DatasetExportRequest(_message.Message):
-    __slots__ = ("traj_path", "out_dir")
-    TRAJ_PATH_FIELD_NUMBER: _ClassVar[int]
-    OUT_DIR_FIELD_NUMBER: _ClassVar[int]
-    traj_path: str
-    out_dir: str
-    def __init__(self, traj_path: _Optional[str] = ..., out_dir: _Optional[str] = ...) -> None: ...

@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 
 import grpc
-from panthera_arm import arm_pb2_grpc, camera_pb2_grpc
+from panthera_arm import arm_pb2_grpc, camera_pb2_grpc, dataset_pb2_grpc
 
 from .camera.backend import CameraWorker
 from .camera.service import CameraProxyService, CameraService
 from .control import LeaseManager
+from .dataset_service import DatasetJobManager, DatasetService
 from .execution import ExecutionRegistry
 from .grpc_service import ArmService, SafetyInterceptor
 from .hardware_loop import CancelReason, HardwareLoop
@@ -52,6 +53,11 @@ class ArmdServer:
             self.arm_service,
             self._server,
         )
+        self.dataset_jobs = DatasetJobManager()
+        dataset_pb2_grpc.add_DatasetServiceServicer_to_server(
+            DatasetService(self.dataset_jobs),
+            self._server,
+        )
         camera_pb2_grpc.add_CameraServiceServicer_to_server(
             self.camera_proxy or CameraService(camera_worker),
             self._server,
@@ -84,6 +90,7 @@ class ArmdServer:
             self._watchdog_task = None
         await self._server.stop(grace)
         await self.arm_service.close()
+        await self.dataset_jobs.close()
         if self.camera_worker is not None:
             self.camera_worker.stop()
         if self.camera_proxy is not None:
