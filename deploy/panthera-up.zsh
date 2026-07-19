@@ -90,11 +90,19 @@ panthera-up() {
     print "      librealsense 2.58.1 RSUSB 已就绪。"
 
     print "[5/6] 清理旧 armd/仿真进程..."
-    command pkill -TERM -f '[.]venv/bin/[a]rmd' 2>/dev/null || true
-    for attempt in {1..20}; do
+    command pkill -INT -f '[.]venv/bin/[a]rmd' 2>/dev/null || true
+    for attempt in {1..60}; do
         command pgrep -f '[.]venv/bin/[a]rmd' >/dev/null 2>&1 || break
         sleep 0.25
     done
+    if command pgrep -f '[.]venv/bin/[a]rmd' >/dev/null 2>&1; then
+        print "      旧 armd 未响应 SIGINT，发送 SIGTERM..."
+        command pkill -TERM -f '[.]venv/bin/[a]rmd' 2>/dev/null || true
+        for attempt in {1..20}; do
+            command pgrep -f '[.]venv/bin/[a]rmd' >/dev/null 2>&1 || break
+            sleep 0.25
+        done
+    fi
     if command ss -ltn | command grep -qE ':50051[[:space:]]'; then
         print -u2 "端口 50051 仍被其他进程占用，请运行：ss -ltnp | grep 50051"
         return 4
