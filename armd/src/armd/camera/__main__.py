@@ -26,6 +26,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--bind",
         default=os.environ.get("PANTHERA_CAMERA_BIND", "127.0.0.1:50052"),
     )
+    parser.add_argument(
+        "--local-bind",
+        default=os.environ.get("PANTHERA_CAMERA_LOCAL_BIND", ""),
+        help="附加的 WSL 本地监听地址（部署时使用 IPv6 回环）",
+    )
     parser.add_argument("--serial", default=os.environ.get("PANTHERA_CAMERA_SERIAL", ""))
     parser.add_argument(
         "--width",
@@ -70,6 +75,9 @@ async def run(args: argparse.Namespace) -> None:
     port = server.add_insecure_port(bind)
     if port == 0:
         raise RuntimeError(f"无法监听 gRPC 地址: {bind}")
+    for additional_bind in filter(None, (args.local_bind,)):
+        if server.add_insecure_port(additional_bind) == 0:
+            raise RuntimeError(f"无法监听附加 gRPC 地址: {additional_bind}")
 
     worker.start()
     await server.start()
@@ -101,7 +109,8 @@ async def run(args: argparse.Namespace) -> None:
                     )
                 )
             return
-        print(f"camerad 已启动：grpc://{args.bind}，D405={args.mode}")
+        binds = ", ".join(filter(None, (args.bind, args.local_bind)))
+        print(f"camerad 已启动：grpc://{binds}，D405={args.mode}")
         await server.wait_for_termination()
     finally:
         await server.stop(0)

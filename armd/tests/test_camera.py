@@ -106,6 +106,8 @@ def test_camerad_sim_check() -> None:
             "8",
             "--height",
             "6",
+            "--local-bind",
+            "[::1]:0",
             "--check",
         ],
         check=True,

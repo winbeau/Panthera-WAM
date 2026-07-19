@@ -4,20 +4,20 @@
 
 ```text
 Windows
-  └─ WPF 可视化终端 ── WSL TCP bridge ──┐
-                                               │ gRPC :50051
-WSL2 / Ubuntu                                  ▼
-  panthera-cli ───────────────────────────────── armd
-                                                 ├─ ArmService → HardwareLoop → Panthera-HT SDK → 机械臂
-                                                 └─ CameraService proxy ── [::1]:50052 ── camerad
-                                                                                              └─ librealsense RSUSB → D405
+  └─ WPF 可视化终端 ── WSL TCP bridge ──┬─ gRPC :50051
+                                         └─ gRPC :50052
+WSL2 / Ubuntu
+  panthera-cli ─────────────┬─────────────────── armd :50051
+                            │                     └─ ArmService → HardwareLoop → Panthera-HT SDK → 机械臂
+                            └─────────────────── camerad :50052
+                                                  └─ CameraService → librealsense RSUSB → D405
 ```
 
 机械臂与 D405 都由同一套 WSL2 后端控制，但使用两个隔离进程：`armd` 独占
-机械臂，`camerad` 独占 D405。`armd` 在公开的 `:50051` 端点代理 CameraService，
-内部 `[::1]:50052` 只绑定 IPv6 localhost，避免 librealsense/Python GIL 负载影响 200Hz
-HardwareLoop。WPF 和普通 CLI 都是纯 gRPC 客户端，只访问 `armd`；WPF 只做
-环境引导、状态/视频可视化和控制意图下发，不直接打开任何硬件 SDK。
+机械臂并监听 `:50051`，`camerad` 独占 D405 并监听 `:50052`。两者由同一个
+`panthera-up` 或 systemd user services 统一启动、停止和检查，但不强行共享进程
+或端口。WPF 和 CLI 都是纯 gRPC 客户端；WPF 只做环境引导、状态/视频可视化
+和控制意图下发，不直接打开任何硬件 SDK。
 
 ## 一次性 WSL 安装
 
@@ -93,10 +93,20 @@ uv run panthera camera stream --stream depth --frames 300 --rate-hz 30
 uv run panthera camera stream --stream color --frames 300 --rate-hz 30
 ```
 
-所有正常客户端命令都使用 `PANTHERA_ENDPOINT` 的同一个公开 `armd` 端点。
-`PANTHERA_CAMERA_ENDPOINT=[::1]:50052` 仅用于 WSL 内启动脚本和故障诊断，
-不提供给 WPF。深度帧为 Z16 PGM，像素值乘 JSON 中的 `depth_scale` 得到米；
-彩色帧为 RGB8 PPM。
+客户端分别配置两个端点：
+
+```bash
+export PANTHERA_ENDPOINT='[::1]:50051'
+export PANTHERA_CAMERA_ENDPOINT='[::1]:50052'
+```
+
+Windows WPF 使用对应的 `localhost:50051` 和 `localhost:50052`；未来树莓派 5
+部署时改为 Linux 主机的内网地址。深度帧为 Z16 PGM，像素值乘 JSON 中的
+`depth_scale` 得到米；彩色帧为 RGB8 PPM。
+
+树莓派 5 落地时，将两个 service 的 `--bind` 从 `127.0.0.1` 改为树莓派内网
+地址或 `0.0.0.0`，客户端分别连接 `<pi-ip>:50051` 与 `<pi-ip>:50052`。机械臂
+控制端口在加入内网监听前必须配防火墙/访问控制，不能直接暴露到公网。
 
 ## 仿真开发
 
@@ -107,7 +117,7 @@ uv run panthera camera status --json
 ```
 
 仿真快捷模式仍可由单个 `armd` 托管机械臂和相机模拟器，不访问 USB；真机部署
-固定使用 `camerad` 进程隔离。
+固定使用 `armd:50051` 与 `camerad:50052` 双服务。
 
 ## 2026-07-19 真机验收
 
@@ -117,7 +127,7 @@ uv run panthera camera status --json
   `build/realsense-rsusb/Release/pyrealsense2...so`。
 - D405 与机械臂 USB 同时 attach 到 Ubuntu-22.04；`640x480@30` depth Z16 +
   color RGB8 双流在普通 detach/attach 冷重连后连续 300 帧通过，0 次超时。
-- 验证表明源码 RSUSB 后端不需要在每次 `armd` 启动时主动硬复位 D405。
+- 验证表明源码 RSUSB 后端不需要在每次 `camerad` 启动时主动硬复位 D405。
 
 ## 故障定位
 

@@ -1,7 +1,8 @@
 # WSL 部署
 
-`armd` 与 `camerad` 以 systemd user service 运行。两者都在同一 WSL
-后端内，WPF 只连接 `armd` 的公开端点。
+`armd` 与 `camerad` 以 systemd user service 运行。两者都在同一 Linux
+后端内，分别提供 `:50051` 机械臂服务和 `:50052` D405 服务。WPF 只作为
+这两个 gRPC 服务的可视化终端。
 
 ## 首次安装
 
@@ -47,14 +48,14 @@ systemctl --user stop armd camerad
 
 之后执行 `panthera-up`，会依次检查机械臂 USB、D405 USB、Python 3.11、
 电机 SDK 与 vendored librealsense，然后在同一 WSL 内启动隔离的 `armd` 和
-`camerad`。WPF 仍只连接 `armd` 公开端点。
+`camerad`。WPF 分别连接机械臂和相机端点，不直接访问硬件 SDK。
 
 Windows 侧先用 WPF 一键引导，或以管理员 PowerShell 将机械臂与 D405
 都执行 `usbipd attach --wsl --busid <BUSID>`。程序按 VID/PID 与序列号发现
 设备，不应把当前 busid 写进长期配置。
 
-D405 使用 vendored librealsense RSUSB/libusb 后端，由 WSL `camerad` 独占，
-`armd` 在公开端点代理 CameraService；
+D405 使用 vendored librealsense RSUSB/libusb 后端，由 WSL `camerad` 独占；
+机械臂与相机服务共享 Linux 生命周期，但不共享 gRPC 端口。
 安装、采集和故障定位流程见 [`docs/D405_WORKFLOW.md`](../docs/D405_WORKFLOW.md)。
 
 ## 安全约束

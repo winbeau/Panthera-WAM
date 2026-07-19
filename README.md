@@ -21,16 +21,16 @@ Panthera-HT 六轴机械臂的控制底座与 World Action Model 数据平台。
 ## 架构
 
 ```text
-Windows: WPF 可视化终端 ── WSL bridge ──┐
-WSL:     panthera-cli ─────────────────────┤→ armd :50051 ─┬→ ArmService → Panthera-HT SDK → 机械臂
-未来:    WAM 训练/推理与数据工具 ───────┨                └→ CameraService proxy → camerad :50052 → D405
+Windows: WPF 可视化终端 ── WSL bridge ──┬→ armd :50051 → ArmService → Panthera-HT SDK → 机械臂
+WSL:     panthera-cli ─────────────────────┤
+未来:    树莓派 5 / WAM 数据工具 ───────┴→ camerad :50052 → CameraService → librealsense → D405
 ```
 
 - **armd**：200Hz 单硬件线程守护服务，提供 lease、watchdog、软限位和 EStop 安全层。
 - **panthera-cli**：27 条 v1 命令，纯 gRPC 客户端，不直接访问硬件。
 - **WPF 终端**：.NET 9 Fluent 驾驶舱，只通过 gRPC 做状态/视频可视化与控制意图下发。
-- **D405 v2 基础链路**：D405 与机械臂同时 attach 到 WSL；`camerad` 隔离
-  librealsense/GIL 负载，`armd` 在公开端口代理 CameraService。
+- **D405 v2 基础链路**：D405 与机械臂同时 attach 到同一 Linux；`camerad:50052`
+  隔离 librealsense 采集，和 `armd:50051` 由同一启动命令统一管理。
 - **v2 后续**：阻抗与动力学、多点轨迹、拖动示教、WPF 视频、LeRobot/WAM 数据能力。
 
 ## 仿真开发

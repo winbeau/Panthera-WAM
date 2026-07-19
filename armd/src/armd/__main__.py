@@ -58,8 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--camera-mode",
         choices=("off", "auto", "proxy", "sim"),
-        default=os.environ.get("PANTHERA_CAMERA_MODE", "proxy"),
-        help="D405 模式：off/auto/proxy/sim（真机默认代理 WSL camerad）",
+        default=os.environ.get("PANTHERA_CAMERA_MODE") or None,
+        help="D405 兼容模式：off/auto/proxy/sim（真机默认 off，由独立 camerad 提供）",
     )
     parser.add_argument(
         "--camera-endpoint",
@@ -108,7 +108,9 @@ async def run(args: argparse.Namespace) -> None:
     loop = HardwareLoop(backend_factory, control_hz=args.control_hz)
     if args.camera_width <= 0 or args.camera_height <= 0 or args.camera_fps <= 0:
         raise SystemExit("camera width/height/fps 必须为正整数")
-    camera_mode = "sim" if args.sim and args.camera_mode in ("auto", "proxy") else args.camera_mode
+    camera_mode = args.camera_mode or ("sim" if args.sim else "off")
+    if args.sim and camera_mode in ("auto", "proxy"):
+        camera_mode = "sim"
     camera_worker = None
     if camera_mode == "sim":
         camera_worker = CameraWorker(

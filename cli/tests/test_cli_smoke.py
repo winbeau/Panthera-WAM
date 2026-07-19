@@ -12,6 +12,7 @@ from typer.main import get_command
 from typer.testing import CliRunner
 
 from panthera_cli.__main__ import app
+from panthera_cli.client import camera_endpoint
 
 
 EXPECTED_COMMANDS = {
@@ -71,11 +72,20 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
+def test_camera_endpoint_uses_dedicated_port(monkeypatch) -> None:
+    monkeypatch.delenv("PANTHERA_CAMERA_ENDPOINT", raising=False)
+    monkeypatch.setenv("PANTHERA_ENDPOINT", "192.168.1.20:50051")
+    assert camera_endpoint() == "192.168.1.20:50052"
+    monkeypatch.setenv("PANTHERA_ENDPOINT", "[::1]:50051")
+    assert camera_endpoint() == "[::1]:50052"
+
+
 def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
     port = free_port()
     endpoint = f"127.0.0.1:{port}"
     env = os.environ.copy()
     env["PANTHERA_ENDPOINT"] = endpoint
+    env["PANTHERA_CAMERA_ENDPOINT"] = endpoint
     env["PANTHERA_STATE_DIR"] = str(tmp_path)
     process = subprocess.Popen(
         [
@@ -104,6 +114,7 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
     try:
         grpc.channel_ready_future(channel).result(timeout=5)
         monkeypatch.setenv("PANTHERA_ENDPOINT", endpoint)
+        monkeypatch.setenv("PANTHERA_CAMERA_ENDPOINT", endpoint)
         monkeypatch.setenv("PANTHERA_STATE_DIR", str(tmp_path))
         runner = CliRunner()
 

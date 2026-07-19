@@ -1,5 +1,6 @@
 # Panthera-WAM 真机后端恢复命令。
-# 机械臂与 D405 在同一 WSL 内分进程隔离；armd 向 WPF 提供统一 gRPC 端点。
+# 机械臂与 D405 在同一 WSL 内分进程隔离，由一个命令统一启动。
+# armd:50051 与 camerad:50052 分别提供机械臂和相机 gRPC 服务。
 
 panthera-up() {
     emulate -L zsh
@@ -15,6 +16,7 @@ panthera-up() {
     local camera_log="$state_dir/camerad.log"
     local public_bind="127.0.0.1:50051"
     local endpoint="[::1]:50051"
+    local camera_public_bind="127.0.0.1:50052"
     local camera_endpoint="[::1]:50052"
     local python="$repo/.venv/bin/python"
     local armd="$repo/.venv/bin/armd"
@@ -95,8 +97,7 @@ panthera-up() {
     fi
     print "      librealsense 2.58.1 RSUSB 已就绪。"
 
-    # 后端只访问本机 gRPC。避免继承 WSL shell 的代理变量，也避免 armd 到
-    # camerad 的 localhost 通道被代理软件干扰；函数返回后恢复调用者环境。
+    # 两个后端只访问本机 gRPC；函数返回后恢复调用者环境。
     local http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
     local grpc_proxy GRPC_PROXY
     unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy grpc_proxy GRPC_PROXY
@@ -143,7 +144,8 @@ panthera-up() {
         PANTHERA_CAMERA_MODE=auto \
         "$camerad" \
         --mode auto \
-        --bind "$camera_endpoint" \
+        --bind "$camera_public_bind" \
+        --local-bind "$camera_endpoint" \
         >>"$camera_log" 2>&1 </dev/null &!
     camera_pid=$!
 
@@ -165,23 +167,21 @@ panthera-up() {
         return 5
     fi
 
-    print "[7/7] 启动机械臂 armd 并代理 CameraService（150ms 固件看门狗）..."
+    print "[7/7] 启动机械臂 armd（150ms 固件看门狗）..."
     : >| "$log"
     nohup env \
         PYTHONUNBUFFERED=1 \
         PANTHERA_SDK_ROOT="$sdk" \
         PANTHERA_CONFIG="$config" \
         PANTHERA_MOTOR_TIMEOUT_MS=150 \
-        PANTHERA_CAMERA_MODE=proxy \
-        PANTHERA_CAMERA_ENDPOINT="$camera_endpoint" \
+        PANTHERA_CAMERA_MODE=off \
         "$armd" \
         --bind "$public_bind" \
         --local-bind "$endpoint" \
         --sdk-root "$sdk" \
         --config "$config" \
         --motor-timeout-ms 150 \
-        --camera-mode proxy \
-        --camera-endpoint "$camera_endpoint" \
+        --camera-mode off \
         >>"$log" 2>&1 </dev/null &!
     pid=$!
 
@@ -191,20 +191,22 @@ panthera-up() {
         fi
         if command ss -ltn | command grep -qE ':50051[[:space:]]'; then
             if daemon_status=$(NO_COLOR=1 PANTHERA_ENDPOINT="$endpoint" "$cli" daemon status --json 2>/dev/null) \
-                && camera_status=$(NO_COLOR=1 PANTHERA_ENDPOINT="$endpoint" "$cli" camera status --json 2>/dev/null); then
+                && camera_status=$(NO_COLOR=1 PANTHERA_CAMERA_ENDPOINT="$camera_endpoint" "$cli" camera status --json 2>/dev/null); then
                 print "Panthera 统一后端已恢复：armd PID=$pid，camerad PID=$camera_pid"
-                print "  公开 gRPC：localhost:50051；WSL 探活：$endpoint"
-                print "  CameraService：armd → $camera_endpoint"
+                print "  机械臂：localhost:50051；WSL 探活：$endpoint"
+                print "  D405：  localhost:50052；WSL 探活：$camera_endpoint"
                 print "  机械臂：$daemon_status"
                 print "  D405：    $camera_status"
                 print "  日志：    $log / $camera_log"
+                export PANTHERA_ENDPOINT="$endpoint"
+                export PANTHERA_CAMERA_ENDPOINT="$camera_endpoint"
                 return 0
             fi
         fi
         sleep 0.5
     done
 
-    print -u2 "armd CameraService 代理启动失败，最近日志："
+    print -u2 "armd 启动失败，最近日志："
     command tail -60 "$log" >&2
     command kill -INT "$pid" 2>/dev/null || true
     command kill -INT "$camera_pid" 2>/dev/null || true

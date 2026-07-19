@@ -29,7 +29,14 @@ def endpoint() -> str:
 
 
 def camera_endpoint() -> str:
-    return os.environ.get("PANTHERA_CAMERA_ENDPOINT", endpoint())
+    configured = os.environ.get("PANTHERA_CAMERA_ENDPOINT")
+    if configured:
+        return configured
+    arm_target = endpoint()
+    host, separator, port = arm_target.rpartition(":")
+    if separator and port.isdecimal():
+        return f"{host}:50052"
+    return "127.0.0.1:50052"
 
 
 def default_client_id() -> str:
