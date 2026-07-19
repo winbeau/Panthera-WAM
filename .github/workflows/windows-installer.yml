@@ -139,7 +139,7 @@ jobs:
           $env:PANTHERA_SCREENSHOT_THEME = "HighContrast"
           $env:PANTHERA_SCREENSHOT_PATH = $screenshot
           $application = Start-Process $app -PassThru
-          if (-not $application.WaitForExit(30_000)) {
+          if (-not $application.WaitForExit(30000)) {
             $application.Kill($true)
             throw "Installed application did not finish its screenshot smoke test"
           }
