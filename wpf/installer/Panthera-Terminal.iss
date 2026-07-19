@@ -27,6 +27,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 LicenseFile=..\..\LICENSE
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile={#SourcePath}\..\src\Panthera.Terminal.App\Assets\Brand\Panthera.Terminal.ico
 OutputDir=output
 OutputBaseFilename=Panthera-Terminal-v{#MyAppVersion}-win-x64-setup
 Compression=lzma2/ultra64

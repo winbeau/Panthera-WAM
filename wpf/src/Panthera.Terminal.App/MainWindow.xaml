@@ -77,8 +77,8 @@
             <RowDefinition Height="27" />
         </Grid.RowDefinitions>
 
-        <ui:TitleBar Grid.Row="0" Title="Panthera WAM v2">
-            <ui:TitleBar.Icon><ui:SymbolIcon Symbol="DesktopPulse24" /></ui:TitleBar.Icon>
+        <ui:TitleBar Grid.Row="0" Title="Panthera WAM v2"
+                     Icon="{ui:ImageIcon 'pack://application:,,,/Assets/Brand/panthera-terminal-titlebar.png'}">
             <ui:TitleBar.TrailingContent>
                 <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
                     <TextBlock Text="LINUX UNIFIED" Margin="0,0,10,0" FontFamily="Cascadia Mono, Consolas"

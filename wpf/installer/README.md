@@ -4,6 +4,8 @@
 per-user Inno Setup installer. The installer writes to
 `%LOCALAPPDATA%\Programs\Panthera-Terminal`, creates a Start menu entry, offers an optional desktop
 shortcut, and registers a normal Windows uninstaller.
+The setup executable, installed application, Start menu shortcut, desktop shortcut, and uninstall
+entry all use the shared `Assets/Brand/Panthera.Terminal.ico` multi-resolution icon.
 
 The GitHub workflow `.github/workflows/windows-installer.yml` runs automatically for future `v*`
 tags and can also be dispatched manually. A manual dispatch can attach the generated installer and

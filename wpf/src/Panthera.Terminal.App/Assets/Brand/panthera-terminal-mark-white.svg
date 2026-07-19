@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" color="#FFFFFF" role="img" aria-labelledby="title desc">
+  <title id="title">Panthera Terminal reversed brand mark</title>
+  <desc id="desc">A white six-tooth drive ring, three-axis robot joint, and robotic gripper for dark backgrounds.</desc>
+
+  <g fill="currentColor">
+    <rect x="190" y="92" width="56" height="84" rx="14"/>
+    <rect x="190" y="92" width="56" height="84" rx="14" transform="rotate(60 218 288)"/>
+    <rect x="190" y="92" width="56" height="84" rx="14" transform="rotate(120 218 288)"/>
+    <rect x="190" y="92" width="56" height="84" rx="14" transform="rotate(180 218 288)"/>
+    <rect x="190" y="92" width="56" height="84" rx="14" transform="rotate(240 218 288)"/>
+    <rect x="190" y="92" width="56" height="84" rx="14" transform="rotate(300 218 288)"/>
+    <circle cx="218" cy="288" r="118" fill="none" stroke="currentColor" stroke-width="48"/>
+  </g>
+
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="28">
+    <path d="M218 288V216"/>
+    <path d="M218 288L151 337"/>
+    <path d="M218 288L294 344"/>
+  </g>
+  <circle cx="218" cy="288" r="33" fill="none" stroke="currentColor" stroke-width="17"/>
+  <circle cx="218" cy="288" r="11" fill="currentColor"/>
+
+  <g fill="currentColor" stroke="currentColor" stroke-linejoin="round">
+    <path d="M284 219L345 158" fill="none" stroke-width="23" stroke-linecap="square"/>
+    <path d="M309 244L370 183" fill="none" stroke-width="23" stroke-linecap="square"/>
+    <path d="M341 145L331 124L340 86L390 57L421 73L382 101L377 125L397 146L424 146L453 116L463 144L433 180L391 180Z" stroke="none"/>
+  </g>
+</svg>

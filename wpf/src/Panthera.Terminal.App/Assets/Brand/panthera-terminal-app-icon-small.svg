@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Panthera Terminal small application icon</title>
+  <desc id="desc">A simplified six-axis drive ring and robotic gripper optimized for 16 to 24 pixel display.</desc>
+
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="#0B2032"/>
+
+  <g fill="#1689F4">
+    <rect x="23" y="14" width="7" height="10" rx="2"/>
+    <rect x="23" y="14" width="7" height="10" rx="2" transform="rotate(60 26.5 38)"/>
+    <rect x="23" y="14" width="7" height="10" rx="2" transform="rotate(120 26.5 38)"/>
+    <rect x="23" y="14" width="7" height="10" rx="2" transform="rotate(180 26.5 38)"/>
+    <rect x="23" y="14" width="7" height="10" rx="2" transform="rotate(240 26.5 38)"/>
+    <rect x="23" y="14" width="7" height="10" rx="2" transform="rotate(300 26.5 38)"/>
+    <circle cx="26.5" cy="38" r="14" fill="none" stroke="#1689F4" stroke-width="7"/>
+  </g>
+
+  <circle cx="26.5" cy="38" r="4.5" fill="#0B2032" stroke="#4CB2FF" stroke-width="2.5"/>
+  <circle cx="26.5" cy="38" r="1.5" fill="#EAF6FF"/>
+
+  <path d="M35.5 30L44 21.5" fill="none" stroke="#EAF6FF" stroke-width="4.5" stroke-linecap="square"/>
+  <path d="M39 33.5L47.5 25" fill="none" stroke="#EAF6FF" stroke-width="4.5" stroke-linecap="square"/>
+  <path d="M43 20L42 16L48 10L54 12.5L50 15.5L52 19L56 19L59 16L60 20.5L56 24L51 24Z" fill="#EAF6FF"/>
+</svg>

@@ -3,6 +3,7 @@
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
+    <ApplicationIcon>Assets\Brand\Panthera.Terminal.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
@@ -16,6 +17,7 @@
     <ProjectReference Include="../Panthera.Terminal.Settings/Panthera.Terminal.Settings.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Resource Include="Assets/Brand/panthera-terminal-titlebar.png" />
     <Content Include="Assets/TriView/panthera-wpf-host.html" CopyToOutputDirectory="PreserveNewest" Link="TriView/panthera-wpf-host.html" />
     <Content Include="../../../vendor/Panthera-HT-TriView/docs/mockups/panthera-six-axis-three-view.html" CopyToOutputDirectory="PreserveNewest" Link="TriView/docs/mockups/panthera-six-axis-three-view.html" />
     <Content Include="../../../vendor/Panthera-HT-TriView/docs/mockups/assets/three-r160.min.js" CopyToOutputDirectory="PreserveNewest" Link="TriView/docs/mockups/assets/three-r160.min.js" />
