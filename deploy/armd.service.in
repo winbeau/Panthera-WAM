@@ -7,6 +7,9 @@ After=default.target camerad.service
 Type=simple
 WorkingDirectory=@REPO_ROOT@
 Environment=PYTHONUNBUFFERED=1
+Environment=NO_PROXY=127.0.0.1,localhost
+Environment=no_proxy=127.0.0.1,localhost
+UnsetEnvironment=http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy grpc_proxy GRPC_PROXY
 EnvironmentFile=-%h/.config/panthera-wam/armd.env
 ExecStart=/usr/bin/env uv run --package panthera-armd armd --bind 127.0.0.1:50051 --camera-mode proxy --camera-endpoint 127.0.0.1:50052
 Restart=on-failure

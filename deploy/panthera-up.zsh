@@ -4,6 +4,7 @@
 panthera-up() {
     emulate -L zsh
     setopt pipefail
+    unsetopt bg_nice
 
     local repo="${PANTHERA_REPO:-$HOME/Panthera-WAM-v2}"
     local sdk="$repo/vendor/Panthera-HT_SDK"
@@ -92,6 +93,14 @@ panthera-up() {
         (cd "$repo" && ./deploy/build-realsense-wsl.sh) || return 3
     fi
     print "      librealsense 2.58.1 RSUSB 已就绪。"
+
+    # 后端只访问本机 gRPC。避免继承 WSL shell 的代理变量，也避免 armd 到
+    # camerad 的 localhost 通道被代理软件干扰；函数返回后恢复调用者环境。
+    local http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
+    local grpc_proxy GRPC_PROXY
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy grpc_proxy GRPC_PROXY
+    local -x NO_PROXY="127.0.0.1,localhost"
+    local -x no_proxy="127.0.0.1,localhost"
 
     print "[5/7] 清理旧 armd/camerad/仿真进程..."
     command pkill -INT -f '[.]venv/bin/[a]rmd' 2>/dev/null || true
