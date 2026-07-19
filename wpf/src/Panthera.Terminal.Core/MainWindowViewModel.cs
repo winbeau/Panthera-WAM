@@ -44,7 +44,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 JointMinimum[index],
                 JointMaximum[index])));
         Theme = settings.Theme;
-        UiScale = Math.Clamp(settings.UiScale, 0.75, 1.40);
+        UiScale = Math.Clamp(settings.UiScale, 0.90, 1.40);
         JogSpeed = settings.JogSpeed;
         TargetDuration = 3.0;
         DatasetRepoId = "local/panthera-wam";
@@ -990,7 +990,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void SetUiScale(double scale)
     {
-        UiScale = Math.Clamp(Math.Round(scale * 20) / 20, 0.75, 1.40);
+        UiScale = Math.Clamp(Math.Round(scale * 20) / 20, 0.90, 1.40);
         Settings = Settings with { UiScale = UiScale, JogSpeed = JogSpeed };
         _settingsStore.Save(Settings);
     }

@@ -35,8 +35,8 @@ public partial class MainWindow : FluentWindow
         DataContext = viewModel;
         if (App.IsScreenshotMode)
         {
-            Width = 1240;
-            Height = 800;
+            Width = ScreenshotDimension("PANTHERA_SCREENSHOT_WIDTH", 1240, MinWidth);
+            Height = ScreenshotDimension("PANTHERA_SCREENSHOT_HEIGHT", 800, MinHeight);
             WindowStartupLocation = WindowStartupLocation.Manual;
             Left = 20;
             Top = 20;
@@ -52,13 +52,21 @@ public partial class MainWindow : FluentWindow
         ApplyThemePreference(viewModel.Theme);
     }
 
+    private static double ScreenshotDimension(string variable, double fallback, double minimum) =>
+        double.TryParse(Environment.GetEnvironmentVariable(variable), out var value)
+            ? Math.Max(minimum, value)
+            : fallback;
+
     private async void OnLoaded(object sender, RoutedEventArgs eventArgs)
     {
         _renderTimer.Start();
         await _viewModel.InitializeAsync();
         if (App.IsScreenshotMode)
         {
-            await CadView.WaitUntilReadyAsync(TimeSpan.FromSeconds(15));
+            var cadTimeout = Environment.GetEnvironmentVariable("PANTHERA_VISUAL_QA_CAD") == "1"
+                ? TimeSpan.FromSeconds(45)
+                : TimeSpan.FromSeconds(15);
+            await CadView.WaitUntilReadyAsync(cadTimeout);
         }
         await CaptureRequestedScreenshotAsync();
     }

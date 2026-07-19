@@ -72,7 +72,8 @@ public partial class CadThreeView : UserControl
 
     private async void CadThreeView_Loaded(object sender, RoutedEventArgs eventArgs)
     {
-        if (Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE") == "1")
+        if (Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE") == "1"
+            && Environment.GetEnvironmentVariable("PANTHERA_VISUAL_QA_CAD") != "1")
         {
             LoadingText.Text = "CAD UI 验收占位";
             _modelReady.TrySetResult("acceptance");
