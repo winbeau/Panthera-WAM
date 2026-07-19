@@ -6,12 +6,14 @@ import argparse
 import asyncio
 import json
 import os
+from functools import partial
 from pathlib import Path
 
 import grpc
-from panthera_arm import arm_pb2, arm_pb2_grpc
+from panthera_arm import arm_pb2, arm_pb2_grpc, camera_pb2, camera_pb2_grpc
 
 from .backend import DEFAULT_MOTOR_TIMEOUT_MS, RealBackend, SimBackend
+from .camera import CameraWorker, RealSenseCameraBackend, SimCameraBackend
 from .hardware_loop import HardwareLoop
 from .server import ArmdServer
 
@@ -48,6 +50,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--control-hz", type=float, default=200.0, help="控制循环频率（默认 200Hz）")
     parser.add_argument("--bind", default="127.0.0.1:50051", help="gRPC 监听地址")
     parser.add_argument("--lease-timeout", type=float, default=2.0, help="控制权心跳超时秒数")
+    parser.add_argument(
+        "--camera-mode",
+        choices=("off", "auto", "sim"),
+        default=os.environ.get("PANTHERA_CAMERA_MODE", "off"),
+        help="D405 采集模式：off/auto/sim（默认 off）",
+    )
+    parser.add_argument(
+        "--camera-serial",
+        default=os.environ.get("PANTHERA_CAMERA_SERIAL", ""),
+        help="指定 D405 序列号；空值自动选择首台 D405",
+    )
+    parser.add_argument(
+        "--camera-width",
+        type=int,
+        default=int(os.environ.get("PANTHERA_CAMERA_WIDTH", "640")),
+    )
+    parser.add_argument(
+        "--camera-height",
+        type=int,
+        default=int(os.environ.get("PANTHERA_CAMERA_HEIGHT", "480")),
+    )
+    parser.add_argument(
+        "--camera-fps",
+        type=int,
+        default=int(os.environ.get("PANTHERA_CAMERA_FPS", "30")),
+    )
     parser.add_argument("--check", action="store_true", help="启动后通过 gRPC 做一次仿真自检并退出")
     return parser
 
@@ -68,6 +96,28 @@ async def run(args: argparse.Namespace) -> None:
             )
 
     loop = HardwareLoop(backend_factory, control_hz=args.control_hz)
+    if args.camera_width <= 0 or args.camera_height <= 0 or args.camera_fps <= 0:
+        raise SystemExit("camera width/height/fps 必须为正整数")
+    camera_worker = None
+    if args.camera_mode == "sim":
+        camera_worker = CameraWorker(
+            partial(
+                SimCameraBackend,
+                width=args.camera_width,
+                height=args.camera_height,
+                fps=args.camera_fps,
+            )
+        )
+    elif args.camera_mode == "auto":
+        camera_worker = CameraWorker(
+            partial(
+                RealSenseCameraBackend,
+                serial=args.camera_serial,
+                width=args.camera_width,
+                height=args.camera_height,
+                fps=args.camera_fps,
+            )
+        )
     bind = "127.0.0.1:0" if args.check else args.bind
     server = ArmdServer(
         loop,
@@ -75,6 +125,7 @@ async def run(args: argparse.Namespace) -> None:
         lease_timeout_s=args.lease_timeout,
         sdk_root=args.sdk_root,
         config_path=args.config,
+        camera_worker=camera_worker,
     )
     loop.start()
     try:
@@ -87,7 +138,9 @@ async def run(args: argparse.Namespace) -> None:
                 options=(("grpc.enable_http_proxy", 0),),
             ) as channel:
                 stub = arm_pb2_grpc.ArmServiceStub(channel)
+                camera_stub = camera_pb2_grpc.CameraServiceStub(channel)
                 status = await stub.GetDaemonStatus(arm_pb2.Empty())
+                camera_status = await camera_stub.GetStatus(camera_pb2.CameraStatusRequest())
                 stats = loop.stats()
                 print(
                     json.dumps(
@@ -98,6 +151,8 @@ async def run(args: argparse.Namespace) -> None:
                             "cycles": stats.cycles,
                             "actual_hz": round(stats.actual_hz, 2),
                             "overruns": stats.overruns,
+                            "camera_enabled": camera_status.enabled,
+                            "camera_available": camera_status.available,
                         },
                         ensure_ascii=False,
                     )
@@ -105,7 +160,10 @@ async def run(args: argparse.Namespace) -> None:
             return
 
         mode = "仿真" if args.sim else f"真机（固件看门狗 {args.motor_timeout_ms}ms）"
-        print(f"armd {mode}服务已启动：grpc://{args.bind}，HardwareLoop={args.control_hz:g}Hz")
+        print(
+            f"armd {mode}服务已启动：grpc://{args.bind}，HardwareLoop={args.control_hz:g}Hz，"
+            f"D405={args.camera_mode}"
+        )
         await server.wait_for_termination()
     finally:
         await server.stop()

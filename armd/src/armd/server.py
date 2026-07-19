@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 
 import grpc
-from panthera_arm import arm_pb2_grpc
+from panthera_arm import arm_pb2_grpc, camera_pb2_grpc
 
+from .camera import CameraWorker
+from .camera_service import CameraService
 from .control import LeaseManager
 from .execution import ExecutionRegistry
 from .grpc_service import ArmService, SafetyInterceptor
@@ -25,16 +27,22 @@ class ArmdServer:
         watchdog_poll_s: float = 0.05,
         sdk_root: str | None = None,
         config_path: str | None = None,
+        camera_worker: CameraWorker | None = None,
     ) -> None:
         self.hardware_loop = hardware_loop
         self.bind = bind
         self.leases = LeaseManager(timeout_s=lease_timeout_s)
         self.executions = ExecutionRegistry()
         self.kinematics = KinematicsWorker(sdk_root=sdk_root, config_path=config_path)
+        self.camera_worker = camera_worker
         self._watchdog_poll_s = watchdog_poll_s
         self._server = grpc.aio.server(interceptors=[SafetyInterceptor(self.leases, hardware_loop)])
         arm_pb2_grpc.add_ArmServiceServicer_to_server(
             ArmService(hardware_loop, self.leases, self.kinematics, self.executions),
+            self._server,
+        )
+        camera_pb2_grpc.add_CameraServiceServicer_to_server(
+            CameraService(camera_worker),
             self._server,
         )
         self.port = self._server.add_insecure_port(bind)
@@ -43,6 +51,8 @@ class ArmdServer:
         self._watchdog_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
+        if self.camera_worker is not None:
+            self.camera_worker.start()
         await self._server.start()
         self._watchdog_task = asyncio.create_task(self._watchdog_loop(), name="panthera-watchdog")
 
@@ -56,6 +66,8 @@ class ArmdServer:
                 pass
             self._watchdog_task = None
         await self._server.stop(grace)
+        if self.camera_worker is not None:
+            self.camera_worker.stop()
         self.kinematics.close()
 
     async def wait_for_termination(self) -> None:

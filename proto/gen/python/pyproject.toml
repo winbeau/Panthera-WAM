@@ -1,10 +1,10 @@
 [project]
 name = "panthera-arm-proto"
 version = "1.0.0"
-description = "由 proto/arm.proto 生成的 gRPC stub（勿手工编辑，用 proto/gen.sh 重新生成）"
+description = "由 Panthera-WAM protobuf 契约生成的 gRPC stub（勿手工编辑）"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-dependencies = ["grpcio>=1.60", "protobuf>=4.25"]
+dependencies = ["grpcio>=1.82.1", "protobuf>=4.25"]
 
 [build-system]
 requires = ["hatchling"]

@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from contextlib import nullcontext
+from pathlib import Path
 
 import grpc
 import typer
-from panthera_arm import arm_pb2
+from panthera_arm import arm_pb2, camera_pb2
 from rich.console import Console
 from rich.table import Table
 
 from .client import (
     SavedLease,
     clear_lease,
+    create_camera_stub,
     create_stub,
     default_client_id,
     endpoint,
@@ -37,6 +40,7 @@ gripper_app = typer.Typer(no_args_is_help=True)
 kinematics_app = typer.Typer(no_args_is_help=True)
 cartesian_app = typer.Typer(no_args_is_help=True)
 execution_app = typer.Typer(no_args_is_help=True)
+camera_app = typer.Typer(no_args_is_help=True)
 app.add_typer(control_app, name="control")
 app.add_typer(estop_app, name="estop")
 app.add_typer(safety_app, name="safety")
@@ -48,6 +52,7 @@ app.add_typer(gripper_app, name="gripper")
 app.add_typer(kinematics_app, name="kinematics")
 app.add_typer(cartesian_app, name="cartesian")
 app.add_typer(execution_app, name="execution")
+app.add_typer(camera_app, name="camera")
 safety_app.add_typer(limits_app, name="limits")
 console = Console()
 
@@ -111,6 +116,77 @@ def fail_rpc(exc: grpc.RpcError) -> None:
     code = exc.code().name if hasattr(exc, "code") else "RPC_ERROR"
     console.print(f"[red]{code}[/red]: {detail}")
     raise typer.Exit(1)
+
+
+def camera_stream_type(value: str) -> int:
+    normalized = value.strip().lower()
+    if normalized == "depth":
+        return camera_pb2.CAMERA_STREAM_TYPE_DEPTH
+    if normalized == "color":
+        return camera_pb2.CAMERA_STREAM_TYPE_COLOR
+    raise typer.BadParameter("stream 必须是 depth 或 color")
+
+
+def camera_status_data(status) -> dict:
+    return {
+        "enabled": status.enabled,
+        "available": status.available,
+        "streaming": status.streaming,
+        "model": status.model,
+        "serial": status.serial,
+        "firmware": status.firmware,
+        "usb_type": status.usb_type,
+        "sdk_version": status.sdk_version,
+        "error": status.error,
+        "last_frame_age_ms": status.last_frame_age_ms,
+        "actual_fps": status.actual_fps,
+        "profiles": [
+            {
+                "stream": camera_pb2.CameraStreamType.Name(profile.stream),
+                "pixel_format": camera_pb2.CameraPixelFormat.Name(profile.pixel_format),
+                "width": profile.width,
+                "height": profile.height,
+                "fps": profile.fps,
+            }
+            for profile in status.profiles
+        ],
+    }
+
+
+def save_camera_frame(frame, output: Path) -> Path:
+    if frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_Z16:
+        output = output.with_suffix(output.suffix or ".pgm")
+        payload = bytearray(frame.data)
+        if sys.byteorder == "little":
+            for index in range(0, len(payload), 2):
+                payload[index], payload[index + 1] = payload[index + 1], payload[index]
+        header = f"P5\n{frame.width} {frame.height}\n65535\n".encode()
+    elif frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_RGB8:
+        output = output.with_suffix(output.suffix or ".ppm")
+        payload = frame.data
+        header = f"P6\n{frame.width} {frame.height}\n255\n".encode()
+    else:
+        output = output.with_suffix(output.suffix or ".raw")
+        payload = frame.data
+        header = b""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(header + payload)
+    metadata = {
+        "sequence": frame.sequence,
+        "captured_at_ns": frame.captured_at_ns,
+        "device_timestamp_ms": frame.device_timestamp_ms,
+        "width": frame.width,
+        "height": frame.height,
+        "stride": frame.stride,
+        "depth_scale": frame.depth_scale,
+        "pixel_format": camera_pb2.CameraPixelFormat.Name(frame.pixel_format),
+        "image": output.name,
+    }
+    output.with_suffix(output.suffix + ".json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return output
 
 
 @control_app.command("acquire")
@@ -303,6 +379,81 @@ def daemon_status(as_json: bool = typer.Option(False, "--json")) -> None:
 @daemon_app.command("version")
 def daemon_version() -> None:
     daemon_status(as_json=False)
+
+
+@camera_app.command("status")
+def camera_status(as_json: bool = typer.Option(False, "--json")) -> None:
+    channel, stub = create_camera_stub()
+    try:
+        status = stub.GetStatus(camera_pb2.CameraStatusRequest())
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    data = camera_status_data(status)
+    if as_json:
+        console.print_json(json.dumps(data, ensure_ascii=False))
+        return
+    console.print(data)
+    if not status.available:
+        raise typer.Exit(2)
+
+
+@camera_app.command("snapshot")
+def camera_snapshot(
+    stream: str = typer.Option("depth", "--stream"),
+    output: Path | None = typer.Option(None, "--out"),
+    timeout_ms: int = typer.Option(2000, "--timeout-ms", min=100, max=10000),
+) -> None:
+    stream_type = camera_stream_type(stream)
+    channel, stub = create_camera_stub()
+    try:
+        frame = stub.CaptureFrame(camera_pb2.CaptureFrameRequest(stream=stream_type, timeout_ms=timeout_ms))
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    default_name = f"d405-{stream}-{frame.sequence}"
+    saved = save_camera_frame(frame, output or Path(default_name))
+    console.print(f"[green]已保存[/green] {saved} ({frame.width}x{frame.height}, sequence={frame.sequence})")
+
+
+@camera_app.command("stream")
+def camera_stream(
+    stream: str = typer.Option("depth", "--stream"),
+    max_rate_hz: float = typer.Option(10.0, "--rate-hz", min=0.1, max=90.0),
+    frames: int = typer.Option(30, "--frames", min=0),
+    output_dir: Path | None = typer.Option(None, "--out-dir"),
+) -> None:
+    stream_type = camera_stream_type(stream)
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    channel, stub = create_camera_stub()
+    received = 0
+    try:
+        for frame in stub.StreamFrames(
+            camera_pb2.StreamFramesRequest(
+                stream=stream_type,
+                max_rate_hz=max_rate_hz,
+                max_frames=frames,
+            )
+        ):
+            received += 1
+            if output_dir is not None:
+                saved = save_camera_frame(frame, output_dir / f"{stream}-{frame.sequence:08d}")
+                console.print(f"{frame.sequence}: {saved}")
+            else:
+                console.print(
+                    f"sequence={frame.sequence} {frame.width}x{frame.height} "
+                    f"device_ts={frame.device_timestamp_ms:.3f}ms bytes={len(frame.data)}"
+                )
+    except KeyboardInterrupt:
+        pass
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(f"received={received}")
 
 
 @state_app.command("get")

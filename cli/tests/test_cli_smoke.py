@@ -14,8 +14,11 @@ from typer.testing import CliRunner
 from panthera_cli.__main__ import app
 
 
-EXPECTED_V1_COMMANDS = {
+EXPECTED_COMMANDS = {
     "calibrate zero",
+    "camera snapshot",
+    "camera status",
+    "camera stream",
     "cartesian movel",
     "cartesian plan-preview",
     "control acquire",
@@ -56,10 +59,10 @@ def command_paths(group, prefix: tuple[str, ...] = ()) -> set[str]:
     return paths
 
 
-def test_v1_command_inventory_is_explicit() -> None:
+def test_command_inventory_is_explicit() -> None:
     root = get_command(app)
     assert hasattr(root, "commands")
-    assert command_paths(root) == EXPECTED_V1_COMMANDS
+    assert command_paths(root) == EXPECTED_COMMANDS
 
 
 def free_port() -> int:
@@ -75,7 +78,24 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
     env["PANTHERA_ENDPOINT"] = endpoint
     env["PANTHERA_STATE_DIR"] = str(tmp_path)
     process = subprocess.Popen(
-        [sys.executable, "-m", "armd", "--sim", "--bind", endpoint, "--lease-timeout", "5"],
+        [
+            sys.executable,
+            "-m",
+            "armd",
+            "--sim",
+            "--camera-mode",
+            "sim",
+            "--camera-width",
+            "8",
+            "--camera-height",
+            "6",
+            "--camera-fps",
+            "30",
+            "--bind",
+            endpoint,
+            "--lease-timeout",
+            "5",
+        ],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -86,6 +106,26 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("PANTHERA_ENDPOINT", endpoint)
         monkeypatch.setenv("PANTHERA_STATE_DIR", str(tmp_path))
         runner = CliRunner()
+
+        camera = runner.invoke(app, ["camera", "status", "--json"])
+        assert camera.exit_code == 0, camera.output
+        assert '"available": true' in camera.output
+
+        snapshot_path = tmp_path / "depth.pgm"
+        snapshot = runner.invoke(
+            app,
+            ["camera", "snapshot", "--stream", "depth", "--out", str(snapshot_path)],
+        )
+        assert snapshot.exit_code == 0, snapshot.output
+        assert snapshot_path.read_bytes().startswith(b"P5\n8 6\n65535\n")
+        assert snapshot_path.with_suffix(".pgm.json").is_file()
+
+        camera_stream = runner.invoke(
+            app,
+            ["camera", "stream", "--stream", "color", "--frames", "2"],
+        )
+        assert camera_stream.exit_code == 0, camera_stream.output
+        assert "received=2" in camera_stream.output
 
         acquired = runner.invoke(app, ["control", "acquire", "--client-id", "cli-test"])
         assert acquired.exit_code == 0, acquired.output

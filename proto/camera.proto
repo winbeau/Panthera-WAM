@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package panthera.camera.v1;
+
+option csharp_namespace = "Panthera.Camera.V1";
+
+enum CameraStreamType {
+  CAMERA_STREAM_TYPE_UNSPECIFIED = 0;
+  CAMERA_STREAM_TYPE_DEPTH = 1;
+  CAMERA_STREAM_TYPE_COLOR = 2;
+}
+
+enum CameraPixelFormat {
+  CAMERA_PIXEL_FORMAT_UNSPECIFIED = 0;
+  CAMERA_PIXEL_FORMAT_Z16 = 1;
+  CAMERA_PIXEL_FORMAT_RGB8 = 2;
+}
+
+message CameraStatusRequest {}
+
+message CameraProfile {
+  CameraStreamType stream = 1;
+  CameraPixelFormat pixel_format = 2;
+  int32 width = 3;
+  int32 height = 4;
+  int32 fps = 5;
+}
+
+message CameraStatus {
+  bool enabled = 1;
+  bool available = 2;
+  bool streaming = 3;
+  string model = 4;
+  string serial = 5;
+  string firmware = 6;
+  string usb_type = 7;
+  string sdk_version = 8;
+  string error = 9;
+  int64 last_frame_age_ms = 10;
+  double actual_fps = 11;
+  repeated CameraProfile profiles = 12;
+}
+
+message CaptureFrameRequest {
+  CameraStreamType stream = 1;
+  int32 timeout_ms = 2;
+}
+
+message StreamFramesRequest {
+  CameraStreamType stream = 1;
+  double max_rate_hz = 2;
+  int32 max_frames = 3;
+}
+
+message CameraFrame {
+  CameraStreamType stream = 1;
+  CameraPixelFormat pixel_format = 2;
+  int64 sequence = 3;
+  int64 captured_at_ns = 4;
+  double device_timestamp_ms = 5;
+  int32 width = 6;
+  int32 height = 7;
+  int32 stride = 8;
+  double depth_scale = 9;
+  bytes data = 10;
+}
+
+service CameraService {
+  rpc GetStatus(CameraStatusRequest) returns (CameraStatus);
+  rpc CaptureFrame(CaptureFrameRequest) returns (CameraFrame);
+  rpc StreamFrames(StreamFramesRequest) returns (stream CameraFrame);
+}

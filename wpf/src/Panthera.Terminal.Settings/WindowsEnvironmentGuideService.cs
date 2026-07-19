@@ -7,7 +7,8 @@ namespace Panthera.Terminal.Settings;
 
 public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
 {
-    private const string TargetVidPid = "VID_CAF1&PID_FFFF";
+    private const string ArmVidPid = "VID_CAF1&PID_FFFF";
+    private const string D405VidPid = "VID_8086&PID_0B5B";
     private readonly IArmdClient _client;
 
     public WindowsEnvironmentGuideService(IArmdClient client)
@@ -35,9 +36,13 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             wslRunning ? $"{settings.WslDistribution} 正在运行" : $"{settings.WslDistribution} 未运行",
             distributions.Command));
 
-        var device = await LocateDeviceAsync(settings.UsbSerial, cancellationToken);
+        var device = await LocateDeviceAsync(ArmVidPid, settings.UsbSerial, cancellationToken);
+        var camera = await LocateDeviceAsync(D405VidPid, string.Empty, cancellationToken);
         steps.Add(Step("机械臂 USB", device is not null,
             device is null ? $"未找到 {DescribeTarget(settings.UsbSerial)}" : $"已匹配 busid {device.BusId}",
+            "usbipd state --json"));
+        steps.Add(Step("D405 USB", camera is not null,
+            camera is null ? $"未找到 {D405VidPid}" : $"已匹配 busid {camera.BusId}",
             "usbipd state --json"));
 
         var usbList = await RunAsync("usbipd", ["list"], cancellationToken);
@@ -45,8 +50,17 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         var shared = stateLine.Contains("Shared", StringComparison.OrdinalIgnoreCase)
             || stateLine.Contains("Attached", StringComparison.OrdinalIgnoreCase);
         var attached = stateLine.Contains("Attached", StringComparison.OrdinalIgnoreCase);
-        steps.Add(Step("USB 共享", shared, shared ? stateLine.Trim() : "设备尚未 bind", "usbipd list"));
-        steps.Add(Step("USB 挂载", attached, attached ? stateLine.Trim() : "设备尚未 attach 到 WSL", "usbipd list"));
+        steps.Add(Step("机械臂 USB 共享", shared, shared ? stateLine.Trim() : "设备尚未 bind", "usbipd list"));
+        steps.Add(Step("机械臂 USB 挂载", attached, attached ? stateLine.Trim() : "设备尚未 attach 到 WSL", "usbipd list"));
+
+        var cameraLine = camera is null ? string.Empty : FindBusLine(usbList.Output, camera.BusId);
+        var cameraShared = cameraLine.Contains("Shared", StringComparison.OrdinalIgnoreCase)
+            || cameraLine.Contains("Attached", StringComparison.OrdinalIgnoreCase);
+        var cameraAttached = cameraLine.Contains("Attached", StringComparison.OrdinalIgnoreCase);
+        steps.Add(Step("D405 USB 共享", cameraShared,
+            cameraShared ? cameraLine.Trim() : "设备尚未 bind", "usbipd list"));
+        steps.Add(Step("D405 USB 挂载", cameraAttached,
+            cameraAttached ? cameraLine.Trim() : "设备尚未 attach 到 WSL", "usbipd list"));
 
         var tty = await RunWslAsync(settings, "compgen -G '/dev/ttyACM*' | wc -l", cancellationToken);
         var ttyCount = 0;
@@ -54,6 +68,10 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         steps.Add(Step("串口与权限", ttyReady,
             ttyReady ? $"检测到 {ttyCount} 个 ttyACM 设备" : $"需要至少 4 个 ttyACM 设备；当前输出：{tty.Output.Trim()}",
             tty.Command));
+
+        var d405 = await RunWslAsync(settings, "lsusb | grep -qi '8086:0b5b'", cancellationToken);
+        steps.Add(Step("D405 WSL", d405.Success,
+            d405.Success ? "D405 已在 WSL 可见" : "WSL 尚未发现 8086:0b5b", d405.Command));
 
         try
         {
@@ -95,53 +113,23 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             return new EnvironmentGuideResult(steps);
         }
 
-        var device = await LocateDeviceAsync(settings.UsbSerial, cancellationToken);
+        var device = await LocateDeviceAsync(ArmVidPid, settings.UsbSerial, cancellationToken);
+        var camera = await LocateDeviceAsync(D405VidPid, string.Empty, cancellationToken);
         steps.Add(Step("机械臂 USB", device is not null,
             device is null ? $"未找到 {DescribeTarget(settings.UsbSerial)}；请检查上电与 USB" : $"已匹配 busid {device.BusId}",
             "usbipd state --json"));
-        if (device is null)
+        steps.Add(Step("D405 USB", camera is not null,
+            camera is null ? $"未找到 {D405VidPid}；请检查相机与 USB 3 连接" : $"已匹配 busid {camera.BusId}",
+            "usbipd state --json"));
+        if (device is null || camera is null)
         {
             return new EnvironmentGuideResult(steps);
         }
 
-        var list = await RunAsync("usbipd", ["list"], cancellationToken);
-        var stateLine = FindBusLine(list.Output, device.BusId);
-        if (!stateLine.Contains("Shared", StringComparison.OrdinalIgnoreCase)
-            && !stateLine.Contains("Attached", StringComparison.OrdinalIgnoreCase))
+        if (!await EnsureUsbAttachedAsync("机械臂 USB", device, steps, cancellationToken)
+            || !await EnsureUsbAttachedAsync("D405 USB", camera, steps, cancellationToken))
         {
-            var bind = await RunElevatedUsbIpdAsync(["bind", "--busid", device.BusId], cancellationToken);
-            steps.Add(Step("USB bind", bind.Success,
-                bind.Success ? $"busid {device.BusId} 已共享" : bind.Error,
-                bind.Command));
-            if (!bind.Success)
-            {
-                return new EnvironmentGuideResult(steps);
-            }
-        }
-        else
-        {
-            steps.Add(Step("USB bind", true, stateLine.Trim(), $"usbipd bind --busid {device.BusId}"));
-        }
-
-        list = await RunAsync("usbipd", ["list"], cancellationToken);
-        stateLine = FindBusLine(list.Output, device.BusId);
-        if (!stateLine.Contains("Attached", StringComparison.OrdinalIgnoreCase))
-        {
-            var attach = await RunAsync(
-                "usbipd",
-                ["attach", "--wsl", "--busid", device.BusId],
-                cancellationToken);
-            steps.Add(Step("USB attach", attach.Success,
-                attach.Success ? $"busid {device.BusId} 已挂载" : attach.Error,
-                attach.Command));
-            if (!attach.Success)
-            {
-                return new EnvironmentGuideResult(steps);
-            }
-        }
-        else
-        {
-            steps.Add(Step("USB attach", true, stateLine.Trim(), $"usbipd attach --wsl --busid {device.BusId}"));
+            return new EnvironmentGuideResult(steps);
         }
 
         var tty = await RunWslAsync(settings, "compgen -G '/dev/ttyACM*' | wc -l", cancellationToken);
@@ -153,6 +141,14 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
                 : "串口未就绪；请安装 udev 规则 KERNEL==\"ttyACM*\", MODE=\"0777\"",
             tty.Command));
         if (!ttyReady)
+        {
+            return new EnvironmentGuideResult(steps);
+        }
+
+        var d405 = await RunWslAsync(settings, "lsusb | grep -qi '8086:0b5b'", cancellationToken);
+        steps.Add(Step("D405 WSL", d405.Success,
+            d405.Success ? "D405 已在 WSL 可见" : "D405 attach 后仍不可见", d405.Command));
+        if (!d405.Success)
         {
             return new EnvironmentGuideResult(steps);
         }
@@ -193,6 +189,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         new(name, success, detail, command);
 
     private static async Task<UsbDevice?> LocateDeviceAsync(
+        string vidPid,
         string targetSerial,
         CancellationToken cancellationToken)
     {
@@ -202,10 +199,13 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             return null;
         }
         using var document = JsonDocument.Parse(state.Output);
-        return LocateDevice(document.RootElement, targetSerial);
+        return LocateDevice(document.RootElement, vidPid, targetSerial);
     }
 
     internal static UsbDevice? LocateDevice(JsonElement element, string targetSerial = "")
+        => LocateDevice(element, ArmVidPid, targetSerial);
+
+    internal static UsbDevice? LocateDevice(JsonElement element, string vidPid, string targetSerial)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
@@ -224,7 +224,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             }
             if (!string.IsNullOrWhiteSpace(instanceId)
                 && !string.IsNullOrWhiteSpace(busId)
-                && instanceId.Contains(TargetVidPid, StringComparison.OrdinalIgnoreCase)
+                && instanceId.Contains(vidPid, StringComparison.OrdinalIgnoreCase)
                 && (string.IsNullOrWhiteSpace(targetSerial)
                     || instanceId.Contains(targetSerial, StringComparison.OrdinalIgnoreCase)))
             {
@@ -232,7 +232,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             }
             foreach (var property in element.EnumerateObject())
             {
-                var match = LocateDevice(property.Value, targetSerial);
+                var match = LocateDevice(property.Value, vidPid, targetSerial);
                 if (match is not null)
                 {
                     return match;
@@ -243,7 +243,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         {
             foreach (var item in element.EnumerateArray())
             {
-                var match = LocateDevice(item, targetSerial);
+                var match = LocateDevice(item, vidPid, targetSerial);
                 if (match is not null)
                 {
                     return match;
@@ -257,6 +257,48 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
         .FirstOrDefault(line => line.TrimStart().StartsWith(busId, StringComparison.OrdinalIgnoreCase))
         ?? string.Empty;
+
+    private static async Task<bool> EnsureUsbAttachedAsync(
+        string label,
+        UsbDevice device,
+        ICollection<EnvironmentGuideStep> steps,
+        CancellationToken cancellationToken)
+    {
+        var list = await RunAsync("usbipd", ["list"], cancellationToken);
+        var stateLine = FindBusLine(list.Output, device.BusId);
+        if (!stateLine.Contains("Shared", StringComparison.OrdinalIgnoreCase)
+            && !stateLine.Contains("Attached", StringComparison.OrdinalIgnoreCase))
+        {
+            var bind = await RunElevatedUsbIpdAsync(["bind", "--busid", device.BusId], cancellationToken);
+            steps.Add(Step($"{label} bind", bind.Success,
+                bind.Success ? $"busid {device.BusId} 已共享" : bind.Error, bind.Command));
+            if (!bind.Success)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            steps.Add(Step($"{label} bind", true, stateLine.Trim(), $"usbipd bind --busid {device.BusId}"));
+        }
+
+        list = await RunAsync("usbipd", ["list"], cancellationToken);
+        stateLine = FindBusLine(list.Output, device.BusId);
+        if (!stateLine.Contains("Attached", StringComparison.OrdinalIgnoreCase))
+        {
+            var attach = await RunAsync(
+                "usbipd",
+                ["attach", "--wsl", "--busid", device.BusId],
+                cancellationToken);
+            steps.Add(Step($"{label} attach", attach.Success,
+                attach.Success ? $"busid {device.BusId} 已挂载" : attach.Error, attach.Command));
+            return attach.Success;
+        }
+
+        steps.Add(Step($"{label} attach", true, stateLine.Trim(),
+            $"usbipd attach --wsl --busid {device.BusId}"));
+        return true;
+    }
 
     private static Task<ProcessResult> RunWslAsync(
         TerminalSettings settings,
@@ -282,7 +324,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
     }
 
     private static string DescribeTarget(string targetSerial) =>
-        string.IsNullOrWhiteSpace(targetSerial) ? TargetVidPid : $"{TargetVidPid} / {targetSerial}";
+        string.IsNullOrWhiteSpace(targetSerial) ? ArmVidPid : $"{ArmVidPid} / {targetSerial}";
 
     private static async Task<ProcessResult> RunElevatedUsbIpdAsync(
         IReadOnlyList<string> arguments,
