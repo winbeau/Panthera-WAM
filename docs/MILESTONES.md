@@ -128,7 +128,7 @@
   - [x] WPF 使用独立 `CameraEndpoint` 与第二条 WSL TCP bridge，显示 RGB8/Z16 双画面；相机不再误走机械臂端口
   - [x] 独立 `dataset.proto`、异步作业、取消/观察、字段映射与官方 LeRobotDataset v3 隔离 worker 已落地
 - [x] **M9 无损审计收尾** ✅ `tools/audit_sdk_contract.py` 对 42 项方法逐条验证 SDK 源码、RPC 实现、CLI 与内部覆盖；结果 35 direct + 6 internal + 1 lifecycle，0 遗漏、0 无理由
-- [x] **WPF v2 A 版控制台增量** ✅ 双 Tab 信息架构、精确 CAD 三视图、6 轴与夹爪状态、Ctrl 加减缩放、D405 双流、示教录制/回放与 LeRobot 导出均已接线；三视图复用 `Panthera-HT-TriView` 子模块资源，并由 GitHub Actions 负责 Windows 构建与 UI 验收
+- [x] **WPF v2 A 版控制台增量** ✅ 双 Tab 信息架构、精确 CAD 三视图、6 轴与夹爪状态、Ctrl 加减缩放、D405 双流、LeRobot 导出均已接线；示教录制升级为一键获取控制权、启动拖动示教、Linux JSONL 录制、停止保存、自动刷新选中与 POS-VEL 回放的完整会话，后端在 watchdog/示教结束时自动关闭 writer；三视图复用 `Panthera-HT-TriView` 子模块资源，并由 GitHub Actions 负责 Windows 构建与 UI 验收
 
 ---
 

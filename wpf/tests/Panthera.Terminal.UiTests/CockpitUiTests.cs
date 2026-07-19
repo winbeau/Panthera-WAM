@@ -182,6 +182,24 @@ public sealed class CockpitUiTests
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("CancelExecutionButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("GripperOpenButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("GripperCloseButton")));
+
+            var dataTab = window.FindFirstDescendant(condition => condition.ByAutomationId("DataTabButton"));
+            Assert.NotNull(dataTab);
+            dataTab.AsRadioButton().IsChecked = true;
+            var startTeachSession = Retry.WhileNull(
+                () => window.FindFirstDescendant(
+                    condition => condition.ByAutomationId("StartTeachSessionButton")),
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(100)).Result;
+            Assert.NotNull(startTeachSession);
+            Assert.NotNull(window.FindFirstDescendant(
+                condition => condition.ByAutomationId("StopTeachSessionButton")));
+            Assert.NotNull(window.FindFirstDescendant(
+                condition => condition.ByAutomationId("TeachRecordingNameBox")));
+            Assert.NotNull(window.FindFirstDescendant(
+                condition => condition.ByAutomationId("TeachRecordingStatusText")));
+            Assert.NotNull(window.FindFirstDescendant(
+                condition => condition.ByAutomationId("TeachRecordingList")));
         }
         finally
         {

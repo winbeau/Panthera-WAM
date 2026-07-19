@@ -20,6 +20,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private Task? _jogCallTask;
     private string _activeExecutionId = string.Empty;
     private string _activeDatasetJobId = string.Empty;
+    private DateTimeOffset? _recordingStartedAt;
     private int _poseRefreshActive;
     private bool _jointTargetsInitialized;
     private bool _cartesianTargetInitialized;
@@ -48,6 +49,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         TargetDuration = 3.0;
         DatasetRepoId = "local/panthera-wam";
         DatasetTask = "Panthera demonstration";
+        TeachRecordingName = NextRecordingName();
         ConnectionDetail = $"arm {settings.Endpoint} · camera {settings.CameraEndpoint}";
     }
 
@@ -207,6 +209,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private string _recordingPath = string.Empty;
 
     [ObservableProperty]
+    private string _teachRecordingName = string.Empty;
+
+    [ObservableProperty]
+    private double _teachRecordingElapsedSeconds;
+
+    [ObservableProperty]
+    private long _teachRecordingFrameCount;
+
+    [ObservableProperty]
     private string _datasetRepoId = string.Empty;
 
     [ObservableProperty]
@@ -265,6 +276,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public string GripperOpeningState => !GripperValid
         ? "OFFLINE"
         : GripperPercent <= 8 ? "CLOSED" : GripperPercent >= 92 ? "OPEN" : "PARTIAL";
+
+    public string TeachRecordingElapsedLabel
+    {
+        get
+        {
+            var elapsed = TimeSpan.FromSeconds(Math.Max(0, TeachRecordingElapsedSeconds));
+            return $"{(int)elapsed.TotalHours:00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}";
+        }
+    }
+
+    public string TeachRecordingSummary => IsTeachRecording
+        ? $"REC · {TeachRecordingElapsedLabel}"
+        : IsTeachActive
+            ? "拖动示教已开启 · 等待录制"
+            : TeachRecordingFrameCount > 0
+                ? $"已保存 {TeachRecordingFrameCount:N0} frames"
+                : "准备就绪";
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -330,6 +358,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         GripperTorque = snapshot.Gripper.Torque;
         GripperFault = snapshot.Gripper.Fault;
         GripperValid = snapshot.Gripper.Valid;
+        if (IsTeachRecording && _recordingStartedAt is not null)
+        {
+            TeachRecordingElapsedSeconds = (DateTimeOffset.UtcNow - _recordingStartedAt.Value).TotalSeconds;
+        }
         if (!_jointTargetsInitialized && snapshot.Joints.Count >= 6)
         {
             TargetJ1 = snapshot.Joints[0].Position;
@@ -584,6 +616,116 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void ResetZoom() => SetUiScale(1.0);
 
+    [RelayCommand(CanExecute = nameof(CanStartTeachSession))]
+    private async Task StartTeachSessionAsync()
+    {
+        await RunBusyAsync("Teach session", async () =>
+        {
+            if (!HasControl)
+            {
+                var control = await _client.AcquireControlAsync(Environment.MachineName);
+                HasControl = control.Held;
+                ControlHolder = control.HolderClientId;
+                if (!control.Held)
+                {
+                    TeachStatus = $"无法获取控制权：{control.HolderClientId}";
+                    AddLog("Warning", "Teach", TeachStatus);
+                    return;
+                }
+            }
+
+            var teach = await _client.StartTeachAsync();
+            if (!teach.Accepted)
+            {
+                TeachStatus = $"示教启动被拒绝：{teach.RejectReason}";
+                AddLog("Warning", "Teach", TeachStatus);
+                return;
+            }
+            IsTeachActive = true;
+            try
+            {
+                var requestedPath = RecordingRequestPath(TeachRecordingName);
+                var path = await _client.StartTeachRecordingAsync(requestedPath);
+                BeginTeachRecording(path);
+                TeachStatus = "拖动示教与轨迹录制进行中";
+                AddLog("Info", "Recorder", $"示教录制已开始：{path}");
+            }
+            catch
+            {
+                try
+                {
+                    await _client.StopTeachAsync();
+                }
+                finally
+                {
+                    IsTeachActive = false;
+                    TeachStatus = "录制启动失败，已退出拖动示教";
+                }
+                throw;
+            }
+        });
+    }
+
+    private bool CanStartTeachSession() =>
+        IsConnected && !EStopEngaged && !IsTeachActive && !IsTeachRecording && !IsBusy;
+
+    [RelayCommand(CanExecute = nameof(CanStopTeachSession))]
+    private async Task StopTeachSessionAsync()
+    {
+        await RunBusyAsync("Teach session", async () =>
+        {
+            TeachRecordingSnapshot? recording = null;
+            var wasRecording = IsTeachRecording;
+            if (IsTeachActive)
+            {
+                var stopped = await _client.StopTeachAsync();
+                IsTeachActive = false;
+                if (!stopped.Accepted)
+                {
+                    AddLog("Warning", "Teach", "后端报告拖动示教已提前结束");
+                }
+            }
+
+            if (wasRecording)
+            {
+                try
+                {
+                    recording = await _client.StopTeachRecordingAsync();
+                }
+                catch (Exception exception)
+                {
+                    AddLog("Warning", "Recorder", $"录制已由停止示教收尾：{exception.Message}");
+                }
+                finally
+                {
+                    IsTeachRecording = false;
+                    FinishRecordingClock();
+                }
+            }
+
+            if (recording is not null)
+            {
+                ApplySavedRecording(recording);
+            }
+            TeachStatus = "示教录制已停止并保存";
+            await RefreshTeachRecordingsAsync();
+            if (!string.IsNullOrWhiteSpace(RecordingPath))
+            {
+                SelectedTeachRecording = TeachRecordings.FirstOrDefault(
+                    item => item.Path.Equals(RecordingPath, StringComparison.Ordinal));
+            }
+            SelectedTeachRecording ??= TeachRecordings.FirstOrDefault();
+            if (SelectedTeachRecording is not null)
+            {
+                ApplySavedRecording(SelectedTeachRecording);
+            }
+            AddLog("Info", "Recorder", TeachRecordingSummary);
+            TeachRecordingName = NextRecordingName();
+        });
+    }
+
+    private bool CanStopTeachSession() => HasControl && (IsTeachActive || IsTeachRecording) && !IsBusy;
+
     [RelayCommand(CanExecute = nameof(CanStartTeach))]
     private async Task StartTeachAsync()
     {
@@ -603,12 +745,31 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         try
         {
-            if (IsTeachRecording)
-            {
-                await StopTeachRecordingAsync();
-            }
+            var wasRecording = IsTeachRecording;
             var result = await _client.StopTeachAsync();
             IsTeachActive = false;
+            TeachRecordingSnapshot? recording = null;
+            if (wasRecording)
+            {
+                try
+                {
+                    recording = await _client.StopTeachRecordingAsync();
+                }
+                catch (Exception exception)
+                {
+                    AddLog("Warning", "Recorder", $"录制已由停止示教收尾：{exception.Message}");
+                }
+                finally
+                {
+                    IsTeachRecording = false;
+                    FinishRecordingClock();
+                }
+                if (recording is not null)
+                {
+                    ApplySavedRecording(recording);
+                }
+                await RefreshTeachRecordingsAsync();
+            }
             TeachStatus = result.Accepted ? "已安全停止" : "未在示教";
             AddLog(result.Accepted ? "Info" : "Warning", "Teach", TeachStatus);
         }
@@ -629,8 +790,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         try
         {
-            RecordingPath = await _client.StartTeachRecordingAsync();
-            IsTeachRecording = true;
+            var requestedPath = RecordingRequestPath(TeachRecordingName);
+            BeginTeachRecording(await _client.StartTeachRecordingAsync(requestedPath));
             TeachStatus = "正在同步录制";
             AddLog("Info", "Recorder", RecordingPath);
         }
@@ -649,10 +810,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             var recording = await _client.StopTeachRecordingAsync();
             IsTeachRecording = false;
+            FinishRecordingClock();
             TeachStatus = IsTeachActive ? "拖动示教中" : "已停止";
             if (recording is not null)
             {
-                RecordingPath = recording.Path;
+                ApplySavedRecording(recording);
                 AddLog("Info", "Recorder", $"已保存 {recording.FrameCount:N0} frames · {recording.Path}");
             }
             await RefreshTeachRecordingsAsync();
@@ -664,6 +826,54 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     private bool CanStopTeachRecording() => HasControl && IsTeachRecording;
+
+    private void BeginTeachRecording(string path)
+    {
+        RecordingPath = path;
+        TeachRecordingFrameCount = 0;
+        TeachRecordingElapsedSeconds = 0;
+        _recordingStartedAt = DateTimeOffset.UtcNow;
+        IsTeachRecording = true;
+    }
+
+    private void FinishRecordingClock()
+    {
+        if (_recordingStartedAt is not null)
+        {
+            TeachRecordingElapsedSeconds = Math.Max(
+                TeachRecordingElapsedSeconds,
+                (DateTimeOffset.UtcNow - _recordingStartedAt.Value).TotalSeconds);
+        }
+        _recordingStartedAt = null;
+    }
+
+    private void ApplySavedRecording(TeachRecordingSnapshot recording)
+    {
+        RecordingPath = recording.Path;
+        TeachRecordingFrameCount = recording.FrameCount;
+        if (recording.DurationSeconds > 0)
+        {
+            TeachRecordingElapsedSeconds = recording.DurationSeconds;
+        }
+    }
+
+    private static string RecordingRequestPath(string name)
+    {
+        var stem = name.Trim();
+        if (stem.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase))
+        {
+            stem = stem[..^6];
+        }
+        var normalized = string.Concat(stem.Select(character =>
+            char.IsLetterOrDigit(character) || character is '-' or '_' ? character : '_'));
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            normalized = NextRecordingName();
+        }
+        return $"{normalized}.jsonl";
+    }
+
+    private static string NextRecordingName() => $"demo_{DateTime.Now:yyyyMMdd_HHmmss}";
 
     [RelayCommand]
     private async Task RefreshTeachRecordingsAsync()
@@ -964,6 +1174,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         MoveLCommand.NotifyCanExecuteChanged();
         GripperOpenCommand.NotifyCanExecuteChanged();
         GripperCloseCommand.NotifyCanExecuteChanged();
+        StartTeachSessionCommand.NotifyCanExecuteChanged();
+        StopTeachSessionCommand.NotifyCanExecuteChanged();
         StartTeachCommand.NotifyCanExecuteChanged();
         StopTeachCommand.NotifyCanExecuteChanged();
         StartTeachRecordingCommand.NotifyCanExecuteChanged();
@@ -1044,7 +1256,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     partial void OnUiScaleChanged(double value) => OnPropertyChanged(nameof(UiScaleLabel));
 
-    partial void OnIsTeachActiveChanged(bool value) => NotifyMotionCommands();
+    partial void OnIsTeachActiveChanged(bool value)
+    {
+        NotifyMotionCommands();
+        OnPropertyChanged(nameof(TeachRecordingSummary));
+    }
 
-    partial void OnIsTeachRecordingChanged(bool value) => NotifyMotionCommands();
+    partial void OnIsTeachRecordingChanged(bool value)
+    {
+        NotifyMotionCommands();
+        OnPropertyChanged(nameof(TeachRecordingSummary));
+    }
+
+    partial void OnTeachRecordingElapsedSecondsChanged(double value)
+    {
+        OnPropertyChanged(nameof(TeachRecordingElapsedLabel));
+        OnPropertyChanged(nameof(TeachRecordingSummary));
+    }
+
+    partial void OnTeachRecordingFrameCountChanged(long value) =>
+        OnPropertyChanged(nameof(TeachRecordingSummary));
 }

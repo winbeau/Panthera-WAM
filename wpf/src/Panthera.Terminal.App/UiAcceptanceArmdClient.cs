@@ -9,6 +9,7 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
     private bool _estopEngaged;
     private bool _teachActive;
     private bool _recording;
+    private string _recordingPath = string.Empty;
     private readonly List<TeachRecordingSnapshot> _recordings =
     [
         new("/home/winbeau/.local/share/panthera/teach/pick_cube_good_07.jsonl", DateTimeOffset.Now.AddMinutes(-8), 16.0, 3205),
@@ -176,9 +177,10 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
             throw new InvalidOperationException("请先启动拖动示教");
         }
         _recording = true;
-        return Task.FromResult(string.IsNullOrWhiteSpace(path)
+        _recordingPath = string.IsNullOrWhiteSpace(path)
             ? "/home/winbeau/.local/share/panthera/teach/trajectory_ui_acceptance.jsonl"
-            : path);
+            : $"/home/winbeau/.local/share/panthera/teach/{path}";
+        return Task.FromResult(_recordingPath);
     }
 
     public Task<TeachRecordingSnapshot?> StopTeachRecordingAsync(
@@ -190,7 +192,7 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
         }
         _recording = false;
         var result = new TeachRecordingSnapshot(
-            "/home/winbeau/.local/share/panthera/teach/trajectory_ui_acceptance.jsonl",
+            _recordingPath,
             DateTimeOffset.Now,
             12.4,
             2486);

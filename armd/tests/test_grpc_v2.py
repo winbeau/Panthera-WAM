@@ -248,6 +248,25 @@ async def test_m7_teach_record_stop_and_list(v2_stack) -> None:
 
 
 @pytest.mark.asyncio
+async def test_m7_teach_stop_automatically_saves_active_recording(v2_stack) -> None:
+    _, stub, metadata, _ = v2_stack
+    started = await stub.TeachStart(arm_pb2.TeachStartRequest(), metadata=metadata)
+    assert started.accepted
+    recording = await stub.TeachRecordStart(
+        arm_pb2.TeachRecordStartRequest(path="auto-stop.jsonl", flush_interval=0.01),
+        metadata=metadata,
+    )
+    assert recording.accepted
+    await asyncio.sleep(0.06)
+
+    stopped = await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    assert stopped.accepted
+    listed = await stub.TeachList(arm_pb2.Empty())
+    saved = next(item for item in listed.files if item.path.endswith("auto-stop.jsonl"))
+    assert saved.frame_count >= 5
+
+
+@pytest.mark.asyncio
 async def test_m7_teach_play_posvel_and_cancel(v2_stack) -> None:
     _, stub, metadata, server = v2_stack
     root = server.arm_service._teach_store.root

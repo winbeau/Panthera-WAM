@@ -204,7 +204,9 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         self._teach_store = TeachStore()
         self._teach_motion: TeachMotion | None = None
         self._teach_completion = None
+        self._teach_monitor_task: asyncio.Task[None] | None = None
         self._recorder: TrajectoryRecorder | None = None
+        self._recorder_lock = asyncio.Lock()
 
     async def AcquireControl(self, request, context):
         try:
@@ -1126,7 +1128,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         return arm_pb2.ExecutionAccepted(execution_id=execution_id)
 
     async def TeachStart(self, request, context):
-        self._refresh_teach_motion()
+        await self._refresh_teach_motion()
         if self._hardware_loop.has_active_motion:
             return arm_pb2.TeachStartResponse(
                 accepted=False,
@@ -1150,31 +1152,55 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             return arm_pb2.TeachStartResponse(accepted=False, reject_reason=str(exc))
         self._teach_motion = motion
         self._teach_completion = completion
+        self._teach_monitor_task = asyncio.create_task(
+            self._monitor_teach_completion(completion),
+            name="panthera-teach-monitor",
+        )
         return arm_pb2.TeachStartResponse(accepted=True)
 
     async def TeachStop(self, request, context):
-        del request, context
-        self._refresh_teach_motion()
+        del request
+        await self._refresh_teach_motion()
         motion = self._teach_motion
         completion = self._teach_completion
+        monitor = self._teach_monitor_task
         if motion is None or completion is None:
             return arm_pb2.TeachStopResponse(accepted=False)
         motion.request_cancel(CancelReason.CLIENT)
+        recorder_error = None
         try:
-            await asyncio.wait_for(asyncio.wrap_future(completion), timeout=0.5)
+            await self._stop_recorder()
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            recorder_error = exc
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(asyncio.wrap_future(completion)),
+                timeout=0.5,
+            )
         except (TimeoutError, asyncio.TimeoutError, RuntimeError):
             pass
-        self._teach_motion = None
-        self._teach_completion = None
+        if self._teach_completion is completion:
+            self._teach_motion = None
+            self._teach_completion = None
+        if self._teach_monitor_task is monitor:
+            self._teach_monitor_task = None
+        if monitor is not None and monitor is not asyncio.current_task():
+            monitor.cancel()
+            try:
+                await monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+        if recorder_error is not None:
+            await context.abort(grpc.StatusCode.INTERNAL, str(recorder_error))
         return arm_pb2.TeachStopResponse(accepted=True)
 
     async def TeachRecordStart(self, request, context):
+        await self._refresh_teach_motion()
         if self._recorder is not None:
             return arm_pb2.TeachRecordStartResponse(
                 accepted=False,
                 path=str(self._recorder.path),
             )
-        self._refresh_teach_motion()
         if self._teach_motion is None:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "请先启动拖动示教")
         flush_interval = optional_double(request, "flush_interval", 0.2)
@@ -1189,18 +1215,16 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
 
     async def TeachRecordStop(self, request, context):
         del request
-        recorder = self._recorder
-        if recorder is None:
-            return arm_pb2.TeachRecordStopResponse(accepted=False)
-        self._hardware_loop.set_record_sink(None)
-        self._recorder = None
         try:
-            frame_count = await asyncio.to_thread(recorder.close)
+            result = await self._stop_recorder()
         except (OSError, RuntimeError, TimeoutError) as exc:
             await context.abort(grpc.StatusCode.INTERNAL, str(exc))
+        if result is None:
+            return arm_pb2.TeachRecordStopResponse(accepted=False)
+        path, frame_count = result
         return arm_pb2.TeachRecordStopResponse(
             accepted=True,
-            saved_path=str(recorder.path),
+            saved_path=path,
             frame_count=frame_count,
         )
 
@@ -1323,26 +1347,30 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         return arm_pb2.CancelExecutionResponse(cancelled=cancelled)
 
     async def close(self) -> None:
-        self._hardware_loop.set_record_sink(None)
-        recorder = self._recorder
-        self._recorder = None
-        if recorder is not None:
-            try:
-                await asyncio.to_thread(recorder.close)
-            except (OSError, RuntimeError, TimeoutError):
-                pass
-        self._refresh_teach_motion()
+        try:
+            await self._stop_recorder()
+        except (OSError, RuntimeError, TimeoutError):
+            pass
+        await self._refresh_teach_motion()
         if self._teach_motion is not None and self._teach_completion is not None:
             self._teach_motion.request_cancel(CancelReason.SHUTDOWN)
             try:
                 await asyncio.wait_for(
-                    asyncio.wrap_future(self._teach_completion),
+                    asyncio.shield(asyncio.wrap_future(self._teach_completion)),
                     timeout=0.5,
                 )
             except (TimeoutError, asyncio.TimeoutError, RuntimeError):
                 pass
         self._teach_motion = None
         self._teach_completion = None
+        monitor = self._teach_monitor_task
+        self._teach_monitor_task = None
+        if monitor is not None and monitor is not asyncio.current_task():
+            monitor.cancel()
+            try:
+                await monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
 
     async def _run_position_motion(self, motion, wait, response_type, context):
         accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
@@ -1366,10 +1394,49 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             reject_reason=motion.reject_reason,
         )
 
-    def _refresh_teach_motion(self) -> None:
-        if self._teach_completion is not None and self._teach_completion.done():
-            self._teach_motion = None
-            self._teach_completion = None
+    async def _refresh_teach_motion(self) -> None:
+        completion = self._teach_completion
+        if completion is None or not completion.done():
+            return
+        try:
+            await self._stop_recorder()
+        except (OSError, RuntimeError, TimeoutError):
+            pass
+        self._teach_motion = None
+        self._teach_completion = None
+        monitor = self._teach_monitor_task
+        if monitor is not None and monitor is not asyncio.current_task():
+            try:
+                await monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+
+    async def _monitor_teach_completion(self, completion) -> None:
+        try:
+            while not completion.done():
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            return
+        finally:
+            if self._teach_completion is completion:
+                try:
+                    await self._stop_recorder()
+                except (OSError, RuntimeError, TimeoutError):
+                    pass
+                self._teach_motion = None
+                self._teach_completion = None
+            if self._teach_monitor_task is asyncio.current_task():
+                self._teach_monitor_task = None
+
+    async def _stop_recorder(self) -> tuple[str, int] | None:
+        async with self._recorder_lock:
+            recorder = self._recorder
+            if recorder is None:
+                return None
+            self._hardware_loop.set_record_sink(None)
+            self._recorder = None
+            frame_count = await asyncio.to_thread(recorder.close)
+            return str(recorder.path), frame_count
 
     async def _gripper_move(self, *, position, velocity, max_torque, context):
         values = np.array([position, velocity, max_torque], dtype=np.float64)

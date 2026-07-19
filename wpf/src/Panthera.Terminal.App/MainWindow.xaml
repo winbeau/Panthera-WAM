@@ -100,7 +100,7 @@
                     <RadioButton x:Name="ControlTabButton" Content="控制与三视图" GroupName="MainTabs"
                                  Style="{StaticResource MainTabStyle}" IsChecked="True" Tag="Control"
                                  Checked="MainTab_Checked" AutomationProperties.AutomationId="ControlTabButton" />
-                    <RadioButton x:Name="DataTabButton" Content="D405 与数据采集" GroupName="MainTabs"
+                    <RadioButton x:Name="DataTabButton" Content="D405 与示教录制" GroupName="MainTabs"
                                  Style="{StaticResource MainTabStyle}" Tag="Data"
                                  Checked="MainTab_Checked" AutomationProperties.AutomationId="DataTabButton" />
                 </StackPanel>
@@ -304,7 +304,7 @@
                 <Grid x:Name="DataPage" Visibility="Collapsed" Margin="10,9,10,8">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="1.28*" /><ColumnDefinition Width="9" /><ColumnDefinition Width="0.72*" /></Grid.ColumnDefinitions>
                     <Grid Grid.Column="0">
-                        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="9" /><RowDefinition Height="190" /></Grid.RowDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="9" /><RowDefinition Height="235" /></Grid.RowDefinitions>
                         <Border Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
                             <Grid><Grid.RowDefinitions><RowDefinition Height="37" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                 <Border Style="{StaticResource CardHeaderStyle}"><DockPanel><TextBlock DockPanel.Dock="Right" Text="RGB8 + Z16 · 640×480 @ 30 FPS" Style="{StaticResource MetaTextStyle}" /><TextBlock Text="Intel RealSense D405" Style="{StaticResource SectionHeaderTextStyle}" /></DockPanel></Border>
@@ -315,11 +315,73 @@
                             </Grid>
                         </Border>
                         <Border Grid.Row="2" Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
-                            <Grid><Grid.RowDefinitions><RowDefinition Height="37" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                                <Border Style="{StaticResource CardHeaderStyle}"><DockPanel><TextBlock DockPanel.Dock="Right" Text="机械臂状态 + RGB + 深度 · 同一 Linux 时钟" Style="{StaticResource MetaTextStyle}" /><TextBlock Text="拖动示教与同步录制" Style="{StaticResource SectionHeaderTextStyle}" /></DockPanel></Border>
-                                <Grid Grid.Row="1" Margin="10"><Grid.ColumnDefinitions><ColumnDefinition Width="1.2*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="1*" /></Grid.ColumnDefinitions>
-                                    <StackPanel><TextBlock Text="操作顺序" Style="{StaticResource MetricLabelStyle}" /><TextBlock Text="1. 获取控制权  2. 启动拖动示教  3. 开始同步录制" Margin="0,4,0,8" FontSize="11" /><StackPanel Orientation="Horizontal"><ui:Button Content="开始拖动示教" Appearance="Primary" Command="{Binding StartTeachCommand}" AutomationProperties.AutomationId="StartTeachButton" /><ui:Button Content="停止示教" Appearance="Secondary" Command="{Binding StopTeachCommand}" Margin="6,0,0,0" AutomationProperties.AutomationId="StopTeachButton" /></StackPanel><TextBlock Text="{Binding TeachStatus}" Margin="0,8,0,0" Style="{StaticResource MetaTextStyle}" /></StackPanel>
-                                    <StackPanel Grid.Column="2"><TextBlock Text="录制状态" Style="{StaticResource MetricLabelStyle}" /><TextBlock Text="{Binding RecordingPath}" TextTrimming="CharacterEllipsis" Margin="0,4,0,8" FontFamily="Cascadia Mono, Consolas" FontSize="10" /><StackPanel Orientation="Horizontal"><ui:Button Content="开始录制" Appearance="Primary" Command="{Binding StartTeachRecordingCommand}" AutomationProperties.AutomationId="StartTeachRecordingButton" /><ui:Button Content="停止并保存" Appearance="Secondary" Command="{Binding StopTeachRecordingCommand}" Margin="6,0,0,0" AutomationProperties.AutomationId="StopTeachRecordingButton" /></StackPanel></StackPanel>
+                            <Grid>
+                                <Grid.RowDefinitions><RowDefinition Height="37" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                <Border Style="{StaticResource CardHeaderStyle}">
+                                    <DockPanel>
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                <Ellipse.Style>
+                                                    <Style TargetType="Ellipse" BasedOn="{StaticResource StatusDotStyle}">
+                                                        <Setter Property="Fill" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsTeachRecording}" Value="True">
+                                                                <Setter Property="Fill" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Ellipse.Style>
+                                            </Ellipse>
+                                            <TextBlock Text="{Binding TeachRecordingSummary}" Style="{StaticResource MetaTextStyle}"
+                                                       AutomationProperties.AutomationId="TeachRecordingStatusText" />
+                                        </StackPanel>
+                                        <TextBlock Text="示教录制" Style="{StaticResource SectionHeaderTextStyle}" />
+                                    </DockPanel>
+                                </Border>
+                                <Grid Grid.Row="1" Margin="10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="1.35*" /><ColumnDefinition Width="10" /><ColumnDefinition Width="1*" /></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="一键录制会自动获取控制权，进入重力补偿拖动示教并在 Linux 后端写入轨迹。"
+                                                   FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="70" /><ColumnDefinition Width="*" /><ColumnDefinition Width="78" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="录制名称" VerticalAlignment="Center" Style="{StaticResource MetricLabelStyle}" />
+                                            <TextBox Grid.Column="1" Text="{Binding TeachRecordingName, UpdateSourceTrigger=PropertyChanged}"
+                                                     AutomationProperties.AutomationId="TeachRecordingNameBox" />
+                                            <TextBlock Grid.Column="2" Text="{Binding TeachRecordingElapsedLabel}" HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center" FontFamily="Cascadia Mono, Consolas" FontWeight="Bold" />
+                                        </Grid>
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                            <ui:Button Content="● 开始示教录制" Appearance="Danger"
+                                                       Command="{Binding StartTeachSessionCommand}"
+                                                       AutomationProperties.AutomationId="StartTeachSessionButton" />
+                                            <ui:Button Content="■ 停止并保存" Appearance="Primary"
+                                                       Command="{Binding StopTeachSessionCommand}" Margin="7,0,0,0"
+                                                       AutomationProperties.AutomationId="StopTeachSessionButton" />
+                                            <ui:Button Content="获取控制权" Appearance="Secondary" Command="{Binding AcquireControlCommand}"
+                                                       Margin="7,0,0,0" AutomationProperties.AutomationId="TeachAcquireControlButton" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding RecordingPath}" TextTrimming="CharacterEllipsis" Margin="0,8,0,0"
+                                                   FontFamily="Cascadia Mono, Consolas" FontSize="10" ToolTip="{Binding RecordingPath}" />
+                                    </StackPanel>
+                                    <Border Grid.Column="2" Style="{StaticResource CockpitSubtlePanelStyle}" Padding="9,7">
+                                        <StackPanel>
+                                            <TextBlock Text="高级分步控制" Style="{StaticResource MetricLabelStyle}" />
+                                            <TextBlock Text="仅在调试时使用；日常录制请使用左侧一键流程。" FontSize="10" TextWrapping="Wrap" Margin="0,3,0,7" />
+                                            <WrapPanel>
+                                                <ui:Button Content="开始示教" Appearance="Secondary" Command="{Binding StartTeachCommand}"
+                                                           AutomationProperties.AutomationId="StartTeachButton" />
+                                                <ui:Button Content="开始写入" Appearance="Secondary" Command="{Binding StartTeachRecordingCommand}"
+                                                           Margin="5,0,0,0" AutomationProperties.AutomationId="StartTeachRecordingButton" />
+                                                <ui:Button Content="停止写入" Appearance="Transparent" Command="{Binding StopTeachRecordingCommand}"
+                                                           Margin="5,0,0,0" AutomationProperties.AutomationId="StopTeachRecordingButton" />
+                                                <ui:Button Content="停止示教" Appearance="Transparent" Command="{Binding StopTeachCommand}"
+                                                           Margin="5,0,0,0" AutomationProperties.AutomationId="StopTeachButton" />
+                                            </WrapPanel>
+                                            <TextBlock Text="{Binding TeachStatus}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                                       Style="{StaticResource MetaTextStyle}" />
+                                        </StackPanel>
+                                    </Border>
                                 </Grid>
                             </Grid>
                         </Border>
@@ -333,7 +395,8 @@
                             <TabControl Background="Transparent" BorderThickness="0">
                                 <TabItem Header="轨迹库">
                                     <Grid Margin="8"><Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="37" /></Grid.RowDefinitions>
-                                        <ListBox ItemsSource="{Binding TeachRecordings}" SelectedItem="{Binding SelectedTeachRecording}" BorderThickness="0" Background="Transparent">
+                                        <ListBox ItemsSource="{Binding TeachRecordings}" SelectedItem="{Binding SelectedTeachRecording}" BorderThickness="0" Background="Transparent"
+                                                 AutomationProperties.AutomationId="TeachRecordingList">
                                             <ListBox.ItemTemplate><DataTemplate><Border Margin="0,2" Padding="8,6" Style="{StaticResource CockpitSubtlePanelStyle}"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="11" /><TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" Style="{StaticResource MetaTextStyle}" /></StackPanel><StackPanel Grid.Column="1" HorizontalAlignment="Right"><TextBlock Text="{Binding Summary}" Style="{StaticResource MetaTextStyle}" /><TextBlock Text="{Binding RecordedAt, StringFormat={}{0:MM-dd HH:mm}}" HorizontalAlignment="Right" Style="{StaticResource MetaTextStyle}" /></StackPanel></Grid></Border></DataTemplate></ListBox.ItemTemplate>
                                         </ListBox>
                                         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"><ui:Button Content="刷新" Appearance="Transparent" Command="{Binding RefreshTeachRecordingsCommand}" /><ui:Button Content="POS-VEL 回放" Appearance="Primary" Command="{Binding PlayTeachRecordingCommand}" Margin="6,0,0,0" AutomationProperties.AutomationId="PlayTeachRecordingButton" /><ui:Button Content="取消" Appearance="Secondary" Command="{Binding CancelExecutionCommand}" Margin="6,0,0,0" /></StackPanel>
