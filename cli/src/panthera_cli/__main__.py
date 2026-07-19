@@ -395,7 +395,7 @@ def camera_status(as_json: bool = typer.Option(False, "--json")) -> None:
         console.print_json(json.dumps(data, ensure_ascii=False))
     else:
         console.print(data)
-    if not status.available:
+    if not status.available or not status.streaming:
         raise typer.Exit(2)
 
 

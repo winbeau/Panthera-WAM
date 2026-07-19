@@ -56,6 +56,7 @@ class RawCameraFrame:
     stride: int
     depth_scale: float
     data: bytes
+    native_frame: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,7 @@ class CameraFrameSnapshot:
     stride: int
     depth_scale: float
     data: bytes
+    native_frame: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +245,8 @@ class RealSenseCameraBackend:
             height=int(frame.get_height()),
             stride=int(frame.get_stride_in_bytes()),
             depth_scale=self._depth_scale if stream is CameraStream.DEPTH else 0.0,
-            data=bytes(frame.get_data()),
+            data=b"",
+            native_frame=frame,
         )
 
     @staticmethod
@@ -457,7 +460,7 @@ class CameraWorker:
                     self._status = CameraStatusSnapshot(
                         enabled=True,
                         available=True,
-                        streaming=True,
+                        streaming=False,
                         model=info.model,
                         serial=info.serial,
                         firmware=info.firmware,
@@ -501,9 +504,23 @@ class CameraWorker:
                     stride=frame.stride,
                     depth_scale=frame.depth_scale,
                     data=frame.data,
+                    native_frame=frame.native_frame,
                 )
             self._last_frame_at = now
             self._frame_times.append(now)
+            status = self._status
+            if status.available and not status.streaming:
+                self._status = CameraStatusSnapshot(
+                    enabled=status.enabled,
+                    available=True,
+                    streaming=True,
+                    model=status.model,
+                    serial=status.serial,
+                    firmware=status.firmware,
+                    usb_type=status.usb_type,
+                    sdk_version=status.sdk_version,
+                    profiles=status.profiles,
+                )
             self._condition.notify_all()
 
     def _actual_fps_locked(self) -> float:

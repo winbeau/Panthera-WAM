@@ -110,10 +110,11 @@ async def test_camera_grpc_status_snapshot_and_finite_stream() -> None:
     try:
         for _ in range(20):
             status = await stub.GetStatus(camera_pb2.CameraStatusRequest())
-            if status.available:
+            if status.available and status.streaming:
                 break
             await asyncio.sleep(0.01)
         assert status.available
+        assert status.streaming
         assert len(status.profiles) == 2
 
         depth = await stub.CaptureFrame(

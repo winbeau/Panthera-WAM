@@ -37,6 +37,9 @@ def pixel_format_message(pixel_format: CameraPixelFormat) -> int:
 
 
 def frame_message(frame: CameraFrameSnapshot) -> camera_pb2.CameraFrame:
+    data = frame.data
+    if frame.native_frame is not None:
+        data = bytes(frame.native_frame.get_data())
     return camera_pb2.CameraFrame(
         stream=stream_message(frame.stream),
         pixel_format=pixel_format_message(frame.pixel_format),
@@ -47,7 +50,7 @@ def frame_message(frame: CameraFrameSnapshot) -> camera_pb2.CameraFrame:
         height=frame.height,
         stride=frame.stride,
         depth_scale=frame.depth_scale,
-        data=frame.data,
+        data=data,
     )
 
 
