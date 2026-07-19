@@ -42,8 +42,14 @@ class ArmdServer:
         self.camera_proxy = CameraProxyService(camera_endpoint) if camera_endpoint else None
         self._watchdog_poll_s = watchdog_poll_s
         self._server = grpc.aio.server(interceptors=[SafetyInterceptor(self.leases, hardware_loop)])
+        self.arm_service = ArmService(
+            hardware_loop,
+            self.leases,
+            self.kinematics,
+            self.executions,
+        )
         arm_pb2_grpc.add_ArmServiceServicer_to_server(
-            ArmService(hardware_loop, self.leases, self.kinematics, self.executions),
+            self.arm_service,
             self._server,
         )
         camera_pb2_grpc.add_CameraServiceServicer_to_server(
@@ -77,6 +83,7 @@ class ArmdServer:
                 pass
             self._watchdog_task = None
         await self._server.stop(grace)
+        await self.arm_service.close()
         if self.camera_worker is not None:
             self.camera_worker.stop()
         if self.camera_proxy is not None:

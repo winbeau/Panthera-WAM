@@ -43,6 +43,8 @@ execution_app = typer.Typer(no_args_is_help=True)
 camera_app = typer.Typer(no_args_is_help=True)
 dynamics_app = typer.Typer(no_args_is_help=True)
 trajectory_app = typer.Typer(no_args_is_help=True)
+teach_app = typer.Typer(no_args_is_help=True)
+teach_record_app = typer.Typer(no_args_is_help=True)
 app.add_typer(control_app, name="control")
 app.add_typer(estop_app, name="estop")
 app.add_typer(safety_app, name="safety")
@@ -57,6 +59,8 @@ app.add_typer(execution_app, name="execution")
 app.add_typer(camera_app, name="camera")
 app.add_typer(dynamics_app, name="dynamics")
 app.add_typer(trajectory_app, name="trajectory")
+app.add_typer(teach_app, name="teach")
+teach_app.add_typer(teach_record_app, name="record")
 safety_app.add_typer(limits_app, name="limits")
 console = Console()
 
@@ -1164,6 +1168,194 @@ def trajectory_run_waypoints(
     if final.state != arm_pb2.EXEC_STATE_DONE:
         console.print(f"[yellow]trajectory 终态={arm_pb2.ExecState.Name(final.state)}[/yellow]")
         raise typer.Exit(2)
+
+
+@teach_app.command("start")
+def teach_start(
+    kp: str | None = typer.Option(None, "--kp"),
+    kd: str | None = typer.Option(None, "--kd"),
+    fc: str | None = typer.Option(None, "--fc"),
+    fv: str | None = typer.Option(None, "--fv"),
+) -> None:
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        response = stub.TeachStart(
+            arm_pb2.TeachStartRequest(
+                kp=optional_float_list(kp, name="kp"),
+                kd=optional_float_list(kd, name="kd"),
+                fc=optional_float_list(fc, name="fc"),
+                fv=optional_float_list(fv, name="fv"),
+            ),
+            metadata=lease_metadata(lease),
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if not response.accepted:
+        console.print(f"[red]拖动示教启动失败[/red]: {response.reject_reason}")
+        raise typer.Exit(2)
+    console.print("[green]拖动示教已启动[/green]（需持续 heartbeat 保持控制权）")
+
+
+@teach_app.command("stop")
+def teach_stop() -> None:
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        response = stub.TeachStop(
+            arm_pb2.Empty(),
+            metadata=lease_metadata(lease),
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(f"accepted={response.accepted}")
+
+
+@teach_record_app.command("start")
+def teach_record_start(
+    path: str = typer.Option("", "--path"),
+    flush_interval: float = typer.Option(0.2, "--flush-interval", min=0.001),
+) -> None:
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        response = stub.TeachRecordStart(
+            arm_pb2.TeachRecordStartRequest(
+                path=path,
+                flush_interval=flush_interval,
+            ),
+            metadata=lease_metadata(lease),
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if not response.accepted:
+        console.print(f"[yellow]示教录制已经开启[/yellow]: {response.path}")
+        raise typer.Exit(2)
+    console.print(f"[green]示教录制已启动[/green]: {response.path}")
+
+
+@teach_record_app.command("stop")
+def teach_record_stop() -> None:
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        response = stub.TeachRecordStop(
+            arm_pb2.Empty(),
+            metadata=lease_metadata(lease),
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if not response.accepted:
+        console.print("[yellow]当前没有示教录制[/yellow]")
+        raise typer.Exit(2)
+    console.print(
+        f"[green]示教轨迹已保存[/green]: {response.saved_path} frames={response.frame_count}"
+    )
+
+
+@teach_app.command("play")
+def teach_play(
+    path: str = typer.Argument(...),
+    mode: str = typer.Option("mit", "--mode"),
+    kp: str | None = typer.Option(None, "--kp"),
+    kd: str | None = typer.Option(None, "--kd"),
+    fc: str | None = typer.Option(None, "--fc"),
+    fv: str | None = typer.Option(None, "--fv"),
+    vel_threshold: float = typer.Option(0.0, "--vel-threshold", min=0.0),
+    tau_limit: str | None = typer.Option(None, "--tau-limit"),
+    gripper_kp: float = typer.Option(5.0, "--gripper-kp", min=0.0),
+    gripper_kd: float = typer.Option(0.5, "--gripper-kd", min=0.0),
+    playback_dt: float = typer.Option(0.01, "--playback-dt", min=0.001),
+    smooth_window: int = typer.Option(7, "--smooth-window", min=1),
+) -> None:
+    normalized_mode = mode.strip().lower()
+    if normalized_mode not in {"mit", "posvel"}:
+        raise typer.BadParameter("mode 必须是 mit 或 posvel")
+    if normalized_mode == "mit" and (kp is None or kd is None):
+        raise typer.BadParameter("MIT 回放必须显式提供 --kp 和 --kd")
+    request = arm_pb2.TeachPlayRequest(
+        path=path,
+        mode=(
+            arm_pb2.PLAYBACK_MODE_MIT
+            if normalized_mode == "mit"
+            else arm_pb2.PLAYBACK_MODE_POSVEL
+        ),
+        kp=optional_float_list(kp, name="kp"),
+        kd=optional_float_list(kd, name="kd"),
+        fc=optional_float_list(fc, name="fc"),
+        fv=optional_float_list(fv, name="fv"),
+        vel_threshold=vel_threshold,
+        tau_limit=optional_float_list(tau_limit, name="tau-limit"),
+        gripper_kp=gripper_kp,
+        gripper_kd=gripper_kd,
+        playback_dt=playback_dt,
+        smooth_window=smooth_window,
+    )
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        with maintain_heartbeat(lease):
+            accepted = stub.TeachPlay(
+                request,
+                metadata=lease_metadata(lease),
+                timeout=20.0,
+            )
+            console.print(f"execution_id={accepted.execution_id}")
+            try:
+                final = _watch_execution(stub, accepted.execution_id)
+            except KeyboardInterrupt:
+                stub.CancelExecution(
+                    arm_pb2.CancelExecutionRequest(execution_id=accepted.execution_id),
+                    metadata=lease_metadata(lease),
+                )
+                final = _watch_execution(stub, accepted.execution_id)
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if final.state != arm_pb2.EXEC_STATE_DONE:
+        console.print(f"[yellow]teach play 终态={arm_pb2.ExecState.Name(final.state)}[/yellow]")
+        raise typer.Exit(2)
+
+
+@teach_app.command("list")
+def teach_list(as_json: bool = typer.Option(False, "--json")) -> None:
+    channel, stub = create_stub()
+    try:
+        response = stub.TeachList(arm_pb2.Empty())
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    files = [
+        {
+            "path": item.path,
+            "recorded_at": item.recorded_at,
+            "duration_s": item.duration_s,
+            "frame_count": item.frame_count,
+        }
+        for item in response.files
+    ]
+    if as_json:
+        console.print_json(json.dumps(files, ensure_ascii=False))
+        return
+    table = Table("路径", "录制时间(ms)", "时长(s)", "帧数")
+    for item in files:
+        table.add_row(
+            item["path"],
+            str(item["recorded_at"]),
+            f"{item['duration_s']:.3f}",
+            str(item["frame_count"]),
+        )
+    console.print(table)
 
 
 @execution_app.command("watch")

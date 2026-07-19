@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 
 import grpc
 import numpy as np
@@ -15,7 +17,8 @@ from armd.server import ArmdServer
 
 
 @pytest_asyncio.fixture
-async def v2_stack():
+async def v2_stack(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHERA_TEACH_DIR", str(tmp_path / "teach"))
     loop = HardwareLoop(SimBackend, control_hz=200.0)
     loop.start()
     server = ArmdServer(loop, bind="127.0.0.1:0", lease_timeout_s=10.0)
@@ -29,7 +32,7 @@ async def v2_stack():
     acquired = await stub.AcquireControl(arm_pb2.AcquireControlRequest(client_id="v2-test"))
     metadata = ((LEASE_METADATA_KEY, acquired.lease_token),)
     try:
-        yield loop, stub, metadata
+        yield loop, stub, metadata, server
     finally:
         await channel.close()
         await server.stop()
@@ -38,7 +41,7 @@ async def v2_stack():
 
 @pytest.mark.asyncio
 async def test_m5_dynamics_terms_and_friction_defaults(v2_stack) -> None:
-    _, stub, _ = v2_stack
+    _, stub, _, _ = v2_stack
     q = [0.1, 0.3, 0.4, 0.0, -0.1, 0.2]
     v = [0.1, -0.1, 0.0, 0.02, -0.02, 0.001]
     a = [0.2] * 6
@@ -83,7 +86,7 @@ async def test_m5_dynamics_terms_and_friction_defaults(v2_stack) -> None:
 
 @pytest.mark.asyncio
 async def test_m5_joint_and_gripper_mit(v2_stack) -> None:
-    loop, stub, metadata = v2_stack
+    loop, stub, metadata, _ = v2_stack
     call = stub.JointMIT(metadata=metadata)
     await call.write(
         arm_pb2.JointMITCommand(
@@ -114,7 +117,7 @@ async def test_m5_joint_and_gripper_mit(v2_stack) -> None:
 
 @pytest.mark.asyncio
 async def test_m6_joint_trajectory_zero_velocity_and_cancel(v2_stack) -> None:
-    _, stub, metadata = v2_stack
+    _, stub, metadata, _ = v2_stack
     completed = await stub.RunJointTrajectory(
         arm_pb2.RunJointTrajectoryRequest(
             waypoints=[
@@ -166,7 +169,7 @@ async def test_m6_joint_trajectory_zero_velocity_and_cancel(v2_stack) -> None:
 
 @pytest.mark.asyncio
 async def test_m6_joint_trajectory_with_middle_velocity(v2_stack) -> None:
-    _, stub, metadata = v2_stack
+    _, stub, metadata, _ = v2_stack
     accepted = await stub.RunJointTrajectory(
         arm_pb2.RunJointTrajectoryRequest(
             waypoints=[
@@ -188,3 +191,141 @@ async def test_m6_joint_trajectory_with_middle_velocity(v2_stack) -> None:
     ):
         final = status
     assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+
+
+@pytest.mark.asyncio
+async def test_m7_teach_record_stop_and_list(v2_stack) -> None:
+    loop, stub, metadata, _ = v2_stack
+    started = await stub.TeachStart(arm_pb2.TeachStartRequest(), metadata=metadata)
+    assert started.accepted
+    await asyncio.sleep(0.03)
+    assert loop.has_active_motion
+
+    recording = await stub.TeachRecordStart(
+        arm_pb2.TeachRecordStartRequest(path="session.jsonl", flush_interval=0.01),
+        metadata=metadata,
+    )
+    assert recording.accepted
+    await asyncio.sleep(0.08)
+    saved = await stub.TeachRecordStop(arm_pb2.Empty(), metadata=metadata)
+    assert saved.accepted and saved.frame_count >= 5
+    lines = [json.loads(line) for line in Path(saved.saved_path).read_text().splitlines()]
+    assert len(lines) == saved.frame_count
+    assert set(lines[0]) == {"t", "pos", "vel", "gripper_pos", "gripper_vel"}
+    assert len(lines[0]["pos"]) == 6 and len(lines[0]["vel"]) == 6
+
+    listed = await stub.TeachList(arm_pb2.Empty())
+    assert len(listed.files) == 1
+    assert listed.files[0].path == saved.saved_path
+    assert listed.files[0].frame_count == saved.frame_count
+
+    stopped = await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    assert stopped.accepted
+    await asyncio.sleep(0.03)
+    assert not loop.has_active_motion
+
+
+@pytest.mark.asyncio
+async def test_m7_teach_play_posvel_and_cancel(v2_stack) -> None:
+    _, stub, metadata, server = v2_stack
+    root = server.arm_service._teach_store.root
+    complete_path = root / "complete.jsonl"
+    complete_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "t": 0.0,
+                        "pos": [0.0] * 6,
+                        "vel": [0.0] * 6,
+                        "gripper_pos": 0.0,
+                        "gripper_vel": 0.0,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "t": 0.4,
+                        "pos": [0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        "vel": [0.05, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        "gripper_pos": 0.02,
+                        "gripper_vel": 0.05,
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    accepted = await stub.TeachPlay(
+        arm_pb2.TeachPlayRequest(
+            path=str(complete_path),
+            mode=arm_pb2.PLAYBACK_MODE_POSVEL,
+            playback_dt=0.01,
+            smooth_window=1,
+        ),
+        metadata=metadata,
+    )
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+
+    current = await stub.GetJointState(arm_pb2.Empty())
+    start = [joint.position for joint in current.joints]
+    mit_path = root / "mit.jsonl"
+    mit_path.write_text(
+        json.dumps({"t": 0.0, "pos": start, "vel": [0.0] * 6})
+        + "\n"
+        + json.dumps({"t": 0.05, "pos": start, "vel": [0.0] * 6})
+        + "\n",
+        encoding="utf-8",
+    )
+    mit = await stub.TeachPlay(
+        arm_pb2.TeachPlayRequest(
+            path=str(mit_path),
+            mode=arm_pb2.PLAYBACK_MODE_MIT,
+            kp=[0.0] * 6,
+            kd=[0.0] * 6,
+            playback_dt=0.01,
+            smooth_window=1,
+        ),
+        metadata=metadata,
+    )
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=mit.execution_id)
+    ):
+        final = status
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+
+    cancel_path = root / "cancel.jsonl"
+    target = start.copy()
+    target[0] += 0.08
+    cancel_path.write_text(
+        json.dumps({"t": 0.0, "pos": start, "vel": [0.0] * 6})
+        + "\n"
+        + json.dumps({"t": 2.0, "pos": target, "vel": [0.04, 0.0, 0.0, 0.0, 0.0, 0.0]})
+        + "\n",
+        encoding="utf-8",
+    )
+    running = await stub.TeachPlay(
+        arm_pb2.TeachPlayRequest(
+            path=str(cancel_path),
+            mode=arm_pb2.PLAYBACK_MODE_POSVEL,
+            playback_dt=0.01,
+            smooth_window=1,
+        ),
+        metadata=metadata,
+    )
+    await asyncio.sleep(0.1)
+    cancelled = await stub.CancelExecution(
+        arm_pb2.CancelExecutionRequest(execution_id=running.execution_id),
+        metadata=metadata,
+    )
+    assert cancelled.cancelled
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=running.execution_id)
+    ):
+        final = status
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_CANCELLED

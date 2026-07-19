@@ -125,6 +125,28 @@ class SimBackend:
             self._kd = np.concatenate((frame.arm_kd, [frame.gripper_kd]))
         self._last_frame = frame
 
+    def compensation_torque(
+        self,
+        q: np.ndarray,
+        v: np.ndarray,
+        fc: np.ndarray,
+        fv: np.ndarray,
+        vel_threshold: float,
+    ) -> np.ndarray:
+        """仿真模型没有重力项，只复现 SDK 的摩擦补偿公式。"""
+        self._require_open()
+        positions = np.asarray(q, dtype=np.float64)
+        velocities = np.asarray(v, dtype=np.float64)
+        coulomb = np.asarray(fc, dtype=np.float64)
+        viscous = np.asarray(fv, dtype=np.float64)
+        if any(value.shape != (6,) for value in (positions, velocities, coulomb, viscous)):
+            raise ValueError("补偿向量长度必须为 6")
+        if vel_threshold < 0 or not np.isfinite(vel_threshold):
+            raise ValueError("vel_threshold 必须是非负有限数值")
+        full = coulomb * np.sign(velocities) + viscous * velocities
+        low_speed = viscous * velocities
+        return np.where(np.abs(velocities) < vel_threshold, low_speed, full)
+
     def maintain_idle(self) -> None:
         self._require_open()
         if self._last_frame is None:

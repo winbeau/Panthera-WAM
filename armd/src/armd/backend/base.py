@@ -247,6 +247,16 @@ class Backend(Protocol):
     def write_frame(self, frame: JointFrame) -> None:
         """写入完整一帧并下发（内部只调一次 flush）。见本模块顶部 N7 说明。"""
 
+    def compensation_torque(
+        self,
+        q: np.ndarray,
+        v: np.ndarray,
+        fc: np.ndarray,
+        fv: np.ndarray,
+        vel_threshold: float,
+    ) -> np.ndarray:
+        """计算重力与摩擦补偿；只允许在 HardwareLoop 线程调用。"""
+
     def maintain_idle(self) -> None:
         """空闲周期重发最后安全帧；无历史帧时建立零刚度阻尼帧。"""
 

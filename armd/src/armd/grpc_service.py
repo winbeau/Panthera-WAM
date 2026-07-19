@@ -27,10 +27,14 @@ from .motion import (
     JointJogMotion,
     JointMITMotion,
     JointPositionMotion,
+    TEACH_TAU_LIMIT,
+    TeachMotion,
+    TeachPlaybackMotion,
     position_frame,
 )
 from .safety import apply_watchdog_stop
 from .state import gripper_state_message, joint_state_message, robot_state_message
+from .teach import TeachStore, TrajectoryRecorder, load_raw_frames, prepare_playback_frames
 
 SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
 DEFAULT_FRICTION_FC = np.array([0.20, 0.15, 0.15, 0.15, 0.04, 0.04], dtype=np.float64)
@@ -197,6 +201,10 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
         self._unary_jog_token = ""
+        self._teach_store = TeachStore()
+        self._teach_motion: TeachMotion | None = None
+        self._teach_completion = None
+        self._recorder: TrajectoryRecorder | None = None
 
     async def AcquireControl(self, request, context):
         try:
@@ -1012,6 +1020,194 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         execution_id = self._executions.register(motion, completion)
         return arm_pb2.ExecutionAccepted(execution_id=execution_id)
 
+    async def TeachStart(self, request, context):
+        self._refresh_teach_motion()
+        if self._hardware_loop.has_active_motion:
+            return arm_pb2.TeachStartResponse(
+                accepted=False,
+                reject_reason="已有运动正在执行",
+            )
+        try:
+            kp = finite_vector(request.kp, name="kp") if request.kp else np.zeros(6)
+            kd = finite_vector(request.kd, name="kd") if request.kd else np.zeros(6)
+            fc = (
+                finite_vector(request.fc, name="fc")
+                if request.fc
+                else DEFAULT_FRICTION_FC.copy()
+            )
+            fv = (
+                finite_vector(request.fv, name="fv")
+                if request.fv
+                else DEFAULT_FRICTION_FV.copy()
+            )
+            motion = TeachMotion(kp=kp, kd=kd, fc=fc, fv=fv)
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            return arm_pb2.TeachStartResponse(accepted=False, reject_reason=str(exc))
+        self._teach_motion = motion
+        self._teach_completion = completion
+        return arm_pb2.TeachStartResponse(accepted=True)
+
+    async def TeachStop(self, request, context):
+        del request, context
+        self._refresh_teach_motion()
+        motion = self._teach_motion
+        completion = self._teach_completion
+        if motion is None or completion is None:
+            return arm_pb2.TeachStopResponse(accepted=False)
+        motion.request_cancel(CancelReason.CLIENT)
+        try:
+            await asyncio.wait_for(asyncio.wrap_future(completion), timeout=0.5)
+        except (TimeoutError, asyncio.TimeoutError, RuntimeError):
+            pass
+        self._teach_motion = None
+        self._teach_completion = None
+        return arm_pb2.TeachStopResponse(accepted=True)
+
+    async def TeachRecordStart(self, request, context):
+        if self._recorder is not None:
+            return arm_pb2.TeachRecordStartResponse(
+                accepted=False,
+                path=str(self._recorder.path),
+            )
+        self._refresh_teach_motion()
+        if self._teach_motion is None:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "请先启动拖动示教")
+        flush_interval = optional_double(request, "flush_interval", 0.2)
+        try:
+            path = self._teach_store.recording_path(request.path)
+            recorder = TrajectoryRecorder(path, flush_interval=flush_interval)
+        except (OSError, ValueError) as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        self._recorder = recorder
+        self._hardware_loop.set_record_sink(recorder.record)
+        return arm_pb2.TeachRecordStartResponse(accepted=True, path=str(path))
+
+    async def TeachRecordStop(self, request, context):
+        del request
+        recorder = self._recorder
+        if recorder is None:
+            return arm_pb2.TeachRecordStopResponse(accepted=False)
+        self._hardware_loop.set_record_sink(None)
+        self._recorder = None
+        try:
+            frame_count = await asyncio.to_thread(recorder.close)
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            await context.abort(grpc.StatusCode.INTERNAL, str(exc))
+        return arm_pb2.TeachRecordStopResponse(
+            accepted=True,
+            saved_path=str(recorder.path),
+            frame_count=frame_count,
+        )
+
+    async def TeachPlay(self, request, context):
+        if self._hardware_loop.has_active_motion:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
+        mode = "posvel" if request.mode == arm_pb2.PLAYBACK_MODE_POSVEL else "mit"
+        try:
+            path = self._teach_store.existing_path(request.path)
+            frames = await asyncio.to_thread(load_raw_frames, path)
+            prepared = await asyncio.to_thread(
+                prepare_playback_frames,
+                frames,
+                playback_dt=optional_double(request, "playback_dt", 0.01),
+                smooth_window=(request.smooth_window if request.HasField("smooth_window") else 7),
+            )
+            if mode == "mit" and (not request.kp or not request.kd):
+                raise ValueError("MIT 回放必须提供 kp 和 kd")
+            kp = finite_vector(request.kp, name="kp") if request.kp else np.zeros(6)
+            kd = finite_vector(request.kd, name="kd") if request.kd else np.zeros(6)
+            fc = (
+                finite_vector(request.fc, name="fc")
+                if request.fc
+                else DEFAULT_FRICTION_FC.copy()
+            )
+            fv = (
+                finite_vector(request.fv, name="fv")
+                if request.fv
+                else DEFAULT_FRICTION_FV.copy()
+            )
+            tau_limit = (
+                finite_vector(request.tau_limit, name="tau_limit")
+                if request.tau_limit
+                else TEACH_TAU_LIMIT.copy()
+            )
+            vel_threshold = optional_double(request, "vel_threshold", 0.0)
+            gripper_kp = optional_double(request, "gripper_kp", 5.0)
+            gripper_kd = optional_double(request, "gripper_kd", 0.5)
+        except FileNotFoundError as exc:
+            await context.abort(grpc.StatusCode.NOT_FOUND, str(exc))
+        except (OSError, ValueError) as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+
+        limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
+        reason = arm_magnitude_reject_reason(tau_limit, limits.joint_torque, label="tau_limit")
+        if reason or np.any(tau_limit <= 0):
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                reason or "tau_limit 必须全部为正数",
+            )
+        for index, frame in enumerate(prepared):
+            reason = arm_position_reject_reason(frame.position, limits)
+            reason = reason or arm_magnitude_reject_reason(
+                frame.velocity,
+                limits.joint_velocity,
+                label=f"frames[{index}] 速度",
+            )
+            if reason:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, reason)
+            if frame.gripper_position is not None and not (
+                limits.gripper_lower <= frame.gripper_position <= limits.gripper_upper
+            ):
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    f"frames[{index}] 夹爪位置超过软限位",
+                )
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        try:
+            motion = TeachPlaybackMotion(
+                frames=prepared,
+                mode=mode,
+                kp=kp,
+                kd=kd,
+                fc=fc,
+                fv=fv,
+                vel_threshold=vel_threshold,
+                tau_limit=tau_limit,
+                gripper_kp=gripper_kp,
+                gripper_kd=gripper_kd,
+            )
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        execution_id = self._executions.register(motion, completion)
+        return arm_pb2.ExecutionAccepted(execution_id=execution_id)
+
+    async def TeachList(self, request, context):
+        del request, context
+        response = arm_pb2.TeachListResponse()
+        for item in await asyncio.to_thread(self._teach_store.list_files):
+            response.files.add(
+                path=str(item.path),
+                recorded_at=item.recorded_at_ms,
+                duration_s=item.duration_s,
+                frame_count=item.frame_count,
+            )
+        return response
+
     async def StreamExecution(self, request, context) -> AsyncIterator[arm_pb2.ExecutionStatus]:
         while True:
             snapshot = self._executions.snapshot(request.execution_id)
@@ -1037,6 +1233,28 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         cancelled = self._executions.cancel(request.execution_id)
         return arm_pb2.CancelExecutionResponse(cancelled=cancelled)
 
+    async def close(self) -> None:
+        self._hardware_loop.set_record_sink(None)
+        recorder = self._recorder
+        self._recorder = None
+        if recorder is not None:
+            try:
+                await asyncio.to_thread(recorder.close)
+            except (OSError, RuntimeError, TimeoutError):
+                pass
+        self._refresh_teach_motion()
+        if self._teach_motion is not None and self._teach_completion is not None:
+            self._teach_motion.request_cancel(CancelReason.SHUTDOWN)
+            try:
+                await asyncio.wait_for(
+                    asyncio.wrap_future(self._teach_completion),
+                    timeout=0.5,
+                )
+            except (TimeoutError, asyncio.TimeoutError, RuntimeError):
+                pass
+        self._teach_motion = None
+        self._teach_completion = None
+
     async def _run_position_motion(self, motion, wait, response_type, context):
         accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
         try:
@@ -1058,6 +1276,11 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             errors=motion.errors.tolist(),
             reject_reason=motion.reject_reason,
         )
+
+    def _refresh_teach_motion(self) -> None:
+        if self._teach_completion is not None and self._teach_completion.done():
+            self._teach_motion = None
+            self._teach_completion = None
 
     async def _gripper_move(self, *, position, velocity, max_torque, context):
         values = np.array([position, velocity, max_torque], dtype=np.float64)

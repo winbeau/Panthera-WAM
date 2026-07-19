@@ -237,6 +237,39 @@ class RealBackend:
         robot.motor_send_cmd()
         self._last_frame = frame
 
+    def compensation_torque(
+        self,
+        q: np.ndarray,
+        v: np.ndarray,
+        fc: np.ndarray,
+        fv: np.ndarray,
+        vel_threshold: float,
+    ) -> np.ndarray:
+        """在硬件线程内调用官方 SDK 的重力与摩擦补偿实现。"""
+        self._require_open()
+        positions = np.asarray(q, dtype=np.float64)
+        velocities = np.asarray(v, dtype=np.float64)
+        coulomb = np.asarray(fc, dtype=np.float64)
+        viscous = np.asarray(fv, dtype=np.float64)
+        if any(value.shape != (6,) for value in (positions, velocities, coulomb, viscous)):
+            raise ValueError("补偿向量长度必须为 6")
+        if vel_threshold < 0 or not np.isfinite(vel_threshold):
+            raise ValueError("vel_threshold 必须是非负有限数值")
+        robot = self._require_robot()
+        gravity = np.asarray(robot.get_Gravity(positions), dtype=np.float64)
+        friction = np.asarray(
+            robot.get_friction_compensation(
+                velocities,
+                coulomb,
+                viscous,
+                vel_threshold,
+            ),
+            dtype=np.float64,
+        )
+        if gravity.shape != (6,) or friction.shape != (6,):
+            raise BackendError("SDK 补偿力矩返回长度不是 6")
+        return gravity + friction
+
     def maintain_idle(self) -> None:
         self._require_open()
         if self._last_frame is not None:

@@ -105,12 +105,14 @@ class HardwareLoop:
         self._started = threading.Event()
         self._stopped = threading.Event()
         self._state_lock = threading.Lock()
+        self._record_sink_lock = threading.Lock()
         self._estop_lock = threading.Lock()
         self._stats_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._thread_id: int | None = None
         self._failure: BaseException | None = None
         self._cached_state: CachedRobotState | None = None
+        self._record_sink: Callable[[CachedRobotState], None] | None = None
         self._estop_engaged = False
         self._estop_applied = False
         self._cancel_reason: CancelReason | None = None
@@ -204,6 +206,11 @@ class HardwareLoop:
     def latest_state(self) -> CachedRobotState | None:
         with self._state_lock:
             return self._cached_state
+
+    def set_record_sink(self, sink: Callable[[CachedRobotState], None] | None) -> None:
+        """安装轻量、非阻塞的状态记录回调。"""
+        with self._record_sink_lock:
+            self._record_sink = sink
 
     def stats(self) -> LoopStats:
         with self._stats_lock:
@@ -344,6 +351,16 @@ class HardwareLoop:
         state = CachedRobotState(tuple(backend.read_all()), refreshed_at)
         with self._state_lock:
             self._cached_state = state
+        with self._record_sink_lock:
+            sink = self._record_sink
+        if sink is not None:
+            try:
+                sink(state)
+            except Exception:
+                # 记录失败不能打断 200Hz 控制循环；服务层停止记录时可读取 writer 错误。
+                with self._record_sink_lock:
+                    if self._record_sink is sink:
+                        self._record_sink = None
 
     def _shutdown_backend(self, backend: Backend) -> None:
         try:

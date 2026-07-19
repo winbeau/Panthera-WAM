@@ -10,11 +10,14 @@ import numpy as np
 
 from .backend import Backend, BackendError, FrameMode, JointFrame, idle_damping_frame
 from .hardware_loop import CancelReason, MotionStepResult
+from .teach import PlaybackFrame
 
 POSITION_HOLD_SPEED = 0.1
 JOG_FRESHNESS_S = 0.25
 JOG_LIMIT_MARGIN = 0.02
 MIT_FRESHNESS_S = 0.12
+TEACH_VEL_THRESHOLD_S = 0.02
+TEACH_TAU_LIMIT = np.array([15.0, 30.0, 30.0, 15.0, 5.0, 5.0], dtype=np.float64)
 
 
 def position_frame(
@@ -406,4 +409,308 @@ class CartesianTrajectoryMotion:
         if self._deceleration_step < 12:
             return MotionStepResult.RUNNING
         self.reject_reason = f"运动已取消: {cancel_reason.value}"
+        return MotionStepResult.CANCELLED
+
+
+class TeachMotion:
+    """重力/摩擦前馈的连续拖动示教模式。"""
+
+    def __init__(
+        self,
+        *,
+        kp: np.ndarray,
+        kd: np.ndarray,
+        fc: np.ndarray,
+        fv: np.ndarray,
+        tau_limit: np.ndarray = TEACH_TAU_LIMIT,
+        vel_threshold: float = TEACH_VEL_THRESHOLD_S,
+    ) -> None:
+        self.kp = np.asarray(kp, dtype=np.float64).copy()
+        self.kd = np.asarray(kd, dtype=np.float64).copy()
+        self.fc = np.asarray(fc, dtype=np.float64).copy()
+        self.fv = np.asarray(fv, dtype=np.float64).copy()
+        self.tau_limit = np.asarray(tau_limit, dtype=np.float64).copy()
+        vectors = (self.kp, self.kd, self.fc, self.fv, self.tau_limit)
+        if any(value.shape != (6,) or not np.all(np.isfinite(value)) for value in vectors):
+            raise ValueError("示教控制参数必须各包含 6 个有限数值")
+        if np.any(self.kp < 0) or np.any(self.kd < 0) or np.any(self.tau_limit <= 0):
+            raise ValueError("示教 kp/kd 不得为负，tau_limit 必须为正")
+        if vel_threshold < 0 or not np.isfinite(vel_threshold):
+            raise ValueError("vel_threshold 必须是非负有限数值")
+        self.vel_threshold = float(vel_threshold)
+        self.reject_reason = ""
+        self._cancel_reason: CancelReason | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def fraction(self) -> float:
+        return 0.0
+
+    def request_cancel(self, reason: CancelReason) -> None:
+        with self._lock:
+            self._cancel_reason = reason
+
+    def step(self, backend: Backend, now: float) -> MotionStepResult:
+        del now
+        states = backend.read_all()
+        if len(states) != 7 or not all(state.valid for state in states):
+            backend.stop()
+            self.reject_reason = "电机状态无效或连接不完整"
+            return MotionStepResult.FAILED
+        with self._lock:
+            cancel_reason = self._cancel_reason
+        positions = np.asarray([state.position for state in states[:6]], dtype=np.float64)
+        velocities = np.asarray([state.velocity for state in states[:6]], dtype=np.float64)
+        if cancel_reason is not None:
+            backend.write_frame(idle_damping_frame(backend.limits, positions, states[6].position))
+            self.reject_reason = f"示教已停止: {cancel_reason.value}"
+            return MotionStepResult.CANCELLED
+
+        torque = backend.compensation_torque(
+            positions,
+            velocities,
+            self.fc,
+            self.fv,
+            self.vel_threshold,
+        )
+        torque = np.clip(torque, -self.tau_limit, self.tau_limit)
+        backend.write_frame(
+            JointFrame(
+                mode=FrameMode.POS_VEL_TQE_KP_KD,
+                arm_position=positions,
+                arm_velocity=np.zeros(6),
+                arm_torque=torque,
+                arm_kp=self.kp,
+                arm_kd=self.kd,
+                gripper_position=states[6].position,
+                gripper_velocity=0.0,
+                gripper_torque=0.0,
+                gripper_kp=0.0,
+                gripper_kd=0.0,
+            )
+        )
+        return MotionStepResult.RUNNING
+
+
+class TeachPlaybackMotion:
+    """非阻塞示教回放：先缓慢到起点，再按绝对时间逐帧执行。"""
+
+    def __init__(
+        self,
+        *,
+        frames: list[PlaybackFrame],
+        mode: str,
+        kp: np.ndarray,
+        kd: np.ndarray,
+        fc: np.ndarray,
+        fv: np.ndarray,
+        vel_threshold: float,
+        tau_limit: np.ndarray,
+        gripper_kp: float,
+        gripper_kd: float,
+        start_timeout_s: float = 30.0,
+        settle_timeout_s: float = 2.0,
+    ) -> None:
+        if not frames:
+            raise ValueError("示教回放帧不能为空")
+        if mode not in {"mit", "posvel"}:
+            raise ValueError("回放 mode 必须是 mit 或 posvel")
+        self.frames = frames
+        self.mode = mode
+        self.kp = np.asarray(kp, dtype=np.float64).copy()
+        self.kd = np.asarray(kd, dtype=np.float64).copy()
+        self.fc = np.asarray(fc, dtype=np.float64).copy()
+        self.fv = np.asarray(fv, dtype=np.float64).copy()
+        self.tau_limit = np.asarray(tau_limit, dtype=np.float64).copy()
+        vectors = (self.kp, self.kd, self.fc, self.fv, self.tau_limit)
+        if any(value.shape != (6,) or not np.all(np.isfinite(value)) for value in vectors):
+            raise ValueError("回放控制参数必须各包含 6 个有限数值")
+        if np.any(self.kp < 0) or np.any(self.kd < 0) or np.any(self.tau_limit <= 0):
+            raise ValueError("回放 kp/kd 不得为负，tau_limit 必须为正")
+        if gripper_kp < 0 or gripper_kd < 0:
+            raise ValueError("夹爪 kp/kd 不得为负")
+        self.vel_threshold = float(vel_threshold)
+        self.gripper_kp = float(gripper_kp)
+        self.gripper_kd = float(gripper_kd)
+        self.start_timeout_s = start_timeout_s
+        self.settle_timeout_s = settle_timeout_s
+        self.reject_reason = ""
+        self._fraction = 0.0
+        self._phase_started_at: float | None = None
+        self._playback_started_at: float | None = None
+        self._cancel_reason: CancelReason | None = None
+        self._deceleration_step: int | None = None
+        self._last_velocity = np.zeros(6, dtype=np.float64)
+        self._lock = threading.Lock()
+
+    @property
+    def fraction(self) -> float:
+        with self._lock:
+            return self._fraction
+
+    def request_cancel(self, reason: CancelReason) -> None:
+        with self._lock:
+            self._cancel_reason = reason
+
+    def step(self, backend: Backend, now: float) -> MotionStepResult:
+        states = backend.read_all()
+        if len(states) != 7 or not all(state.valid for state in states):
+            backend.stop()
+            self.reject_reason = "电机状态无效或连接不完整"
+            return MotionStepResult.FAILED
+        current = np.asarray([state.position for state in states[:6]], dtype=np.float64)
+        with self._lock:
+            cancel_reason = self._cancel_reason
+        if cancel_reason is not None:
+            return self._step_cancel(backend, current, states[6].position, cancel_reason)
+        if self._phase_started_at is None:
+            self._phase_started_at = now
+        if self._playback_started_at is None:
+            return self._step_move_to_start(backend, states, current, now)
+        return self._step_playback(backend, states, current, now)
+
+    def _step_move_to_start(
+        self,
+        backend: Backend,
+        states,
+        current: np.ndarray,
+        now: float,
+    ) -> MotionStepResult:
+        first = self.frames[0]
+        gripper_target = (
+            first.gripper_position if first.gripper_position is not None else states[6].position
+        )
+        arm_reached = np.all(np.abs(first.position - current) <= 0.05)
+        gripper_reached = abs(gripper_target - states[6].position) <= 0.05
+        if arm_reached and gripper_reached:
+            self._playback_started_at = now
+            return MotionStepResult.RUNNING
+        assert self._phase_started_at is not None
+        if now - self._phase_started_at >= self.start_timeout_s:
+            hold_current_position(backend)
+            self.reject_reason = "示教回放移动到起点超时"
+            return MotionStepResult.FAILED
+        backend.write_frame(
+            position_frame(
+                backend,
+                arm_position=first.position,
+                arm_velocity=np.full(6, 0.5),
+                gripper_position=gripper_target,
+                gripper_velocity=0.5,
+            )
+        )
+        return MotionStepResult.RUNNING
+
+    def _step_playback(
+        self,
+        backend: Backend,
+        states,
+        current: np.ndarray,
+        now: float,
+    ) -> MotionStepResult:
+        assert self._playback_started_at is not None
+        elapsed = now - self._playback_started_at
+        timestamps = [frame.timestamp_s for frame in self.frames]
+        index = min(int(np.searchsorted(timestamps, elapsed, side="right")), len(self.frames) - 1)
+        frame = self.frames[index]
+        self._last_velocity = frame.velocity.copy()
+        if elapsed <= self.frames[-1].timestamp_s:
+            self._write_playback_frame(backend, states, frame)
+            with self._lock:
+                self._fraction = max(self._fraction, (index + 1) / len(self.frames))
+            return MotionStepResult.RUNNING
+
+        target = self.frames[-1]
+        gripper_target = (
+            target.gripper_position if target.gripper_position is not None else states[6].position
+        )
+        arm_reached = np.all(np.abs(target.position - current) <= 0.03)
+        gripper_reached = abs(gripper_target - states[6].position) <= 0.03
+        if arm_reached and gripper_reached:
+            backend.write_frame(
+                position_frame(
+                    backend,
+                    arm_position=target.position,
+                    arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                    gripper_position=gripper_target,
+                )
+            )
+            with self._lock:
+                self._fraction = 1.0
+            return MotionStepResult.DONE
+        if elapsed >= self.frames[-1].timestamp_s + self.settle_timeout_s:
+            hold_current_position(backend)
+            self.reject_reason = "示教回放末点收敛超时"
+            return MotionStepResult.FAILED
+        backend.write_frame(
+            position_frame(
+                backend,
+                arm_position=target.position,
+                arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                gripper_position=gripper_target,
+            )
+        )
+        return MotionStepResult.RUNNING
+
+    def _write_playback_frame(self, backend: Backend, states, frame: PlaybackFrame) -> None:
+        gripper_position = (
+            frame.gripper_position if frame.gripper_position is not None else states[6].position
+        )
+        if self.mode == "posvel":
+            backend.write_frame(
+                position_frame(
+                    backend,
+                    arm_position=frame.position,
+                    arm_velocity=np.maximum(np.abs(frame.velocity), 1e-3),
+                    gripper_position=gripper_position,
+                    gripper_velocity=max(abs(frame.gripper_velocity), 1e-3),
+                )
+            )
+            return
+        torque = backend.compensation_torque(
+            frame.position,
+            frame.velocity,
+            self.fc,
+            self.fv,
+            self.vel_threshold,
+        )
+        torque = np.clip(torque, -self.tau_limit, self.tau_limit)
+        backend.write_frame(
+            JointFrame(
+                mode=FrameMode.POS_VEL_TQE_KP_KD,
+                arm_position=frame.position,
+                arm_velocity=frame.velocity,
+                arm_torque=torque,
+                arm_kp=self.kp,
+                arm_kd=self.kd,
+                gripper_position=gripper_position,
+                gripper_velocity=frame.gripper_velocity,
+                gripper_torque=0.0,
+                gripper_kp=self.gripper_kp if frame.gripper_position is not None else 0.0,
+                gripper_kd=self.gripper_kd if frame.gripper_position is not None else 0.3,
+            )
+        )
+
+    def _step_cancel(
+        self,
+        backend: Backend,
+        current: np.ndarray,
+        gripper_position: float,
+        cancel_reason: CancelReason,
+    ) -> MotionStepResult:
+        if self._deceleration_step is None:
+            self._deceleration_step = 0
+        self._deceleration_step += 1
+        scale = max(0.0, 1.0 - self._deceleration_step / 12.0)
+        backend.write_frame(
+            position_frame(
+                backend,
+                arm_position=current,
+                arm_velocity=np.maximum(np.abs(self._last_velocity) * scale, 1e-3),
+                gripper_position=gripper_position,
+            )
+        )
+        if self._deceleration_step < 12:
+            return MotionStepResult.RUNNING
+        self.reject_reason = f"示教回放已取消: {cancel_reason.value}"
         return MotionStepResult.CANCELLED
