@@ -73,7 +73,7 @@ public sealed class MainWindowViewModelTests
         Assert.True(viewModel.HasControl);
         Assert.True(viewModel.IsTeachActive);
         Assert.True(viewModel.IsTeachRecording);
-        Assert.True(viewModel.RecordingPath.EndsWith("pick_demo.jsonl", StringComparison.Ordinal));
+        Assert.EndsWith("pick_demo.jsonl", viewModel.RecordingPath, StringComparison.Ordinal);
 
         await viewModel.StopTeachSessionCommand.ExecuteAsync(null);
 
