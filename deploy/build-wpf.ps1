@@ -74,7 +74,7 @@ function Resolve-DotNet9 {
         try {
             $env:DOTNET_ROOT = $candidateRoot
             $env:DOTNET_ROOT_X64 = $candidateRoot
-            $versionOutput = @(& $candidatePath --version 2>$null)
+            $versionOutput = @(& $candidatePath --version 2>&1)
             $candidateExitCode = Get-Variable LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
             $detectedVersion = [string]($versionOutput | Where-Object {
                 ([string]$_).Trim() -match '^9\.'
@@ -86,6 +86,7 @@ function Resolve-DotNet9 {
                     Version = $detectedVersion.Trim()
                 }
             }
+            Write-Warning "Rejected .NET candidate $candidatePath (exit $candidateExitCode): $($versionOutput -join ' ')"
         }
         finally {
             $env:DOTNET_ROOT = $originalDotNetRoot

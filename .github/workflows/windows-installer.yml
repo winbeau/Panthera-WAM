@@ -32,6 +32,17 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
+      - name: Verify .NET 9 SDK
+        shell: pwsh
+        run: |
+          $dotnet = Get-Command dotnet -CommandType Application | Select-Object -First 1
+          if ($null -eq $dotnet) {
+            throw "dotnet was not added to PATH by setup-dotnet"
+          }
+          Write-Host "dotnet command: $($dotnet.Source)"
+          & $dotnet.Source --version
+          & $dotnet.Source --info
+
       - name: Resolve release metadata
         id: metadata
         shell: pwsh
