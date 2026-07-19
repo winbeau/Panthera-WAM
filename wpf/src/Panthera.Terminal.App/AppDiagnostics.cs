@@ -9,7 +9,16 @@ internal static class AppDiagnostics
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Panthera");
 
-    public static string LogPath => Path.Combine(DirectoryPath, "terminal-failures.log");
+    public static string LogPath
+    {
+        get
+        {
+            var overridePath = Environment.GetEnvironmentVariable("PANTHERA_FAILURE_LOG");
+            return string.IsNullOrWhiteSpace(overridePath)
+                ? Path.Combine(DirectoryPath, "terminal-failures.log")
+                : Path.GetFullPath(overridePath);
+        }
+    }
 
     public static void Write(string source, Exception exception)
     {
@@ -17,7 +26,7 @@ internal static class AppDiagnostics
         {
             lock (Gate)
             {
-                Directory.CreateDirectory(DirectoryPath);
+                Directory.CreateDirectory(Path.GetDirectoryName(LogPath) ?? DirectoryPath);
                 File.AppendAllText(
                     LogPath,
                     $"[{DateTimeOffset.Now:O}] {source}{Environment.NewLine}{exception}{Environment.NewLine}{Environment.NewLine}");

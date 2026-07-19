@@ -36,6 +36,8 @@ public sealed class CockpitUiTests
         startInfo.Environment["PANTHERA_UI_TEST"] = "1";
         startInfo.Environment["PANTHERA_UI_ACCEPTANCE"] = "1";
         startInfo.Environment["PANTHERA_SCREENSHOT_THEME"] = "HighContrast";
+        var artifactDirectory = PrepareArtifactDirectory("keyboard");
+        startInfo.Environment["PANTHERA_FAILURE_LOG"] = Path.Combine(artifactDirectory, "terminal-failures-keyboard.log");
 
         using var application = Application.Launch(startInfo);
         using var automation = new UIA3Automation();
@@ -121,11 +123,7 @@ public sealed class CockpitUiTests
         }
         finally
         {
-            application.Close();
-            if (!application.HasExited)
-            {
-                application.Kill();
-            }
+            CloseApplication(application);
         }
     }
 
@@ -156,10 +154,12 @@ public sealed class CockpitUiTests
         };
         startInfo.ArgumentList.Add(applicationAssembly);
         startInfo.Environment["PANTHERA_UI_TEST"] = "1";
+        startInfo.Environment["PANTHERA_UI_ACCEPTANCE"] = "1";
         startInfo.Environment["PANTHERA_SCREENSHOT_THEME"] = theme;
-        var artifactDirectory = Environment.GetEnvironmentVariable("PANTHERA_UI_ARTIFACTS")
-            ?? Path.Combine(AppContext.BaseDirectory, "ui-artifacts");
-        Directory.CreateDirectory(artifactDirectory);
+        var artifactDirectory = PrepareArtifactDirectory(theme.ToLowerInvariant());
+        startInfo.Environment["PANTHERA_FAILURE_LOG"] = Path.Combine(
+            artifactDirectory,
+            $"terminal-failures-{theme.ToLowerInvariant()}.log");
         var screenshotPath = Path.Combine(
             artifactDirectory,
             $"cockpit-{theme.ToLowerInvariant()}.png");
@@ -185,11 +185,7 @@ public sealed class CockpitUiTests
         }
         finally
         {
-            application.Close();
-            if (!application.HasExited)
-            {
-                application.Kill();
-            }
+            CloseApplication(application);
         }
 
         var screenshotInfo = new ProcessStartInfo(dotnetHost)
@@ -199,12 +195,49 @@ public sealed class CockpitUiTests
         };
         screenshotInfo.ArgumentList.Add(applicationAssembly);
         screenshotInfo.Environment["PANTHERA_UI_TEST"] = "1";
+        screenshotInfo.Environment["PANTHERA_UI_ACCEPTANCE"] = "1";
         screenshotInfo.Environment["PANTHERA_SCREENSHOT_THEME"] = theme;
         screenshotInfo.Environment["PANTHERA_SCREENSHOT_PATH"] = screenshotPath;
+        screenshotInfo.Environment["PANTHERA_FAILURE_LOG"] = Path.Combine(
+            artifactDirectory,
+            $"terminal-failures-screenshot-{theme.ToLowerInvariant()}.log");
         using var screenshotProcess = Process.Start(screenshotInfo)
             ?? throw new InvalidOperationException("WPF screenshot process did not start");
         Assert.True(screenshotProcess.WaitForExit(30_000), "WPF screenshot process did not exit");
         Assert.Equal(0, screenshotProcess.ExitCode);
         Assert.True(File.Exists(screenshotPath), $"Screenshot was not written to {screenshotPath}");
+    }
+
+    private static string PrepareArtifactDirectory(string testName)
+    {
+        var artifactDirectory = Environment.GetEnvironmentVariable("PANTHERA_UI_ARTIFACTS")
+            ?? Path.Combine(AppContext.BaseDirectory, "ui-artifacts");
+        Directory.CreateDirectory(artifactDirectory);
+        File.WriteAllText(
+            Path.Combine(artifactDirectory, $"started-{testName}.txt"),
+            $"Started {DateTimeOffset.UtcNow:O}{Environment.NewLine}");
+        return artifactDirectory;
+    }
+
+    private static void CloseApplication(Application application)
+    {
+        try
+        {
+            application.Close();
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+        try
+        {
+            if (!application.HasExited)
+            {
+                application.Kill();
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 }

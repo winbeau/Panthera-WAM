@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 
 namespace Panthera.Terminal.App;
 
@@ -28,6 +29,7 @@ public partial class CadThreeView : UserControl
     private bool _stateDirty = true;
     private bool _pushActive;
     private bool _initializing;
+    private WebView2? _browser;
 
     public CadThreeView()
     {
@@ -70,6 +72,12 @@ public partial class CadThreeView : UserControl
 
     private async void CadThreeView_Loaded(object sender, RoutedEventArgs eventArgs)
     {
+        if (Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE") == "1")
+        {
+            LoadingText.Text = "CAD UI 验收占位";
+            _modelReady.TrySetResult("acceptance");
+            return;
+        }
         _pushTimer.Start();
         await InitializeBrowserAsync();
     }
@@ -78,15 +86,28 @@ public partial class CadThreeView : UserControl
 
     private async Task InitializeBrowserAsync()
     {
-        if (_initializing || Browser.CoreWebView2 is not null)
+        if (_initializing || _browser?.CoreWebView2 is not null)
         {
             return;
         }
         _initializing = true;
         try
         {
-            await Browser.EnsureCoreWebView2Async();
-            var core = Browser.CoreWebView2
+            var browser = _browser;
+            if (browser is null)
+            {
+                browser = new WebView2
+                {
+                    Focusable = false,
+                    IsHitTestVisible = false,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                };
+                _browser = browser;
+                BrowserHost.Children.Insert(0, browser);
+            }
+            await browser.EnsureCoreWebView2Async();
+            var core = browser.CoreWebView2
                 ?? throw new InvalidOperationException("WebView2 初始化完成后 CoreWebView2 仍为空");
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.AreDevToolsEnabled = Debugger.IsAttached;
@@ -140,7 +161,8 @@ public partial class CadThreeView : UserControl
 
     private async void PushTimer_Tick(object? sender, EventArgs eventArgs)
     {
-        if (!_bridgeReady || !_stateDirty || _pushActive || Browser.CoreWebView2 is null)
+        var browser = _browser;
+        if (!_bridgeReady || !_stateDirty || _pushActive || browser?.CoreWebView2 is null)
         {
             return;
         }
@@ -155,7 +177,7 @@ public partial class CadThreeView : UserControl
                 source = "WPF",
                 timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             });
-            await Browser.ExecuteScriptAsync($"window.PantheraWpfBridge?.setState({payload})");
+            await browser.ExecuteScriptAsync($"window.PantheraWpfBridge?.setState({payload})");
         }
         catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
         {
@@ -169,7 +191,8 @@ public partial class CadThreeView : UserControl
 
     private async Task ApplyThemeAsync()
     {
-        if (!_bridgeReady || Browser.CoreWebView2 is null)
+        var browser = _browser;
+        if (!_bridgeReady || browser?.CoreWebView2 is null)
         {
             return;
         }
@@ -177,27 +200,29 @@ public partial class CadThreeView : UserControl
             || Theme.Equals("HighContrast", StringComparison.OrdinalIgnoreCase)
             ? "dark"
             : "light";
-        await Browser.ExecuteScriptAsync(
+        await browser.ExecuteScriptAsync(
             $"window.PantheraWpfBridge?.setTheme({JsonSerializer.Serialize(theme)})");
     }
 
     private async void StylePicker_SelectionChanged(object sender, SelectionChangedEventArgs eventArgs)
     {
-        if (!_bridgeReady || Browser.CoreWebView2 is null || StylePicker.SelectedItem is not ComboBoxItem { Tag: string style })
+        var browser = _browser;
+        if (!_bridgeReady || browser?.CoreWebView2 is null || StylePicker.SelectedItem is not ComboBoxItem { Tag: string style })
         {
             return;
         }
-        await Browser.ExecuteScriptAsync(
+        await browser.ExecuteScriptAsync(
             $"window.PantheraWpfBridge?.setStyle({JsonSerializer.Serialize(style)})");
     }
 
     private async void CameraPicker_SelectionChanged(object sender, SelectionChangedEventArgs eventArgs)
     {
-        if (!_bridgeReady || Browser.CoreWebView2 is null || CameraPicker.SelectedItem is not ComboBoxItem { Tag: string mode })
+        var browser = _browser;
+        if (!_bridgeReady || browser?.CoreWebView2 is null || CameraPicker.SelectedItem is not ComboBoxItem { Tag: string mode })
         {
             return;
         }
-        await Browser.ExecuteScriptAsync(
+        await browser.ExecuteScriptAsync(
             $"window.PantheraWpfBridge?.setCameraMode({JsonSerializer.Serialize(mode)})");
     }
 }
