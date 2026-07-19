@@ -16,14 +16,14 @@
             </Grid.ColumnDefinitions>
             <StackPanel VerticalAlignment="Center">
                 <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                           FontFamily="Cascadia Mono, Consolas" FontSize="12.5" FontWeight="Bold" />
+                           FontFamily="Cascadia Mono, Consolas" FontSize="13.5" FontWeight="Bold" />
                 <TextBlock Text="{Binding Subtitle, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                           FontSize="10" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                           FontSize="11.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0,8,0">
                 <TextBlock Text="{Binding Position, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:F3}}"
-                           FontFamily="Cascadia Mono, Consolas" FontSize="12" FontWeight="SemiBold" />
-                <TextBlock Text=" rad" FontFamily="Cascadia Mono, Consolas" FontSize="9.5"
+                           FontFamily="Cascadia Mono, Consolas" FontSize="13.5" FontWeight="SemiBold" />
+                <TextBlock Text=" rad" FontFamily="Cascadia Mono, Consolas" FontSize="10.5"
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Bottom" Margin="1,0,0,1" />
             </StackPanel>
             <UniformGrid Grid.Column="2" Columns="2" VerticalAlignment="Center">
@@ -46,11 +46,24 @@
                                     PressCommand="{Binding PressCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     ReleaseCommand="{Binding ReleaseCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
             </UniformGrid>
-            <ProgressBar Grid.Row="1" Grid.ColumnSpan="3" Height="3" Margin="0,5,0,0"
-                         Minimum="{Binding Minimum, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                         Maximum="{Binding Maximum, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                         Value="{Binding Position, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                         ToolTip="当前位置在软限位区间中的相对位置" />
+            <Grid Grid.Row="1" Grid.ColumnSpan="3" Height="6" Margin="0,9,0,1"
+                  ToolTip="当前位置相对零位：左侧为负方向，右侧为正方向">
+                <ProgressBar Maximum="100"
+                             Value="{Binding PositionPercent, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                    <ProgressBar.Template>
+                        <ControlTemplate TargetType="ProgressBar">
+                            <Grid SnapsToDevicePixels="True" ClipToBounds="True">
+                                <Border x:Name="PART_Track" CornerRadius="3"
+                                        Background="{DynamicResource ControlFillColorSecondaryBrush}" />
+                                <Border x:Name="PART_Indicator" HorizontalAlignment="Left" CornerRadius="3"
+                                        Background="{DynamicResource AccentFillColorDefaultBrush}" />
+                            </Grid>
+                        </ControlTemplate>
+                    </ProgressBar.Template>
+                </ProgressBar>
+                <Border Width="1" HorizontalAlignment="Center"
+                        Background="{DynamicResource ControlStrokeColorStrongBrush}" />
+            </Grid>
         </Grid>
     </Border>
 </UserControl>

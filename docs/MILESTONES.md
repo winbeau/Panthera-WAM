@@ -129,7 +129,7 @@
   - [x] 独立 `dataset.proto`、异步作业、取消/观察、字段映射与官方 LeRobotDataset v3 隔离 worker 已落地
 - [x] **M9 无损审计收尾** ✅ `tools/audit_sdk_contract.py` 对 42 项方法逐条验证 SDK 源码、RPC 实现、CLI 与内部覆盖；结果 35 direct + 6 internal + 1 lifecycle，0 遗漏、0 无理由
 - [x] **WPF v2 A 版控制台增量** ✅ 双 Tab 信息架构、精确 CAD 三视图、6 轴与夹爪状态、Ctrl 加减缩放、D405 双流、LeRobot 导出均已接线；示教录制升级为一键获取控制权、启动拖动示教、Linux JSONL 录制、停止保存、自动刷新选中与 POS-VEL 回放的完整会话，后端在 watchdog/示教结束时自动关闭 writer；三视图复用 `Panthera-HT-TriView` 子模块资源，并由 GitHub Actions 负责 Windows 构建与 UI 验收
-- [x] **WPF v2.1 紧凑 Fluent 润色** ✅ 删除控制页左侧重复六轴/TCP 栏，三视图成为主视觉；CAD 在宽屏使用侧视/主视加宽三列、窄屏自动切换 2×2；右侧 Jog 重构为六条紧凑横向控制行并保留软限位提示，CAD 风格/镜头选择器移出 WebView 覆盖层恢复可见；UI 最小缩放提高到 90%。已用隔离验收客户端实际检查 1600×960、1240×800、浅色 100% 与深色 90%，并通过 Windows Release 构建、单元测试及五项 FlaUI 主题/键盘验收
+- [x] **WPF v2.1 紧凑 Fluent 润色** ✅ 删除控制页左侧重复六轴/TCP 栏，三视图成为主视觉；右侧 Jog 六行同时承载点动与按真实软限位计算的关节状态条，三视图右列显示俯视图与 D405 RGB 实时画面，TCP XYZ 移到 CAD 标题栏；MoveJ/MoveL 改为左右常驻的 6+6 输入区，各自具有时长、执行和取消。CAD 在宽屏使用侧视/主视加宽布局、窄屏自动切换 2×2，固定镜头取景与模型尺寸已收紧；加入 PerMonitorV2 DPI 声明和 2560×1600@150% 自适应窗口，UI 最小缩放提高到 90%。已通过 Windows Release 构建、10 项单元测试及五项真实 FlaUI 主题/键盘验收
 
 ---
 
