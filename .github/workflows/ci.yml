@@ -8,7 +8,7 @@ jobs:
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: actions/setup-python@v5
@@ -22,10 +22,10 @@ jobs:
   wpf:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "9.0.x"
       - name: Restore WPF solution
@@ -52,7 +52,7 @@ jobs:
           --output ${{ runner.temp }}\panthera-terminal-win-x64
       - name: Upload WPF UI artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wpf-ui-artifacts
           path: ${{ runner.temp }}\ui-artifacts
