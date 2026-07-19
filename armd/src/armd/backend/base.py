@@ -205,6 +205,8 @@ class JointFrame:
 
 
 IDLE_DAMPING_KD = np.array([2.0, 3.0, 3.0, 1.5, 0.8, 0.8], dtype=np.float64)
+ESTOP_RECOVERY_DAMPING_KD = np.array([10.0, 15.0, 15.0, 10.0, 5.0, 5.0], dtype=np.float64)
+ESTOP_RECOVERY_GRIPPER_KD = 0.6
 
 
 def idle_damping_frame(
@@ -225,6 +227,28 @@ def idle_damping_frame(
         gripper_torque=0.0,
         gripper_kp=0.0,
         gripper_kd=0.3,
+    )
+
+
+def estop_recovery_frame(
+    limits: BackendLimits,
+    arm_position: np.ndarray,
+    arm_torque: np.ndarray,
+    gripper_position: float,
+) -> JointFrame:
+    """急停复位后的零刚度高阻尼帧；阻尼高于柔顺空闲态。"""
+    return JointFrame(
+        mode=FrameMode.POS_VEL_TQE_KP_KD,
+        arm_position=np.clip(arm_position, limits.joint_lower, limits.joint_upper),
+        arm_velocity=np.zeros(6),
+        arm_torque=arm_torque,
+        arm_kp=np.zeros(6),
+        arm_kd=ESTOP_RECOVERY_DAMPING_KD,
+        gripper_position=float(np.clip(gripper_position, limits.gripper_lower, limits.gripper_upper)),
+        gripper_velocity=0.0,
+        gripper_torque=0.0,
+        gripper_kp=0.0,
+        gripper_kd=ESTOP_RECOVERY_GRIPPER_KD,
     )
 
 

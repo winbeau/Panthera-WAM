@@ -11,9 +11,16 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Generic, Protocol, TypeVar, runtime_checkable
 
-from .backend import Backend, MotorSnapshot
+import numpy as np
+
+from .backend import Backend, MotorSnapshot, estop_recovery_frame
 
 ResultT = TypeVar("ResultT")
+
+_ESTOP_RECOVERY_FC = np.array([0.20, 0.15, 0.15, 0.15, 0.04, 0.04], dtype=np.float64)
+_ESTOP_RECOVERY_FV = np.array([0.06, 0.06, 0.06, 0.03, 0.02, 0.02], dtype=np.float64)
+_ESTOP_RECOVERY_TAU_LIMIT = np.array([15.0, 30.0, 30.0, 15.0, 5.0, 5.0], dtype=np.float64)
+_ESTOP_RECOVERY_VEL_THRESHOLD = 0.02
 
 
 class CancelReason(str, enum.Enum):
@@ -115,6 +122,9 @@ class HardwareLoop:
         self._record_sink: Callable[[CachedRobotState], None] | None = None
         self._estop_engaged = False
         self._estop_applied = False
+        self._estop_recovery_pending = False
+        self._estop_recovery_applied = False
+        self._estop_recovery_error = ""
         self._cancel_reason: CancelReason | None = None
         self._active_motion: SteppableMotion | None = None
         self._motion_future: Future[MotionStepResult] | None = None
@@ -141,6 +151,16 @@ class HardwareLoop:
     def estop_applied(self) -> bool:
         with self._estop_lock:
             return self._estop_applied
+
+    @property
+    def estop_recovery_applied(self) -> bool:
+        with self._estop_lock:
+            return self._estop_recovery_applied
+
+    @property
+    def estop_recovery_error(self) -> str:
+        with self._estop_lock:
+            return self._estop_recovery_error
 
     @property
     def has_active_motion(self) -> bool:
@@ -192,15 +212,21 @@ class HardwareLoop:
         with self._estop_lock:
             self._estop_engaged = True
             self._estop_applied = False
+            self._estop_recovery_pending = False
+            self._estop_recovery_applied = False
+            self._estop_recovery_error = ""
 
     def clear_estop(self) -> bool:
-        """仅清除已由 HardwareLoop 实际下发过 stop 的 latch。"""
+        """请求解除已实际下发的 EStop；恢复帧由 HardwareLoop 原子建立。"""
         self._require_running()
         with self._estop_lock:
             if not self._estop_engaged or not self._estop_applied:
                 return False
             self._estop_engaged = False
             self._estop_applied = False
+            self._estop_recovery_pending = True
+            self._estop_recovery_applied = False
+            self._estop_recovery_error = ""
             return True
 
     def latest_state(self) -> CachedRobotState | None:
@@ -251,10 +277,12 @@ class HardwareLoop:
                 self._cache_state(backend, self._clock())
 
                 if not estop:
-                    self._process_requests(backend)
-                    self._step_motion(backend, self._clock())
-                    if self._active_motion is None:
-                        backend.maintain_idle()
+                    recovered = self._apply_estop_recovery_if_needed(backend)
+                    if not recovered:
+                        self._process_requests(backend)
+                        self._step_motion(backend, self._clock())
+                        if self._active_motion is None:
+                            backend.maintain_idle()
 
                 cycle_s = self._clock() - cycle_started
                 cycles += 1
@@ -289,6 +317,51 @@ class HardwareLoop:
             backend.stop()
             self._finish_motion(MotionStepResult.CANCELLED)
             with self._estop_lock:
+                self._estop_applied = True
+        return True
+
+    def _apply_estop_recovery_if_needed(self, backend: Backend) -> bool:
+        with self._estop_lock:
+            pending = self._estop_recovery_pending
+        if not pending:
+            return False
+
+        error = ""
+        try:
+            states = backend.read_all()
+            if len(states) != 7 or not all(state.valid for state in states):
+                raise RuntimeError("电机状态无效或连接不完整")
+            positions = np.asarray([state.position for state in states[:6]], dtype=np.float64)
+            velocities = np.asarray([state.velocity for state in states[:6]], dtype=np.float64)
+            torque = backend.compensation_torque(
+                positions,
+                velocities,
+                _ESTOP_RECOVERY_FC,
+                _ESTOP_RECOVERY_FV,
+                _ESTOP_RECOVERY_VEL_THRESHOLD,
+            )
+            torque_limit = np.minimum(backend.limits.joint_torque, _ESTOP_RECOVERY_TAU_LIMIT)
+            backend.write_frame(
+                estop_recovery_frame(
+                    backend.limits,
+                    positions,
+                    np.clip(torque, -torque_limit, torque_limit),
+                    states[6].position,
+                )
+            )
+        except Exception as exc:
+            error = str(exc)
+            try:
+                backend.stop()
+            except Exception as stop_exc:
+                error = f"{error}; 重新急停失败: {stop_exc}"
+
+        with self._estop_lock:
+            self._estop_recovery_pending = False
+            self._estop_recovery_applied = not error
+            self._estop_recovery_error = error
+            if error:
+                self._estop_engaged = True
                 self._estop_applied = True
         return True
 

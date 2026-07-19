@@ -269,6 +269,22 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "ClearEStop 必须 confirm=true")
         if not self._hardware_loop.clear_estop():
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "EStop 尚未执行或未处于触发态")
+        deadline = time.monotonic() + 0.2
+        while (
+            not self._hardware_loop.estop_recovery_applied
+            and not self._hardware_loop.estop_recovery_error
+            and time.monotonic() < deadline
+        ):
+            await asyncio.sleep(min(self._hardware_loop.period_s, 0.005))
+        recovery_error = self._hardware_loop.estop_recovery_error
+        if recovery_error:
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"急停复位安全阻尼建立失败: {recovery_error}",
+            )
+        if not self._hardware_loop.estop_recovery_applied:
+            self._hardware_loop.request_estop()
+            await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "急停复位安全阻尼未在 200ms 内建立")
         return arm_pb2.EStopResponse(engaged=False, timestamp_ms=int(time.time() * 1000))
 
     async def GetSoftLimits(self, request, context):

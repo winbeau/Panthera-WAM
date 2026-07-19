@@ -6,7 +6,14 @@ import time
 import numpy as np
 import pytest
 
-from armd.backend import Backend, FrameMode, JointFrame, SimBackend
+from armd.backend import (
+    ESTOP_RECOVERY_DAMPING_KD,
+    IDLE_DAMPING_KD,
+    Backend,
+    FrameMode,
+    JointFrame,
+    SimBackend,
+)
 from armd.hardware_loop import CancelReason, HardwareLoop, MotionStepResult
 
 
@@ -26,6 +33,7 @@ class ThreadRecordingBackend(SimBackend):
         self.call_threads: set[int] = set()
         self.stop_event = threading.Event()
         self.idle_maintain_count = 0
+        self.frames: list[JointFrame] = []
 
     def refresh_state(self) -> None:
         self.call_threads.add(threading.get_ident())
@@ -37,6 +45,7 @@ class ThreadRecordingBackend(SimBackend):
 
     def write_frame(self, frame: JointFrame) -> None:
         self.call_threads.add(threading.get_ident())
+        self.frames.append(frame)
         super().write_frame(frame)
 
     def stop(self) -> None:
@@ -143,6 +152,49 @@ def test_estop_preempts_motion_and_latches_until_cleared() -> None:
         assert not blocked.done()
         assert loop.clear_estop()
         blocked.result(timeout=1.0)
+        assert loop.estop_recovery_applied
+        recovery_index = next(
+            index
+            for index, frame in enumerate(holder["backend"].frames)
+            if frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+            and frame.arm_kd is not None
+            and np.array_equal(frame.arm_kd, ESTOP_RECOVERY_DAMPING_KD)
+        )
+        queued_index = next(
+            index
+            for index, frame in enumerate(holder["backend"].frames)
+            if index > recovery_index
+            and frame.mode is FrameMode.VELOCITY
+            and frame.arm_velocity[0] == 0.5
+        )
+        assert recovery_index < queued_index
+        assert np.all(ESTOP_RECOVERY_DAMPING_KD > IDLE_DAMPING_KD)
+    finally:
+        loop.stop()
+
+
+def test_estop_recovery_failure_relatches_stop() -> None:
+    class FailingRecoveryBackend(ThreadRecordingBackend):
+        def compensation_torque(self, q, v, fc, fv, vel_threshold):
+            del q, v, fc, fv, vel_threshold
+            raise RuntimeError("simulated compensation failure")
+
+    loop = HardwareLoop(FailingRecoveryBackend, control_hz=200.0)
+    loop.start()
+    try:
+        loop.request_estop()
+        deadline = time.monotonic() + 1.0
+        while not loop.estop_applied and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert loop.estop_applied
+        assert loop.clear_estop()
+        deadline = time.monotonic() + 1.0
+        while not loop.estop_recovery_error and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert "simulated compensation failure" in loop.estop_recovery_error
+        assert loop.estop_engaged
+        assert loop.estop_applied
+        assert not loop.estop_recovery_applied
     finally:
         loop.stop()
 

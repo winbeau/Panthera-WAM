@@ -423,9 +423,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
             AddLog("Warning", "Safety", "复位急停前需获取控制权");
             return;
         }
-        await _client.ClearEStopAsync();
-        EStopEngaged = false;
-        AddLog("Info", "Safety", "急停已复位");
+        try
+        {
+            await StopJogAsync();
+            await _client.ClearEStopAsync();
+            EStopEngaged = false;
+            AddLog("Info", "Safety", "急停已复位，高阻尼安全恢复已建立");
+        }
+        catch (Exception exception)
+        {
+            EStopEngaged = true;
+            AddLog("Error", "Safety", $"急停复位失败，保持急停：{exception.Message}");
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanRunMotion))]

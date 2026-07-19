@@ -112,6 +112,7 @@ async def test_estop_is_lock_free_and_blocks_motion_until_confirmed_clear(grpc_s
     cleared = await stub.ClearEStop(arm_pb2.ClearEStopRequest(confirm=True), metadata=metadata)
     assert not cleared.engaged
     assert not loop.estop_engaged
+    assert loop.estop_recovery_applied
 
 
 @pytest.mark.asyncio

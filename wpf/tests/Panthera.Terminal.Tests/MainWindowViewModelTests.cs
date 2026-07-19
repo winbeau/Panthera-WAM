@@ -32,6 +32,28 @@ public sealed class MainWindowViewModelTests
             entry.Source == "Jog" && entry.Message.Contains("已安全停止", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task ClearEStopFailure_IsContainedAndKeepsEStopLatched()
+    {
+        var viewModel = new MainWindowViewModel(
+            new FailingJogClient(),
+            new StubEnvironmentGuideService(),
+            new StubSettingsStore(),
+            new TerminalSettings())
+        {
+            HasControl = true,
+            EStopEngaged = true,
+            ConnectionState = TerminalConnectionState.Connected,
+        };
+
+        await viewModel.ClearEStopCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.EStopEngaged);
+        Assert.Contains(viewModel.Logs, entry =>
+            entry.Source == "Safety"
+            && entry.Message.Contains("急停复位失败，保持急停", StringComparison.Ordinal));
+    }
+
     private sealed class FailingJogClient : IArmdClient
     {
         public TerminalConnectionState ConnectionState { get; private set; } = TerminalConnectionState.Connected;
