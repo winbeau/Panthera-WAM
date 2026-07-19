@@ -69,6 +69,9 @@ def test_camera_worker_stop_interrupts_blocking_backend() -> None:
             self.closed.wait(30)
             raise RuntimeError("closed")
 
+        def interrupt(self) -> None:
+            self.closed.set()
+
         def close(self) -> None:
             self.closed.set()
 

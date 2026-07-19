@@ -93,6 +93,8 @@ class CameraBackend(Protocol):
 
     def read(self) -> tuple[RawCameraFrame, ...]: ...
 
+    def interrupt(self) -> None: ...
+
     def close(self) -> None: ...
 
 
@@ -116,9 +118,11 @@ class RealSenseCameraBackend:
         self._rs = None
         self._pipeline = None
         self._pipeline_lock = threading.Lock()
+        self._interrupt = threading.Event()
         self._depth_scale = 0.0
 
     def open(self) -> CameraDeviceInfo:
+        self._interrupt.clear()
         try:
             import pyrealsense2 as rs
         except ImportError as exc:
@@ -189,7 +193,17 @@ class RealSenseCameraBackend:
             pipeline = self._pipeline
         if pipeline is None:
             raise CameraUnavailableError("D405 pipeline 尚未启动")
-        frames = pipeline.wait_for_frames(self.timeout_ms)
+        deadline = time.monotonic() + self.timeout_ms / 1000.0
+        frames = None
+        while not self._interrupt.is_set() and time.monotonic() < deadline:
+            frames = pipeline.poll_for_frames()
+            if frames:
+                break
+            self._interrupt.wait(0.005)
+        if self._interrupt.is_set():
+            raise CameraUnavailableError("D405 采集已中断")
+        if not frames:
+            raise CameraUnavailableError(f"D405 在 {self.timeout_ms}ms 内未返回新帧")
         output: list[RawCameraFrame] = []
         depth = frames.get_depth_frame()
         if depth:
@@ -201,7 +215,11 @@ class RealSenseCameraBackend:
             raise CameraUnavailableError("D405 返回了空 frameset")
         return tuple(output)
 
+    def interrupt(self) -> None:
+        self._interrupt.set()
+
     def close(self) -> None:
+        self._interrupt.set()
         with self._pipeline_lock:
             pipeline, self._pipeline = self._pipeline, None
         if pipeline is not None:
@@ -328,6 +346,9 @@ class SimCameraBackend:
     def close(self) -> None:
         pass
 
+    def interrupt(self) -> None:
+        pass
+
 
 class CameraWorker:
     """在专用线程中独占后端，并只保留每种流的最新一帧。"""
@@ -370,7 +391,7 @@ class CameraWorker:
             self._condition.notify_all()
         if backend is not None:
             try:
-                backend.close()
+                backend.interrupt()
             except Exception:
                 pass
         thread, self._thread = self._thread, None
