@@ -63,19 +63,33 @@ function Resolve-DotNet9 {
         $candidates.Add($command.Source)
     }
 
+    $originalDotNetRoot = $env:DOTNET_ROOT
+    $originalDotNetRootX64 = $env:DOTNET_ROOT_X64
     foreach ($candidate in $candidates | Select-Object -Unique) {
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
             continue
         }
-        $versionOutput = & $candidate --version 2>$null
-        $candidateExitCode = Get-Variable LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
-        $detectedVersion = [string]($versionOutput | Select-Object -First 1)
-        if (($null -eq $candidateExitCode -or $candidateExitCode -eq 0) -and $detectedVersion.Trim() -match '^9\.') {
-            return [pscustomobject]@{
-                Exe = [IO.Path]::GetFullPath($candidate)
-                Root = Split-Path -Parent ([IO.Path]::GetFullPath($candidate))
-                Version = $detectedVersion.Trim()
+        $candidatePath = [IO.Path]::GetFullPath($candidate)
+        $candidateRoot = Split-Path -Parent $candidatePath
+        try {
+            $env:DOTNET_ROOT = $candidateRoot
+            $env:DOTNET_ROOT_X64 = $candidateRoot
+            $versionOutput = @(& $candidatePath --version 2>$null)
+            $candidateExitCode = Get-Variable LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
+            $detectedVersion = [string]($versionOutput | Where-Object {
+                ([string]$_).Trim() -match '^9\.'
+            } | Select-Object -First 1)
+            if (($null -eq $candidateExitCode -or $candidateExitCode -eq 0) -and -not [string]::IsNullOrWhiteSpace($detectedVersion)) {
+                return [pscustomobject]@{
+                    Exe = $candidatePath
+                    Root = $candidateRoot
+                    Version = $detectedVersion.Trim()
+                }
             }
+        }
+        finally {
+            $env:DOTNET_ROOT = $originalDotNetRoot
+            $env:DOTNET_ROOT_X64 = $originalDotNetRootX64
         }
     }
 
