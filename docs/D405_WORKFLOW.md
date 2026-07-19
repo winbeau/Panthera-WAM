@@ -99,8 +99,8 @@ uv run panthera camera stream --stream color --frames 300 --rate-hz 30
 ## 仿真开发
 
 ```bash
-uv run --package panthera-armd armd --sim --camera-mode sim --check
-uv run --package panthera-armd armd --sim --camera-mode sim
+uv run --package panthera-armd armd --sim --check
+uv run --package panthera-armd armd --sim
 uv run panthera camera status --json
 ```
 

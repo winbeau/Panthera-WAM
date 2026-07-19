@@ -10,4 +10,4 @@ test:
 	uv run --all-packages --all-extras pytest -q armd/tests cli/tests
 
 smoke:
-	uv run --package panthera-armd armd --sim --camera-mode sim --check
+	uv run --package panthera-armd armd --sim --check

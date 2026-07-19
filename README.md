@@ -48,7 +48,7 @@ make check
 uv run --package panthera-armd armd --sim
 uv run panthera daemon status
 uv run panthera --help
-uv run --package panthera-armd armd --sim --camera-mode sim --check
+uv run --package panthera-armd armd --sim --check
 ```
 
 `make check` 执行 Ruff、全部 Python 测试和 200Hz 仿真自检，不接触真机。

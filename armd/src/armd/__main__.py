@@ -53,8 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--camera-mode",
         choices=("off", "auto", "sim"),
-        default=os.environ.get("PANTHERA_CAMERA_MODE", "off"),
-        help="D405 采集模式：off/auto/sim（默认 off）",
+        default=os.environ.get("PANTHERA_CAMERA_MODE", "auto"),
+        help="D405 采集模式：off/auto/sim（默认 auto；--sim 时 auto 使用仿真相机）",
     )
     parser.add_argument(
         "--camera-serial",
@@ -98,8 +98,9 @@ async def run(args: argparse.Namespace) -> None:
     loop = HardwareLoop(backend_factory, control_hz=args.control_hz)
     if args.camera_width <= 0 or args.camera_height <= 0 or args.camera_fps <= 0:
         raise SystemExit("camera width/height/fps 必须为正整数")
+    camera_mode = "sim" if args.sim and args.camera_mode == "auto" else args.camera_mode
     camera_worker = None
-    if args.camera_mode == "sim":
+    if camera_mode == "sim":
         camera_worker = CameraWorker(
             partial(
                 SimCameraBackend,
@@ -108,7 +109,7 @@ async def run(args: argparse.Namespace) -> None:
                 fps=args.camera_fps,
             )
         )
-    elif args.camera_mode == "auto":
+    elif camera_mode == "auto":
         camera_worker = CameraWorker(
             partial(
                 RealSenseCameraBackend,
@@ -162,7 +163,7 @@ async def run(args: argparse.Namespace) -> None:
         mode = "仿真" if args.sim else f"真机（固件看门狗 {args.motor_timeout_ms}ms）"
         print(
             f"armd {mode}服务已启动：grpc://{args.bind}，HardwareLoop={args.control_hz:g}Hz，"
-            f"D405={args.camera_mode}"
+            f"D405={camera_mode}"
         )
         await server.wait_for_termination()
     finally:
