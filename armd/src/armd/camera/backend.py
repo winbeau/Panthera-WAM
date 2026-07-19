@@ -115,6 +115,7 @@ class RealSenseCameraBackend:
         self.timeout_ms = timeout_ms
         self._rs = None
         self._pipeline = None
+        self._pipeline_lock = threading.Lock()
         self._depth_scale = 0.0
 
     def open(self) -> CameraDeviceInfo:
@@ -156,7 +157,8 @@ class RealSenseCameraBackend:
 
         active_device = active_profile.get_device()
         self._rs = rs
-        self._pipeline = pipeline
+        with self._pipeline_lock:
+            self._pipeline = pipeline
         self._depth_scale = float(active_device.first_depth_sensor().get_depth_scale())
         return CameraDeviceInfo(
             model=self._get_info(active_device, rs.camera_info.name),
@@ -183,7 +185,8 @@ class RealSenseCameraBackend:
         )
 
     def read(self) -> tuple[RawCameraFrame, ...]:
-        pipeline = self._pipeline
+        with self._pipeline_lock:
+            pipeline = self._pipeline
         if pipeline is None:
             raise CameraUnavailableError("D405 pipeline 尚未启动")
         frames = pipeline.wait_for_frames(self.timeout_ms)
@@ -199,7 +202,8 @@ class RealSenseCameraBackend:
         return tuple(output)
 
     def close(self) -> None:
-        pipeline, self._pipeline = self._pipeline, None
+        with self._pipeline_lock:
+            pipeline, self._pipeline = self._pipeline, None
         if pipeline is not None:
             try:
                 pipeline.stop()
@@ -339,6 +343,7 @@ class CameraWorker:
         self._condition = threading.Condition()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._active_backend: CameraBackend | None = None
         self._frames: dict[CameraStream, CameraFrameSnapshot] = {}
         self._sequences = {CameraStream.DEPTH: 0, CameraStream.COLOR: 0}
         self._frame_times: deque[float] = deque(maxlen=60)
@@ -361,7 +366,13 @@ class CameraWorker:
     def stop(self) -> None:
         self._stop.set()
         with self._condition:
+            backend = self._active_backend
             self._condition.notify_all()
+        if backend is not None:
+            try:
+                backend.close()
+            except Exception:
+                pass
         thread, self._thread = self._thread, None
         if thread is not None:
             thread.join(timeout=5.0)
@@ -416,6 +427,8 @@ class CameraWorker:
     def _run(self) -> None:
         while not self._stop.is_set():
             backend = self._backend_factory()
+            with self._condition:
+                self._active_backend = backend
             try:
                 info = backend.open()
                 with self._condition:
@@ -444,6 +457,9 @@ class CameraWorker:
                     self._condition.notify_all()
             finally:
                 backend.close()
+                with self._condition:
+                    if self._active_backend is backend:
+                        self._active_backend = None
             self._stop.wait(self._reconnect_delay_s)
 
     def _publish(self, frames: tuple[RawCameraFrame, ...]) -> None:

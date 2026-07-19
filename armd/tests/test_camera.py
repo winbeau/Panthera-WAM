@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 
 import grpc
 import pytest
 from panthera_arm import camera_pb2, camera_pb2_grpc
 
 from armd.backend import SimBackend
-from armd.camera.backend import CameraStream, CameraWorker, SimCameraBackend
+from armd.camera.backend import (
+    CameraDeviceInfo,
+    CameraPixelFormat,
+    CameraProfileInfo,
+    CameraStream,
+    CameraWorker,
+    SimCameraBackend,
+)
 from armd.hardware_loop import HardwareLoop
 from armd.server import ArmdServer
 
@@ -31,6 +40,51 @@ def test_camera_worker_keeps_latest_depth_and_color_frames() -> None:
     assert status.available
     assert status.streaming
     assert status.model == "RealSense D405 Simulator"
+
+
+def test_camera_worker_stop_interrupts_blocking_backend() -> None:
+    class BlockingBackend:
+        def __init__(self) -> None:
+            self.closed = threading.Event()
+
+        def open(self) -> CameraDeviceInfo:
+            return CameraDeviceInfo(
+                model="Blocking D405",
+                serial="BLOCKING",
+                firmware="test",
+                usb_type="test",
+                sdk_version="test",
+                profiles=(
+                    CameraProfileInfo(
+                        CameraStream.DEPTH,
+                        CameraPixelFormat.Z16,
+                        8,
+                        6,
+                        30,
+                    ),
+                ),
+            )
+
+        def read(self):
+            self.closed.wait(30)
+            raise RuntimeError("closed")
+
+        def close(self) -> None:
+            self.closed.set()
+
+    backend = BlockingBackend()
+    worker = CameraWorker(lambda: backend)
+    worker.start()
+    deadline = time.monotonic() + 1.0
+    while not worker.status().available and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert worker.status().available
+
+    started = time.monotonic()
+    worker.stop()
+
+    assert backend.closed.is_set()
+    assert time.monotonic() - started < 1.0
 
 
 @pytest.mark.asyncio
