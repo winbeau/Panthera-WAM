@@ -52,6 +52,11 @@ function Resolve-DotNet9 {
     if (-not [string]::IsNullOrWhiteSpace($env:PANTHERA_DOTNET_EXE)) {
         $candidates.Add($env:PANTHERA_DOTNET_EXE)
     }
+    foreach ($dotnetRoot in @($env:DOTNET_ROOT_X64, $env:DOTNET_ROOT)) {
+        if (-not [string]::IsNullOrWhiteSpace($dotnetRoot)) {
+            $candidates.Add((Join-Path $dotnetRoot "dotnet.exe"))
+        }
+    }
     $candidates.Add((Join-Path $HOME ".dotnet\dotnet.exe"))
     $command = Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $command) {
