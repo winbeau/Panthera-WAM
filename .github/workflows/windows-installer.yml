@@ -109,6 +109,60 @@ jobs:
           "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
           "checksum_file=$((Resolve-Path 'wpf\installer\output\SHA256SUMS.txt').Path)" >> $env:GITHUB_OUTPUT
 
+      - name: Smoke-test installed application
+        shell: pwsh
+        env:
+          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP "Panthera-Terminal-Installed"
+          $installLog = Join-Path $env:RUNNER_TEMP "panthera-installer.log"
+          $install = Start-Process $env:INSTALLER_PATH -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-",
+            "/DIR=$installDir",
+            "/LOG=$installLog"
+          ) -PassThru -Wait
+          if ($install.ExitCode -ne 0) {
+            Get-Content $installLog -ErrorAction SilentlyContinue
+            throw "Installer exited with code $($install.ExitCode)"
+          }
+
+          $app = Join-Path $installDir "Panthera.Terminal.App.exe"
+          if (-not (Test-Path $app)) {
+            throw "Installed application was not found at $app"
+          }
+          $screenshot = Join-Path $env:RUNNER_TEMP "installed-highcontrast.png"
+          $env:PANTHERA_UI_TEST = "1"
+          $env:PANTHERA_UI_ACCEPTANCE = "1"
+          $env:PANTHERA_SCREENSHOT_THEME = "HighContrast"
+          $env:PANTHERA_SCREENSHOT_PATH = $screenshot
+          $application = Start-Process $app -PassThru
+          if (-not $application.WaitForExit(30_000)) {
+            $application.Kill($true)
+            throw "Installed application did not finish its screenshot smoke test"
+          }
+          if ($application.ExitCode -ne 0 -or -not (Test-Path $screenshot)) {
+            throw "Installed application smoke test failed with code $($application.ExitCode)"
+          }
+
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path $uninstaller)) {
+            throw "Uninstaller was not found at $uninstaller"
+          }
+          $uninstall = Start-Process $uninstaller -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART"
+          ) -PassThru -Wait
+          if ($uninstall.ExitCode -ne 0) {
+            throw "Uninstaller exited with code $($uninstall.ExitCode)"
+          }
+          if (Test-Path $app) {
+            throw "Application files remain after uninstall"
+          }
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:

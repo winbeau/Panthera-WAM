@@ -7,7 +7,9 @@ shortcut, and registers a normal Windows uninstaller.
 
 The GitHub workflow `.github/workflows/windows-installer.yml` runs automatically for future `v*`
 tags and can also be dispatched manually. A manual dispatch can attach the generated installer and
-`SHA256SUMS.txt` to an existing GitHub Release by setting `release_tag`.
+`SHA256SUMS.txt` to an existing GitHub Release by setting `release_tag`. Before upload, the workflow
+silently installs the package, launches the installed application for a HighContrast screenshot,
+and silently uninstalls it again.
 
 Local Windows build outline:
 
