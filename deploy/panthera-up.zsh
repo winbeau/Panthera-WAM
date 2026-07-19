@@ -13,8 +13,9 @@ panthera-up() {
     local state_dir="$HOME/.local/state/panthera"
     local log="$state_dir/armd.log"
     local camera_log="$state_dir/camerad.log"
-    local endpoint="127.0.0.1:50051"
-    local camera_endpoint="127.0.0.1:50052"
+    local public_bind="127.0.0.1:50051"
+    local endpoint="[::1]:50051"
+    local camera_endpoint="[::1]:50052"
     local python="$repo/.venv/bin/python"
     local armd="$repo/.venv/bin/armd"
     local camerad="$repo/.venv/bin/camerad"
@@ -99,8 +100,8 @@ panthera-up() {
     local http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
     local grpc_proxy GRPC_PROXY
     unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy grpc_proxy GRPC_PROXY
-    local -x NO_PROXY="127.0.0.1,localhost"
-    local -x no_proxy="127.0.0.1,localhost"
+    local -x NO_PROXY="127.0.0.1,localhost,::1"
+    local -x no_proxy="127.0.0.1,localhost,::1"
 
     print "[5/7] 清理旧 armd/camerad/仿真进程..."
     command pkill -INT -f '[.]venv/bin/[a]rmd' 2>/dev/null || true
@@ -174,7 +175,8 @@ panthera-up() {
         PANTHERA_CAMERA_MODE=proxy \
         PANTHERA_CAMERA_ENDPOINT="$camera_endpoint" \
         "$armd" \
-        --bind "$endpoint" \
+        --bind "$public_bind" \
+        --local-bind "$endpoint" \
         --sdk-root "$sdk" \
         --config "$config" \
         --motor-timeout-ms 150 \
@@ -191,7 +193,8 @@ panthera-up() {
             if daemon_status=$(NO_COLOR=1 PANTHERA_ENDPOINT="$endpoint" "$cli" daemon status --json 2>/dev/null) \
                 && camera_status=$(NO_COLOR=1 PANTHERA_ENDPOINT="$endpoint" "$cli" camera status --json 2>/dev/null); then
                 print "Panthera 统一后端已恢复：armd PID=$pid，camerad PID=$camera_pid"
-                print "  公开 gRPC：$endpoint（CameraService 由 $camera_endpoint 代理）"
+                print "  公开 gRPC：localhost:50051；WSL 探活：$endpoint"
+                print "  CameraService：armd → $camera_endpoint"
                 print "  机械臂：$daemon_status"
                 print "  D405：    $camera_status"
                 print "  日志：    $log / $camera_log"

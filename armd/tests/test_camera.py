@@ -191,11 +191,12 @@ async def test_armd_proxies_internal_camerad() -> None:
         hardware_loop,
         bind="127.0.0.1:0",
         camera_endpoint=f"127.0.0.1:{camera_port}",
+        additional_binds=("127.0.0.1:0",),
     )
     hardware_loop.start()
     await server.start()
     channel = grpc.aio.insecure_channel(
-        f"127.0.0.1:{server.port}",
+        f"127.0.0.1:{server.additional_ports[0]}",
         options=(("grpc.enable_http_proxy", 0),),
     )
     await channel.channel_ready()

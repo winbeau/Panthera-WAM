@@ -9,13 +9,13 @@ Windows
 WSL2 / Ubuntu                                  ▼
   panthera-cli ───────────────────────────────── armd
                                                  ├─ ArmService → HardwareLoop → Panthera-HT SDK → 机械臂
-                                                 └─ CameraService proxy ── localhost:50052 ── camerad
+                                                 └─ CameraService proxy ── [::1]:50052 ── camerad
                                                                                               └─ librealsense RSUSB → D405
 ```
 
 机械臂与 D405 都由同一套 WSL2 后端控制，但使用两个隔离进程：`armd` 独占
 机械臂，`camerad` 独占 D405。`armd` 在公开的 `:50051` 端点代理 CameraService，
-内部 `:50052` 只绑定 localhost，避免 librealsense/Python GIL 负载影响 200Hz
+内部 `[::1]:50052` 只绑定 IPv6 localhost，避免 librealsense/Python GIL 负载影响 200Hz
 HardwareLoop。WPF 和普通 CLI 都是纯 gRPC 客户端，只访问 `armd`；WPF 只做
 环境引导、状态/视频可视化和控制意图下发，不直接打开任何硬件 SDK。
 
@@ -94,7 +94,7 @@ uv run panthera camera stream --stream color --frames 300 --rate-hz 30
 ```
 
 所有正常客户端命令都使用 `PANTHERA_ENDPOINT` 的同一个公开 `armd` 端点。
-`PANTHERA_CAMERA_ENDPOINT=127.0.0.1:50052` 仅用于 WSL 内启动脚本和故障诊断，
+`PANTHERA_CAMERA_ENDPOINT=[::1]:50052` 仅用于 WSL 内启动脚本和故障诊断，
 不提供给 WPF。深度帧为 Z16 PGM，像素值乘 JSON 中的 `depth_scale` 得到米；
 彩色帧为 RGB8 PPM。
 

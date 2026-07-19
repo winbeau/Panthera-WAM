@@ -29,6 +29,7 @@ class ArmdServer:
         config_path: str | None = None,
         camera_worker: CameraWorker | None = None,
         camera_endpoint: str | None = None,
+        additional_binds: tuple[str, ...] = (),
     ) -> None:
         if camera_worker is not None and camera_endpoint is not None:
             raise ValueError("camera_worker 与 camera_endpoint 不能同时设置")
@@ -52,6 +53,12 @@ class ArmdServer:
         self.port = self._server.add_insecure_port(bind)
         if self.port == 0:
             raise RuntimeError(f"无法监听 gRPC 地址: {bind}")
+        self.additional_ports: list[int] = []
+        for additional_bind in additional_binds:
+            port = self._server.add_insecure_port(additional_bind)
+            if port == 0:
+                raise RuntimeError(f"无法监听附加 gRPC 地址: {additional_bind}")
+            self.additional_ports.append(port)
         self._watchdog_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:

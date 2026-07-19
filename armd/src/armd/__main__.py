@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--control-hz", type=float, default=200.0, help="控制循环频率（默认 200Hz）")
     parser.add_argument("--bind", default="127.0.0.1:50051", help="gRPC 监听地址")
+    parser.add_argument(
+        "--local-bind",
+        default=os.environ.get("PANTHERA_LOCAL_BIND", ""),
+        help="附加的 WSL 本地监听地址（部署时使用 IPv6 回环）",
+    )
     parser.add_argument("--lease-timeout", type=float, default=2.0, help="控制权心跳超时秒数")
     parser.add_argument(
         "--camera-mode",
@@ -134,6 +139,7 @@ async def run(args: argparse.Namespace) -> None:
         config_path=args.config,
         camera_worker=camera_worker,
         camera_endpoint=camera_endpoint,
+        additional_binds=(args.local_bind,) if args.local_bind else (),
     )
     loop.start()
     try:
@@ -168,9 +174,9 @@ async def run(args: argparse.Namespace) -> None:
             return
 
         mode = "仿真" if args.sim else f"真机（固件看门狗 {args.motor_timeout_ms}ms）"
+        binds = ", ".join(filter(None, (args.bind, args.local_bind)))
         print(
-            f"armd {mode}服务已启动：grpc://{args.bind}，HardwareLoop={args.control_hz:g}Hz，"
-            f"D405={camera_mode}"
+            f"armd {mode}服务已启动：grpc://{binds}，HardwareLoop={args.control_hz:g}Hz，D405={camera_mode}"
         )
         await server.wait_for_termination()
     finally:
