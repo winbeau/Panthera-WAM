@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import grpc
 from panthera_arm import camera_pb2, camera_pb2_grpc
@@ -116,8 +117,12 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
         last_sequence = 0
         sent = 0
         interval_s = 1.0 / max_rate_hz
+        next_emit_at = time.monotonic()
         try:
             while request.max_frames == 0 or sent < request.max_frames:
+                delay = next_emit_at - time.monotonic()
+                if delay > 0:
+                    await asyncio.sleep(delay)
                 frame = await asyncio.to_thread(
                     worker.wait_for_frame,
                     stream,
@@ -135,7 +140,7 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
                 yield frame_message(frame)
                 last_sequence = frame.sequence
                 sent += 1
-                await asyncio.sleep(interval_s)
+                next_emit_at = max(next_emit_at + interval_s, time.monotonic())
         except asyncio.CancelledError:
             return
 

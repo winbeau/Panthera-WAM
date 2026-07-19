@@ -102,6 +102,16 @@ uv run panthera camera status --json
 
 仿真相机用于 CI、CLI 和 WPF 联调，不访问 USB 设备。
 
+## 2026-07-19 真机验收
+
+- 型号 `Intel RealSense D405`，SDK 序列号 `260422273428`，固件 `5.13.0.55`，USB 3.2。
+- Windows camerad 同时启用 `640x480@30` depth Z16 与 color RGB8，状态流实测约
+  `30.9fps`，`last_frame_age_ms` 保持在一个帧周期内。
+- 成功保存 614400-byte 深度帧和 921600-byte 彩色帧，并完成连续 120 帧 gRPC 流，
+  0 次帧超时。
+- 同一设备经 usbipd/WSL 的短快照可用，但持续单流与双流均出现 5 秒帧超时，故该路径
+  仅作为否决证据，不作为生产工作流。
+
 ## 故障定位
 
 - Windows 找不到 D405：检查 USB 3 线缆、端口和设备管理器中的 `VID_8086&PID_0B5B`。
