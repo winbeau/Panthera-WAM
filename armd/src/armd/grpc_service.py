@@ -10,16 +10,31 @@ import grpc
 import numpy as np
 from panthera_arm import arm_pb2, arm_pb2_grpc
 
-from .backend import BackendError, BackendLimits, LimitViolationError
+from .backend import (
+    IDLE_DAMPING_KD,
+    BackendError,
+    BackendLimits,
+    FrameMode,
+    JointFrame,
+    LimitViolationError,
+)
 from .control import LEASE_METADATA_KEY, LeaseManager
 from .execution import ExecutionRegistry
 from .hardware_loop import CancelReason, HardwareLoop, MotionStepResult
 from .kinematics import KinematicsWorker
-from .motion import CartesianTrajectoryMotion, JointJogMotion, JointPositionMotion, position_frame
+from .motion import (
+    CartesianTrajectoryMotion,
+    JointJogMotion,
+    JointMITMotion,
+    JointPositionMotion,
+    position_frame,
+)
 from .safety import apply_watchdog_stop
 from .state import gripper_state_message, joint_state_message, robot_state_message
 
 SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
+DEFAULT_FRICTION_FC = np.array([0.20, 0.15, 0.15, 0.15, 0.04, 0.04], dtype=np.float64)
+DEFAULT_FRICTION_FV = np.array([0.06, 0.06, 0.06, 0.03, 0.02, 0.02], dtype=np.float64)
 
 LEASE_PROTECTED_METHODS = {
     "ReleaseControl",
@@ -534,6 +549,62 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             except (TimeoutError, asyncio.TimeoutError, RuntimeError):
                 pass
 
+    async def JointMIT(self, request_iterator, context) -> AsyncIterator[arm_pb2.JointMITFeedback]:
+        iterator = request_iterator.__aiter__()
+        try:
+            first = await iterator.__anext__()
+        except StopAsyncIteration:
+            return
+        limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
+        try:
+            first_values = self._mit_values(first, limits)
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        motion = JointMITMotion()
+        motion.update(**first_values)
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+
+        async def consume_commands() -> None:
+            async for command in iterator:
+                values = self._mit_values(command, limits)
+                if not self._leases.heartbeat(token):
+                    raise PermissionError("控制权 lease 已失效")
+                motion.update(**values)
+
+        consumer = asyncio.create_task(consume_commands(), name="panthera-joint-mit-consumer")
+        try:
+            while not completion.done():
+                if consumer.done():
+                    error = consumer.exception()
+                    if isinstance(error, ValueError):
+                        await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(error))
+                    if isinstance(error, PermissionError):
+                        await context.abort(grpc.StatusCode.PERMISSION_DENIED, str(error))
+                    break
+                cached = self._hardware_loop.latest_state()
+                if cached is not None:
+                    yield arm_pb2.JointMITFeedback(joint_state=joint_state_message(cached))
+                await asyncio.sleep(0.05)
+        finally:
+            motion.request_cancel(CancelReason.CLIENT)
+            consumer.cancel()
+            try:
+                await consumer
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+            try:
+                await asyncio.wait_for(asyncio.wrap_future(completion), timeout=0.5)
+            except (TimeoutError, asyncio.TimeoutError, RuntimeError):
+                pass
+
     async def JointJogStep(self, request, context):
         limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
         try:
@@ -619,6 +690,58 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             context=context,
         )
 
+    async def GripperMIT(self, request, context):
+        values = np.array(
+            [request.position, request.velocity, request.torque, request.kp, request.kd],
+            dtype=np.float64,
+        )
+        if not np.all(np.isfinite(values)):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "夹爪 MIT 参数必须为有限数值")
+        if request.kp < 0 or request.kd < 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "夹爪 MIT kp/kd 不得为负数")
+        if self._hardware_loop.has_active_motion:
+            return arm_pb2.GripperMITResponse(accepted=False, reject_reason="已有运动正在执行")
+
+        def command(backend):
+            limits = backend.limits
+            if request.position < limits.gripper_lower or request.position > limits.gripper_upper:
+                return False, (
+                    f"gripper 目标 {request.position:.6g} 超出"
+                    f"[{limits.gripper_lower:.6g}, {limits.gripper_upper:.6g}]"
+                )
+            if abs(request.velocity) > limits.gripper_velocity:
+                return False, f"gripper 速度超过限值 ±{limits.gripper_velocity:.6g}"
+            if abs(request.torque) > limits.gripper_torque:
+                return False, f"gripper 前馈力矩超过限值 ±{limits.gripper_torque:.6g}"
+            states = backend.read_all()
+            if len(states) != 7 or not all(state.valid for state in states):
+                return False, "电机状态无效或连接不完整"
+            backend.write_frame(
+                JointFrame(
+                    mode=FrameMode.POS_VEL_TQE_KP_KD,
+                    arm_position=np.array(
+                        [state.position for state in states[:6]],
+                        dtype=np.float64,
+                    ),
+                    arm_velocity=np.zeros(6),
+                    arm_torque=np.zeros(6),
+                    arm_kp=np.zeros(6),
+                    arm_kd=IDLE_DAMPING_KD,
+                    gripper_position=request.position,
+                    gripper_velocity=request.velocity,
+                    gripper_torque=request.torque,
+                    gripper_kp=request.kp,
+                    gripper_kd=request.kd,
+                )
+            )
+            return True, ""
+
+        try:
+            accepted, reason = await asyncio.wrap_future(self._hardware_loop.submit(command))
+        except (BackendError, LimitViolationError, ValueError) as exc:
+            return arm_pb2.GripperMITResponse(accepted=False, reject_reason=str(exc))
+        return arm_pb2.GripperMITResponse(accepted=accepted, reject_reason=reason)
+
     async def GetForwardKinematics(self, request, context):
         q = await self._request_joint_angles(request.joint_angles, context)
         result = await self._kinematics.call("fk", {"q": q})
@@ -642,6 +765,54 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         q = await self._request_joint_angles(request.joint_angles, context)
         value = await self._kinematics.call("manipulability", {"q": q})
         return arm_pb2.ManipulabilityResponse(mu=float(value))
+
+    async def GetDynamicsTerm(self, request, context):
+        terms = {
+            arm_pb2.DYNAMICS_TERM_GRAVITY: "gravity",
+            arm_pb2.DYNAMICS_TERM_CORIOLIS: "coriolis",
+            arm_pb2.DYNAMICS_TERM_MASS_MATRIX: "mass_matrix",
+            arm_pb2.DYNAMICS_TERM_INERTIA: "inertia",
+            arm_pb2.DYNAMICS_TERM_FULL_INVERSE_DYNAMICS: "inverse_dynamics",
+            arm_pb2.DYNAMICS_TERM_FRICTION: "friction",
+        }
+        term = terms.get(request.term)
+        if term is None:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "必须指定有效的 dynamics term")
+        cached = self._hardware_loop.latest_state()
+        if cached is None or not all(state.valid for state in cached.motors[:6]):
+            await context.abort(grpc.StatusCode.UNAVAILABLE, "关节状态无效或连接不完整")
+        current_q = np.array([state.position for state in cached.motors[:6]], dtype=np.float64)
+        current_v = np.array([state.velocity for state in cached.motors[:6]], dtype=np.float64)
+        try:
+            q = finite_vector(request.q, name="q") if request.q else current_q
+            v = finite_vector(request.v, name="v") if request.v else current_v
+            a = finite_vector(request.a, name="a") if request.a else np.zeros(6)
+            fc = finite_vector(request.fc, name="fc") if request.fc else DEFAULT_FRICTION_FC
+            fv = finite_vector(request.fv, name="fv") if request.fv else DEFAULT_FRICTION_FV
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        vel_threshold = optional_double(request, "vel_threshold", 0.01)
+        if vel_threshold < 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "vel_threshold 不得为负数")
+        try:
+            result = await self._kinematics.call(
+                "dynamics",
+                {
+                    "term": term,
+                    "q": q,
+                    "v": v,
+                    "a": a,
+                    "fc": fc,
+                    "fv": fv,
+                    "vel_threshold": vel_threshold,
+                },
+            )
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        response = arm_pb2.DynamicsQueryResponse()
+        for field, values in result.items():
+            getattr(response, field).extend(np.asarray(values).reshape(-1).tolist())
+        return response
 
     async def GetInverseKinematics(self, request, context):
         current = await self._request_joint_angles(request.init_q, context)
@@ -875,6 +1046,36 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         if cached is None or not all(state.valid for state in cached.motors[:6]):
             await context.abort(grpc.StatusCode.UNAVAILABLE, "关节状态无效或连接不完整")
         return np.array([state.position for state in cached.motors[:6]], dtype=np.float64)
+
+    @staticmethod
+    def _mit_values(command, limits: BackendLimits) -> dict[str, np.ndarray]:
+        positions = finite_vector(command.positions, name="positions")
+        velocities = finite_vector(command.velocities, name="velocities")
+        torques = finite_vector(command.torques, name="torques")
+        kp = finite_vector(command.kp, name="kp")
+        kd = finite_vector(command.kd, name="kd")
+        reason = arm_position_reject_reason(positions, limits)
+        reason = reason or arm_magnitude_reject_reason(
+            velocities,
+            limits.joint_velocity,
+            label="速度",
+        )
+        reason = reason or arm_magnitude_reject_reason(
+            torques,
+            limits.joint_torque,
+            label="前馈力矩",
+        )
+        if reason:
+            raise ValueError(reason)
+        if np.any(kp < 0) or np.any(kd < 0):
+            raise ValueError("MIT kp/kd 不得为负数")
+        return {
+            "positions": positions,
+            "velocities": velocities,
+            "torques": torques,
+            "kp": kp,
+            "kd": kd,
+        }
 
     @staticmethod
     def _pose_values(pose, default_rotation: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:

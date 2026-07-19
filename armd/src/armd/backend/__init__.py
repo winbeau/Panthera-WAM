@@ -8,10 +8,12 @@ from .base import (
     DEFAULT_LIMITS,
     DISCONNECTED_SENTINEL,
     FrameMode,
+    IDLE_DAMPING_KD,
     JointFrame,
     LimitViolationError,
     MotorSnapshot,
     STALE_AFTER_S,
+    idle_damping_frame,
 )
 from .sim import SimBackend
 from .real import (
@@ -31,10 +33,12 @@ __all__ = [
     "DEFAULT_LIMITS",
     "DISCONNECTED_SENTINEL",
     "FrameMode",
+    "IDLE_DAMPING_KD",
     "JointFrame",
     "LimitViolationError",
     "MotorSnapshot",
     "STALE_AFTER_S",
+    "idle_damping_frame",
     "SimBackend",
     "DEFAULT_MOTOR_TIMEOUT_MS",
     "MIN_SAFE_STATE_QUERY_FIRMWARE",

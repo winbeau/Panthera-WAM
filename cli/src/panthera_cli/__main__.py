@@ -41,6 +41,7 @@ kinematics_app = typer.Typer(no_args_is_help=True)
 cartesian_app = typer.Typer(no_args_is_help=True)
 execution_app = typer.Typer(no_args_is_help=True)
 camera_app = typer.Typer(no_args_is_help=True)
+dynamics_app = typer.Typer(no_args_is_help=True)
 app.add_typer(control_app, name="control")
 app.add_typer(estop_app, name="estop")
 app.add_typer(safety_app, name="safety")
@@ -53,6 +54,7 @@ app.add_typer(kinematics_app, name="kinematics")
 app.add_typer(cartesian_app, name="cartesian")
 app.add_typer(execution_app, name="execution")
 app.add_typer(camera_app, name="camera")
+app.add_typer(dynamics_app, name="dynamics")
 safety_app.add_typer(limits_app, name="limits")
 console = Console()
 
@@ -187,6 +189,53 @@ def save_camera_frame(frame, output: Path) -> Path:
         encoding="utf-8",
     )
     return output
+
+
+def dynamics_request(
+    term: int,
+    *,
+    joint_angles: str | None = None,
+    joint_vel: str | None = None,
+    accel: str | None = None,
+    fc: str | None = None,
+    fv: str | None = None,
+    vel_threshold: float | None = None,
+) -> arm_pb2.DynamicsQueryRequest:
+    request = arm_pb2.DynamicsQueryRequest(
+        term=term,
+        q=optional_float_list(joint_angles, name="joint-angles"),
+        v=optional_float_list(joint_vel, name="joint-vel"),
+        a=optional_float_list(accel, name="accel"),
+        fc=optional_float_list(fc, name="fc"),
+        fv=optional_float_list(fv, name="fv"),
+    )
+    if vel_threshold is not None:
+        request.vel_threshold = vel_threshold
+    return request
+
+
+def run_dynamics(request: arm_pb2.DynamicsQueryRequest, *, as_json: bool) -> None:
+    channel, stub = create_stub()
+    try:
+        response = stub.GetDynamicsTerm(request)
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    data = {
+        "gravity": list(response.gravity),
+        "coriolis_matrix": list(response.coriolis_matrix),
+        "coriolis_vector": list(response.coriolis_vector),
+        "mass_matrix": list(response.mass_matrix),
+        "inertia_terms": list(response.inertia_terms),
+        "inverse_dynamics": list(response.inverse_dynamics),
+        "friction_compensation": list(response.friction_compensation),
+    }
+    data = {key: value for key, value in data.items() if value}
+    if as_json:
+        console.print_json(json.dumps(data, ensure_ascii=False))
+    else:
+        console.print(data)
 
 
 @control_app.command("acquire")
@@ -456,6 +505,98 @@ def camera_stream(
     console.print(f"received={received}")
 
 
+@dynamics_app.command("gravity")
+def dynamics_gravity(
+    joint_angles: str | None = typer.Option(None, "--joint-angles"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    run_dynamics(
+        dynamics_request(arm_pb2.DYNAMICS_TERM_GRAVITY, joint_angles=joint_angles),
+        as_json=as_json,
+    )
+
+
+@dynamics_app.command("coriolis")
+def dynamics_coriolis(
+    joint_angles: str | None = typer.Option(None, "--joint-angles"),
+    joint_vel: str | None = typer.Option(None, "--joint-vel"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    run_dynamics(
+        dynamics_request(
+            arm_pb2.DYNAMICS_TERM_CORIOLIS,
+            joint_angles=joint_angles,
+            joint_vel=joint_vel,
+        ),
+        as_json=as_json,
+    )
+
+
+@dynamics_app.command("mass-matrix")
+def dynamics_mass_matrix(
+    joint_angles: str | None = typer.Option(None, "--joint-angles"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    run_dynamics(
+        dynamics_request(arm_pb2.DYNAMICS_TERM_MASS_MATRIX, joint_angles=joint_angles),
+        as_json=as_json,
+    )
+
+
+@dynamics_app.command("inertia")
+def dynamics_inertia(
+    joint_angles: str | None = typer.Option(None, "--joint-angles"),
+    accel: str | None = typer.Option(None, "--accel"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    run_dynamics(
+        dynamics_request(
+            arm_pb2.DYNAMICS_TERM_INERTIA,
+            joint_angles=joint_angles,
+            accel=accel,
+        ),
+        as_json=as_json,
+    )
+
+
+@dynamics_app.command("inverse")
+def dynamics_inverse(
+    joint_angles: str | None = typer.Option(None, "--joint-angles"),
+    joint_vel: str | None = typer.Option(None, "--joint-vel"),
+    accel: str | None = typer.Option(None, "--accel"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    run_dynamics(
+        dynamics_request(
+            arm_pb2.DYNAMICS_TERM_FULL_INVERSE_DYNAMICS,
+            joint_angles=joint_angles,
+            joint_vel=joint_vel,
+            accel=accel,
+        ),
+        as_json=as_json,
+    )
+
+
+@dynamics_app.command("friction")
+def dynamics_friction(
+    velocity: str = typer.Option(..., "--vel"),
+    fc: str | None = typer.Option(None, "--fc"),
+    fv: str | None = typer.Option(None, "--fv"),
+    vel_threshold: float = typer.Option(0.01, "--vel-threshold", min=0.0),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    run_dynamics(
+        dynamics_request(
+            arm_pb2.DYNAMICS_TERM_FRICTION,
+            joint_vel=velocity,
+            fc=fc,
+            fv=fv,
+            vel_threshold=vel_threshold,
+        ),
+        as_json=as_json,
+    )
+
+
 @state_app.command("get")
 def state_get(
     joints: bool = typer.Option(True, "--joints/--no-joints"),
@@ -650,6 +791,64 @@ def joint_jog(
         console.print(f"[green]jog 已停止[/green] limit_hit={hits}")
 
 
+@joint_app.command("mit")
+def joint_mit(
+    positions: str = typer.Option(..., "--pos"),
+    velocities: str = typer.Option(..., "--vel"),
+    torques: str = typer.Option(..., "--tqe"),
+    kp: str = typer.Option(..., "--kp"),
+    kd: str = typer.Option(..., "--kd"),
+    stream: Path | None = typer.Option(None, "--stream", exists=True, dir_okay=False),
+) -> None:
+    lease = load_lease()
+    initial = arm_pb2.JointMITCommand(
+        positions=float_list(positions, name="pos"),
+        velocities=float_list(velocities, name="vel"),
+        torques=float_list(torques, name="tqe"),
+        kp=float_list(kp, name="kp"),
+        kd=float_list(kd, name="kd"),
+    )
+
+    def commands():
+        yield initial
+        if stream is None:
+            time.sleep(0.1)
+            return
+        started = time.monotonic()
+        for line_number, line in enumerate(stream.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+                target_time = float(item.get("t", 0.0))
+                delay = target_time - (time.monotonic() - started)
+                if delay > 0:
+                    time.sleep(delay)
+                yield arm_pb2.JointMITCommand(
+                    positions=item["pos"],
+                    velocities=item["vel"],
+                    torques=item.get("tqe", item.get("torques")),
+                    kp=item["kp"],
+                    kd=item["kd"],
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(f"{stream}:{line_number} MIT 帧无效: {exc}") from exc
+
+    channel, stub = create_stub(lease.endpoint)
+    feedback_count = 0
+    try:
+        with maintain_heartbeat(lease):
+            for _ in stub.JointMIT(commands(), metadata=lease_metadata(lease)):
+                feedback_count += 1
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    console.print(f"[green]MIT 流已结束[/green] feedback={feedback_count}")
+
+
 @gripper_app.command("move")
 def gripper_move(
     position: float = typer.Option(..., "--pos"),
@@ -684,6 +883,37 @@ def gripper_close(
         "close",
         arm_pb2.GripperCloseRequest(position=position, velocity=velocity, max_torque=max_torque),
     )
+
+
+@gripper_app.command("mit")
+def gripper_mit(
+    position: float = typer.Option(..., "--pos"),
+    velocity: float = typer.Option(..., "--vel"),
+    torque: float = typer.Option(..., "--tqe"),
+    kp: float = typer.Option(..., "--kp", min=0.0),
+    kd: float = typer.Option(..., "--kd", min=0.0),
+) -> None:
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        response = stub.GripperMIT(
+            arm_pb2.GripperMITCommand(
+                position=position,
+                velocity=velocity,
+                torque=torque,
+                kp=kp,
+                kd=kd,
+            ),
+            metadata=lease_metadata(lease),
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if not response.accepted:
+        console.print(f"[red]夹爪 MIT 被拒绝[/red]: {response.reject_reason}")
+        raise typer.Exit(2)
+    console.print("[green]夹爪 MIT 指令已接受[/green]")
 
 
 @kinematics_app.command("fk")

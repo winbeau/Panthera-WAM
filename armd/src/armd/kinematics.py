@@ -66,6 +66,26 @@ class KinematicsEngine:
             dtype=np.float64,
         )
 
+    def _model_v(self, joint_values: np.ndarray) -> np.ndarray:
+        values = np.asarray(joint_values, dtype=np.float64)
+        if values.shape != (6,):
+            raise ValueError("关节速度/加速度必须包含 6 个数值")
+        result = np.zeros(self.model.nv)
+        for index, joint_name in enumerate(self.joint_names):
+            joint_id = self.model.getJointId(joint_name)
+            result[self.model.joints[joint_id].idx_v] = values[index]
+        return result
+
+    def _joint_v(self, model_values: np.ndarray) -> np.ndarray:
+        return np.array(
+            [model_values[self.model.joints[self.model.getJointId(name)].idx_v] for name in self.joint_names],
+            dtype=np.float64,
+        )
+
+    def _joint_matrix(self, model_matrix: np.ndarray) -> np.ndarray:
+        indices = [self.model.joints[self.model.getJointId(name)].idx_v for name in self.joint_names]
+        return np.asarray(model_matrix, dtype=np.float64)[np.ix_(indices, indices)]
+
     def forward_kinematics(self, joint_angles: np.ndarray) -> dict[str, Any]:
         q = self._model_q(joint_angles)
         pin.forwardKinematics(self.model, self.data, q)
@@ -102,6 +122,61 @@ class KinematicsEngine:
         jacobian = self.jacobian(joint_angles)
         determinant = np.linalg.det(jacobian @ jacobian.T)
         return float(np.sqrt(max(determinant, 0.0)))
+
+    def dynamics(
+        self,
+        *,
+        term: str,
+        q: np.ndarray,
+        v: np.ndarray,
+        a: np.ndarray,
+        fc: np.ndarray,
+        fv: np.ndarray,
+        vel_threshold: float,
+    ) -> dict[str, np.ndarray]:
+        joint_q = np.asarray(q, dtype=np.float64)
+        joint_v = np.asarray(v, dtype=np.float64)
+        joint_a = np.asarray(a, dtype=np.float64)
+        if any(values.shape != (6,) for values in (joint_q, joint_v, joint_a)):
+            raise ValueError("q/v/a 必须分别包含 6 个数值")
+        model_q = self._model_q(joint_q)
+        model_v = self._model_v(joint_v)
+        model_a = self._model_v(joint_a)
+
+        if term == "gravity":
+            original_gravity = self.model.gravity.copy()
+            try:
+                self.model.gravity.linear = np.array([0.0, 0.0, -9.81])
+                gravity = pin.computeGeneralizedGravity(self.model, self.data, model_q)
+            finally:
+                self.model.gravity.linear = original_gravity.linear
+            return {"gravity": self._joint_v(gravity)}
+        if term == "coriolis":
+            matrix = self._joint_matrix(pin.computeCoriolisMatrix(self.model, self.data, model_q, model_v))
+            return {"coriolis_matrix": matrix, "coriolis_vector": matrix @ joint_v}
+        if term == "mass_matrix":
+            return {"mass_matrix": self._joint_matrix(pin.crba(self.model, self.data, model_q))}
+        if term == "inertia":
+            matrix = self._joint_matrix(pin.crba(self.model, self.data, model_q))
+            return {"inertia_terms": matrix @ joint_a}
+        if term == "inverse_dynamics":
+            torque = pin.rnea(self.model, self.data, model_q, model_v, model_a)
+            return {"inverse_dynamics": self._joint_v(torque)}
+        if term == "friction":
+            friction_fc = np.asarray(fc, dtype=np.float64)
+            friction_fv = np.asarray(fv, dtype=np.float64)
+            if friction_fc.shape != (6,) or friction_fv.shape != (6,):
+                raise ValueError("fc/fv 必须分别包含 6 个数值")
+            full = friction_fc * np.sign(joint_v) + friction_fv * joint_v
+            low_speed = friction_fv * joint_v
+            return {
+                "friction_compensation": np.where(
+                    np.abs(joint_v) < vel_threshold,
+                    low_speed,
+                    full,
+                )
+            }
+        raise ValueError(f"未知动力学项: {term}")
 
     def inverse_kinematics(
         self,
@@ -374,6 +449,8 @@ def _worker_call(operation: str, payload: dict[str, Any]) -> Any:
         return _ENGINE.jacobian(payload["q"])
     if operation == "manipulability":
         return _ENGINE.manipulability(payload["q"])
+    if operation == "dynamics":
+        return _ENGINE.dynamics(**payload)
     if operation == "ik":
         return _ENGINE.inverse_kinematics(**payload)
     if operation == "plan":

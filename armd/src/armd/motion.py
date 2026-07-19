@@ -8,12 +8,13 @@ from collections.abc import Callable
 
 import numpy as np
 
-from .backend import Backend, BackendError, FrameMode, JointFrame
+from .backend import Backend, BackendError, FrameMode, JointFrame, idle_damping_frame
 from .hardware_loop import CancelReason, MotionStepResult
 
 POSITION_HOLD_SPEED = 0.1
 JOG_FRESHNESS_S = 0.25
 JOG_LIMIT_MARGIN = 0.02
+MIT_FRESHNESS_S = 0.12
 
 
 def position_frame(
@@ -193,6 +194,82 @@ class JointJogMotion:
                 arm_velocity=velocities,
                 gripper_position=states[6].position,
                 gripper_velocity=0.0,
+            )
+        )
+        return MotionStepResult.RUNNING
+
+
+class JointMITMotion:
+    """流式 MIT 阻抗控制；120ms 无新指令即退回柔顺阻尼。"""
+
+    def __init__(
+        self,
+        *,
+        freshness_s: float = MIT_FRESHNESS_S,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.freshness_s = freshness_s
+        self._clock = clock
+        self._command: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None
+        self._last_command_at = float("-inf")
+        self._cancel_reason: CancelReason | None = None
+        self._lock = threading.Lock()
+
+    def update(
+        self,
+        *,
+        positions: np.ndarray,
+        velocities: np.ndarray,
+        torques: np.ndarray,
+        kp: np.ndarray,
+        kd: np.ndarray,
+    ) -> None:
+        values = tuple(
+            np.asarray(value, dtype=np.float64).copy() for value in (positions, velocities, torques, kp, kd)
+        )
+        if any(value.shape != (6,) or not np.all(np.isfinite(value)) for value in values):
+            raise ValueError("JointMIT 的 pos/vel/tqe/kp/kd 必须分别包含 6 个有限数值")
+        with self._lock:
+            self._command = values
+            self._last_command_at = self._clock()
+
+    def request_cancel(self, reason: CancelReason) -> None:
+        with self._lock:
+            self._cancel_reason = reason
+
+    def step(self, backend: Backend, now: float) -> MotionStepResult:
+        states = backend.read_all()
+        if len(states) != 7 or not all(state.valid for state in states):
+            backend.stop()
+            return MotionStepResult.FAILED
+        with self._lock:
+            command = self._command
+            cancel_reason = self._cancel_reason
+            stale = now - self._last_command_at > self.freshness_s
+        if command is None or cancel_reason is not None or stale:
+            backend.write_frame(
+                idle_damping_frame(
+                    backend.limits,
+                    np.array([state.position for state in states[:6]], dtype=np.float64),
+                    states[6].position,
+                )
+            )
+            return MotionStepResult.CANCELLED
+
+        positions, velocities, torques, kp, kd = command
+        backend.write_frame(
+            JointFrame(
+                mode=FrameMode.POS_VEL_TQE_KP_KD,
+                arm_position=positions,
+                arm_velocity=velocities,
+                arm_torque=torques,
+                arm_kp=kp,
+                arm_kd=kd,
+                gripper_position=states[6].position,
+                gripper_velocity=0.0,
+                gripper_torque=0.0,
+                gripper_kp=0.0,
+                gripper_kd=0.3,
             )
         )
         return MotionStepResult.RUNNING
