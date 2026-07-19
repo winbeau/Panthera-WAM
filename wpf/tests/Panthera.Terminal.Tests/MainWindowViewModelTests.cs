@@ -52,6 +52,9 @@ public sealed class MainWindowViewModelTests
         public Task<DaemonSnapshot> GetDaemonStatusAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
+        public Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public Task<ControlSnapshot> GetControlStatusAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 

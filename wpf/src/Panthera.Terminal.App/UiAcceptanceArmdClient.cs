@@ -13,6 +13,10 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
     public Task<DaemonSnapshot> GetDaemonStatusAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new DaemonSnapshot(true, true, 200.0, "ui-acceptance", false));
 
+    public Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(new CameraSnapshot(
+            true, true, true, "RealSense D405 Simulator", "SIM-D405-0001", "sim", "sim", "sim", "", 8, 30.0));
+
     public Task<ControlSnapshot> GetControlStatusAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(CurrentControl());
 

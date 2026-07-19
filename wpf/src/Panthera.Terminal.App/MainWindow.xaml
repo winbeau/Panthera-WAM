@@ -331,7 +331,7 @@
                     </Grid>
                 </Border>
 
-                <!-- 夹爪 + D405 占位 -->
+                <!-- 夹爪 + armd 统一托管的 D405 状态 -->
                 <Grid Grid.Column="2" Grid.Row="2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*" />
@@ -394,10 +394,12 @@
                                 <TextBlock Text="▣" HorizontalAlignment="Center" VerticalAlignment="Center"
                                            FontSize="17" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
                             </Border>
-                            <TextBlock DockPanel.Dock="Right" Text="v2" Style="{StaticResource MetaTextStyle}" />
+                            <Ellipse DockPanel.Dock="Right" Width="8" Height="8" Margin="8,0,2,0"
+                                     Fill="{DynamicResource SystemFillColorSuccessBrush}"
+                                     Visibility="{Binding CameraAvailable, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="RealSense D405" FontWeight="SemiBold" FontSize="12" />
-                                <TextBlock Text="视频通道预留 · 不影响当前控制闭环" FontSize="10.5"
+                                <TextBlock Text="{Binding CameraSummary}" FontSize="10.5"
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </DockPanel>

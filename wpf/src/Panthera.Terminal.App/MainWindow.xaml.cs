@@ -111,7 +111,7 @@ public partial class MainWindow : FluentWindow
     {
         var result = MessageBox.Show(
             this,
-            "该操作会将机械臂 USB 挂载到 WSL，并可能触发一次 UAC 提权。流程只建立通道，不会下发运动指令。是否继续？",
+            "该操作会将机械臂与 D405 USB 统一挂载到 WSL，并可能触发 UAC 提权。流程只建立通道，不会下发运动指令。是否继续？",
             "确认环境引导",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);

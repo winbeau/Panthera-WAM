@@ -42,6 +42,19 @@ public sealed record DaemonSnapshot(
     string SdkVersion,
     bool EStopLatchHazardPresent);
 
+public sealed record CameraSnapshot(
+    bool Enabled,
+    bool Available,
+    bool Streaming,
+    string Model,
+    string Serial,
+    string Firmware,
+    string UsbType,
+    string SdkVersion,
+    string Error,
+    long LastFrameAgeMs,
+    double ActualFps);
+
 public sealed record ControlSnapshot(
     bool Held,
     string HolderClientId,

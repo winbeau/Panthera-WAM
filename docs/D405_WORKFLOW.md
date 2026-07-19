@@ -1,122 +1,129 @@
-# RealSense D405 工作流
+# RealSense D405 统一后端工作流
 
-## 架构
+## 架构边界
 
 ```text
 Windows
-  ├─ Intel RealSense D405 → pyrealsense2 → camerad → CameraService :50052
-  └─ WPF 控制终端 ───────────────────────┬→ CameraService :50052
-                                         └→ WSL bridge → ArmService :50051
-
-WSL2
-  ├─ panthera-cli ────────────────────────┬→ CameraService :50052
-  │                                       └→ ArmService :50051
-  └─ armd → Panthera-HT SDK → usbipd → 机械臂
+  └─ WPF 可视化终端 ── WSL TCP bridge ──┐
+                                               │ gRPC :50051
+WSL2 / Ubuntu                                  ▼
+  panthera-cli ───────────────────────────────── armd
+                                                 ├─ ArmService → HardwareLoop → Panthera-HT SDK → 机械臂
+                                                 └─ CameraService → CameraWorker → librealsense RSUSB → D405
 ```
 
-D405 留在 Windows，机械臂继续由 WSL2 独占。`camerad` 与 `armd` 是两个独立进程、两个
-gRPC 服务和两个故障域；相机异常不会进入 200Hz HardwareLoop，也不会影响 lease、watchdog
-或 EStop。
+机械臂与 D405 都由 WSL2 中的同一个 `armd` 进程独占。ArmService 与
+CameraService 共享端口、进程生命周期和部署服务。WPF 和 CLI 都是纯 gRPC
+客户端；WPF 只做环境引导、状态/视频可视化和控制意图下发，不直接打开
+RealSense SDK，也不存在独立 `camerad` 或 `:50052` 端口。
 
-### 为什么不把 D405 attach 到 WSL
-
-实机验证中，D405 经 usbipd attach 后可以枚举、保存短快照，但持续流会间歇出现
-`Frame didn't arrive within 5000`。WSL 内核日志同时反复报告 USB/IP 虚拟主控的
-`vhci_get_frame_number()` 尚未实现。该回调直接影响视频设备的 USB 帧调度，因此正式采集
-链路改为 Windows 原生；usbipd 只保留给机械臂控制板。
-
-## Windows 一次性安装
-
-在 Windows PowerShell 中克隆仓库并安装：
-
-```powershell
-git clone --recurse-submodules https://github.com/winbeau/Panthera-WAM.git
-cd Panthera-WAM
-powershell -ExecutionPolicy Bypass -File camera\tools\install-windows.ps1
-```
-
-安装脚本使用 Python 3.11，并安装与 `vendor/librealsense` v2.58.1 对齐的
-`pyrealsense2==2.58.1.10581`。
-
-如果 `usbipd list` 显示 D405 为 `Attached`，先归还 Windows：
-
-```powershell
-usbipd detach --busid <D405_BUSID>
-```
-
-WPF 环境引导也会按 `VID_8086&PID_0B5B` 发现 D405，并在它误挂到 WSL 时自动 detach。
-
-## 启动 camerad
-
-在 Windows PowerShell 中执行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File camera\tools\run-windows.ps1
-```
-
-默认监听 `127.0.0.1:50052`，采集 depth Z16 与 color RGB8，分辨率为
-`640x480@30`。多相机环境可指定 SDK 序列号：
-
-```powershell
-camera\tools\run-windows.ps1 -Serial 260422273428
-```
-
-## CLI 检查与采集
-
-Windows 与 mirrored-networking WSL 均使用独立相机端点：
+## 一次性 WSL 安装
 
 ```bash
-export PANTHERA_CAMERA_ENDPOINT=127.0.0.1:50052
+git submodule update --init --recursive
+uv python install 3.11
+uv sync --all-packages --all-extras
+sudo apt-get update
+sudo apt-get install -y build-essential libssl-dev libusb-1.0-0-dev pkg-config
+./deploy/build-realsense-wsl.sh
+```
+
+`build-realsense-wsl.sh` 从 `vendor/librealsense` 固定的 v2.58.1 源码构建 Python
+绑定，并强制 `FORCE_RSUSB_BACKEND=ON`。该后端通过 libusb 直接访问 D405，
+不依赖 WSL 默认内核缺失的 V4L2/UVC 设备节点。
+
+安装机械臂和 RealSense udev 规则：
+
+```bash
+sudo install -m 0644 deploy/99-panthera-ht.rules /etc/udev/rules.d/
+sudo install -m 0644 vendor/librealsense/config/99-realsense-libusb.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+./deploy/install-wsl.sh
+```
+
+## 将两类硬件挂载到同一 WSL
+
+WPF 环境引导会按 VID/PID 查找并 attach 机械臂与 D405。也可在管理员
+PowerShell 中手动执行：
+
+```powershell
+usbipd list
+usbipd bind --busid <PANTHERA_BUSID>
+usbipd bind --busid <D405_BUSID>
+usbipd attach --wsl --busid <PANTHERA_BUSID>
+usbipd attach --wsl --busid <D405_BUSID>
+```
+
+`busid` 可能随插拔变化，不得写入长期配置。D405 的 Windows 设备标识是
+`VID_8086&PID_0B5B`；WSL 中应能看到 `lsusb -d 8086:0b5b`。
+
+## 启动与验收
+
+`~/.config/panthera-wam/armd.env` 默认启用：
+
+```dotenv
+PANTHERA_CAMERA_MODE=auto
+PANTHERA_CAMERA_WIDTH=640
+PANTHERA_CAMERA_HEIGHT=480
+PANTHERA_CAMERA_FPS=30
+```
+
+启动唯一后端：
+
+```bash
+systemctl --user restart armd
+systemctl --user status armd --no-pager
+uv run panthera daemon status
 uv run panthera camera status --json
 ```
 
-保存一张 16-bit 深度图及 JSON 元数据：
+保存深度和彩色快照：
 
 ```bash
 uv run panthera camera snapshot --stream depth --out artifacts/d405-depth.pgm
-```
-
-保存彩色帧：
-
-```bash
 uv run panthera camera snapshot --stream color --out artifacts/d405-color.ppm
 ```
 
-检查持续帧流，或把帧序列写入目录：
+持续流验收：
 
 ```bash
 uv run panthera camera stream --stream depth --frames 300 --rate-hz 30
-uv run panthera camera stream --stream color --frames 30 --out-dir artifacts/d405-color
+uv run panthera camera stream --stream color --frames 300 --rate-hz 30
 ```
 
-深度帧为 Z16 PGM，像素值乘 JSON 中的 `depth_scale` 得到米；彩色帧为 RGB8 PPM。
-每个图像旁都有同名 `.json`，记录系统时间、设备时间、帧序号、步长与深度比例。
+所有命令都使用 `PANTHERA_ENDPOINT` 的同一个 `armd` 端点，不再使用
+`PANTHERA_CAMERA_ENDPOINT`。深度帧为 Z16 PGM，像素值乘 JSON 中的
+`depth_scale` 得到米；彩色帧为 RGB8 PPM。
 
-## 无设备开发
+## 仿真开发
 
 ```bash
-uv run --package panthera-camera camerad --mode sim --check
-uv run --package panthera-camera camerad --mode sim
+uv run --package panthera-armd armd --sim --camera-mode sim --check
+uv run --package panthera-armd armd --sim --camera-mode sim
 uv run panthera camera status --json
 ```
 
-仿真相机用于 CI、CLI 和 WPF 联调，不访问 USB 设备。
+仿真时机械臂和 D405 仍由同一 `armd` 托管，但不访问 USB。
 
 ## 2026-07-19 真机验收
 
-- 型号 `Intel RealSense D405`，SDK 序列号 `260422273428`，固件 `5.13.0.55`，USB 3.2。
-- Windows camerad 同时启用 `640x480@30` depth Z16 与 color RGB8，状态流实测约
-  `30.9fps`，`last_frame_age_ms` 保持在一个帧周期内。
-- 成功保存 614400-byte 深度帧和 921600-byte 彩色帧，并完成连续 120 帧 gRPC 流，
-  0 次帧超时。
-- 同一设备经 usbipd/WSL 的短快照可用，但持续单流与双流均出现 5 秒帧超时，故该路径
-  仅作为否决证据，不作为生产工作流。
+- D405：`Intel RealSense D405`，SDK 序列号 `260422273428`，固件
+  `5.13.0.55`，USB 3.2。
+- vendored librealsense v2.58.1 以 RSUSB/libusb 后端源码构建，实际加载文件为
+  `build/realsense-rsusb/Release/pyrealsense2...so`。
+- D405 与机械臂 USB 同时 attach 到 Ubuntu-22.04；`640x480@30` depth Z16 +
+  color RGB8 双流在普通 detach/attach 冷重连后连续 300 帧通过，0 次超时。
+- 验证表明源码 RSUSB 后端不需要在每次 `armd` 启动时主动硬复位 D405。
 
 ## 故障定位
 
-- Windows 找不到 D405：检查 USB 3 线缆、端口和设备管理器中的 `VID_8086&PID_0B5B`。
-- `usbipd list` 显示 `Attached`：执行 `usbipd detach --busid <BUSID>`。
-- `pyrealsense2` 缺失：重新运行 `camera\tools\install-windows.ps1`。
-- camerad 已启动但 WSL 连接失败：确认 WSL 使用 mirrored networking，并检查 Windows
-  防火墙是否允许本机端口 `50052`。
-- 帧超时：关闭 RealSense Viewer 等占用相机的程序，再恢复默认 `640x480@30`。
+- WSL 找不到 D405：检查 `usbipd list` 是否为 `Attached`，以及
+  `lsusb -d 8086:0b5b`。
+- `pyrealsense2` 缺失或加载了 PyPI wheel：重跑
+  `./deploy/build-realsense-wsl.sh`，然后检查 `python -c "import pyrealsense2 as rs; print(rs.__file__)"`。
+- 权限错误：重新安装 `vendor/librealsense/config/99-realsense-libusb.rules`，再 reload
+  udev 规则和重新 attach。
+- 帧超时：确认 Windows RealSense Viewer 等程序已关闭，然后执行一次
+  `usbipd detach` / `usbipd attach`；保持默认 `640x480@30`。
+- CameraService 显示未启用：检查 `PANTHERA_CAMERA_MODE=auto` 并重启 `armd`。

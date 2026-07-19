@@ -7,8 +7,9 @@ All notable changes to Panthera-WAM are documented in this file.
 ### Added
 
 - Forked and pinned RealSense SDK 2.0 v2.58.1 as `vendor/librealsense`.
-- Added Windows-native `camerad` and gRPC status, snapshot and frame streaming for the D405.
-- Added `panthera camera status`, `snapshot` and `stream`; WPF keeps D405 on Windows instead of usbipd.
+- Added vendored librealsense RSUSB source build for WSL and unified D405 ownership inside `armd`.
+- Added CameraService status, snapshot and frame streaming on the same gRPC endpoint as ArmService.
+- Added `panthera camera status`, `snapshot` and `stream`; WPF attaches both devices to WSL and remains a pure gRPC visualization terminal.
 
 ## [1.0.0] - 2026-07-18
 

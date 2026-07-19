@@ -1,4 +1,4 @@
-"""D405 CameraService gRPC 适配层。"""
+"""armd 内部的 D405 CameraService gRPC 适配层。"""
 
 from __future__ import annotations
 

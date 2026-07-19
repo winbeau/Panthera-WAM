@@ -76,7 +76,6 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
     endpoint = f"127.0.0.1:{port}"
     env = os.environ.copy()
     env["PANTHERA_ENDPOINT"] = endpoint
-    env["PANTHERA_CAMERA_ENDPOINT"] = endpoint
     env["PANTHERA_STATE_DIR"] = str(tmp_path)
     process = subprocess.Popen(
         [
@@ -105,7 +104,6 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
     try:
         grpc.channel_ready_future(channel).result(timeout=5)
         monkeypatch.setenv("PANTHERA_ENDPOINT", endpoint)
-        monkeypatch.setenv("PANTHERA_CAMERA_ENDPOINT", endpoint)
         monkeypatch.setenv("PANTHERA_STATE_DIR", str(tmp_path))
         runner = CliRunner()
 

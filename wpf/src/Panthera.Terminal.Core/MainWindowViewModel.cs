@@ -77,6 +77,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private string _daemonSummary = "等待连接";
 
     [ObservableProperty]
+    private bool _cameraAvailable;
+
+    [ObservableProperty]
+    private string _cameraSummary = "等待 armd";
+
+    [ObservableProperty]
     private string _connectionDetail = string.Empty;
 
     [ObservableProperty]
@@ -205,6 +211,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             var daemon = await _client.GetDaemonStatusAsync(cancellationToken);
+            var camera = await _client.GetCameraStatusAsync(cancellationToken);
             var control = await _client.GetControlStatusAsync(cancellationToken);
             var limits = await _client.GetSoftLimitsAsync(cancellationToken);
             ConnectionState = _client.ConnectionState;
@@ -214,6 +221,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             DaemonSummary = daemon.Simulation
                 ? $"仿真 · {daemon.ControlHz:F0} Hz"
                 : $"真机 {(daemon.HardwareConnected ? "在线" : "未连接")} · {daemon.ControlHz:F0} Hz";
+            CameraAvailable = camera.Available && camera.Streaming;
+            CameraSummary = CameraAvailable
+                ? $"armd 采集 · {camera.ActualFps:F1} fps"
+                : camera.Enabled ? camera.Error : "armd 未启用相机";
             ConnectionDetail = Settings.Endpoint;
             _gripperMinimum = limits.GripperMinimum;
             _gripperMaximum = limits.GripperMaximum;
@@ -224,6 +235,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 Joints[index].Maximum = limits.Joints[index].Maximum;
             }
             AddLog("Info", "Connection", $"已连接 {Settings.Endpoint}");
+            AddLog(CameraAvailable ? "Info" : "Warning", "D405", CameraSummary);
         }
         catch (Exception exception)
         {

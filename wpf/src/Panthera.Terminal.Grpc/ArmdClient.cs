@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Panthera.Arm.V1;
+using Panthera.Camera.V1;
 using Panthera.Terminal.Core;
 
 namespace Panthera.Terminal.Grpc;
@@ -18,6 +19,7 @@ public sealed class ArmdClient : IArmdClient
     private readonly ArmService.ArmServiceClient _heartbeatClient;
     private readonly ArmService.ArmServiceClient _jogClient;
     private readonly ArmService.ArmServiceClient _executionClient;
+    private readonly CameraService.CameraServiceClient _cameraClient;
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _heartbeatLifetime;
     private Task? _heartbeatTask;
@@ -35,6 +37,7 @@ public sealed class ArmdClient : IArmdClient
         _heartbeatClient = new ArmService.ArmServiceClient(_heartbeatChannel);
         _jogClient = new ArmService.ArmServiceClient(_jogChannel);
         _executionClient = new ArmService.ArmServiceClient(_executionChannel);
+        _cameraClient = new CameraService.CameraServiceClient(_channel);
     }
 
     public TerminalConnectionState ConnectionState { get; private set; } = TerminalConnectionState.Disconnected;
@@ -54,6 +57,26 @@ public sealed class ArmdClient : IArmdClient
                 response.SdkVersion,
                 response.EstopLatchHazardPresent);
         }, cancellationToken);
+    }
+
+    public async Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await InvokeRetryableAsync(async () => await _cameraClient.GetStatusAsync(
+            new CameraStatusRequest(),
+            deadline: DateTime.UtcNow.AddSeconds(3),
+            cancellationToken: cancellationToken), cancellationToken);
+        return new CameraSnapshot(
+            response.Enabled,
+            response.Available,
+            response.Streaming,
+            response.Model,
+            response.Serial,
+            response.Firmware,
+            response.UsbType,
+            response.SdkVersion,
+            response.Error,
+            response.LastFrameAgeMs,
+            response.ActualFps);
     }
 
     public async Task<ControlSnapshot> GetControlStatusAsync(CancellationToken cancellationToken = default)

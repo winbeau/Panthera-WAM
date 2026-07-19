@@ -55,9 +55,9 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
 
         var cameraLine = camera is null ? string.Empty : FindBusLine(usbList.Output, camera.BusId);
         var cameraAttached = cameraLine.Contains("Attached", StringComparison.OrdinalIgnoreCase);
-        steps.Add(Step("D405 Windows", camera is not null && !cameraAttached,
-            cameraAttached ? "D405 当前已 attach 到 WSL；camerad 需要相机留在 Windows" : cameraLine.Trim(),
-            camera is null ? "usbipd list" : $"usbipd detach --busid {camera.BusId}"));
+        steps.Add(Step("D405 USB 挂载", cameraAttached,
+            cameraAttached ? cameraLine.Trim() : "D405 尚未 attach 到 WSL",
+            camera is null ? "usbipd list" : $"usbipd attach --wsl --busid {camera.BusId}"));
 
         var tty = await RunWslAsync(settings, "compgen -G '/dev/ttyACM*' | wc -l", cancellationToken);
         var ttyCount = 0;
@@ -76,6 +76,19 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         catch (Exception exception)
         {
             steps.Add(Step("armd 探活", false, exception.Message, $"gRPC {settings.Endpoint}"));
+        }
+        try
+        {
+            var status = await _client.GetCameraStatusAsync(cancellationToken);
+            var healthy = status.Enabled && status.Available && status.Streaming;
+            var detail = healthy
+                ? $"{status.Model} · {status.ActualFps:F1} fps · {status.LastFrameAgeMs} ms"
+                : status.Error;
+            steps.Add(Step("D405 / armd", healthy, detail, $"CameraService {settings.Endpoint}"));
+        }
+        catch (Exception exception)
+        {
+            steps.Add(Step("D405 / armd", false, exception.Message, $"CameraService {settings.Endpoint}"));
         }
         return new EnvironmentGuideResult(steps);
     }
@@ -120,7 +133,16 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         }
 
         if (!await EnsureUsbAttachedAsync("机械臂 USB", device, steps, cancellationToken)
-            || !await EnsureUsbDetachedAsync("D405 Windows", camera, steps, cancellationToken))
+            || !await EnsureUsbAttachedAsync("D405 USB", camera, steps, cancellationToken))
+        {
+            return new EnvironmentGuideResult(steps);
+        }
+
+        var cameraUsb = await RunWslAsync(settings, "lsusb -d 8086:0b5b", cancellationToken);
+        steps.Add(Step("D405 WSL 可见", cameraUsb.Success,
+            cameraUsb.Success ? cameraUsb.Output.Trim() : cameraUsb.Error,
+            cameraUsb.Command));
+        if (!cameraUsb.Success)
         {
             return new EnvironmentGuideResult(steps);
         }
@@ -158,6 +180,17 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
                 steps.Add(Step("armd 探活", healthy,
                     healthy ? $"已联通，控制频率 {daemon.ControlHz:F0} Hz" : "armd 可连接但硬件尚未就绪",
                     $"gRPC {settings.Endpoint}"));
+                if (!healthy)
+                {
+                    return new EnvironmentGuideResult(steps);
+                }
+                var cameraStatus = await _client.GetCameraStatusAsync(cancellationToken);
+                var cameraHealthy = cameraStatus.Enabled && cameraStatus.Available && cameraStatus.Streaming;
+                var cameraDetail = cameraHealthy
+                    ? $"{cameraStatus.Model} · {cameraStatus.ActualFps:F1} fps"
+                    : cameraStatus.Error;
+                steps.Add(Step("D405 / armd", cameraHealthy, cameraDetail,
+                    $"CameraService {settings.Endpoint}"));
                 return new EnvironmentGuideResult(steps);
             }
             catch (Exception exception)
@@ -283,32 +316,6 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         steps.Add(Step($"{label} attach", true, stateLine.Trim(),
             $"usbipd attach --wsl --busid {device.BusId}"));
         return true;
-    }
-
-    private static async Task<bool> EnsureUsbDetachedAsync(
-        string label,
-        UsbDevice device,
-        ICollection<EnvironmentGuideStep> steps,
-        CancellationToken cancellationToken)
-    {
-        var list = await RunAsync("usbipd", ["list"], cancellationToken);
-        var stateLine = FindBusLine(list.Output, device.BusId);
-        if (!stateLine.Contains("Attached", StringComparison.OrdinalIgnoreCase))
-        {
-            steps.Add(Step(label, true,
-                string.IsNullOrWhiteSpace(stateLine) ? "D405 已保留在 Windows" : stateLine.Trim(),
-                $"usbipd detach --busid {device.BusId}"));
-            return true;
-        }
-
-        var detach = await RunAsync(
-            "usbipd",
-            ["detach", "--busid", device.BusId],
-            cancellationToken);
-        steps.Add(Step(label, detach.Success,
-            detach.Success ? $"busid {device.BusId} 已归还 Windows" : detach.Error,
-            detach.Command));
-        return detach.Success;
     }
 
     private static Task<ProcessResult> RunWslAsync(

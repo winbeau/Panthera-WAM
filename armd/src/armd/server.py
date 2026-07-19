@@ -6,9 +6,9 @@ import asyncio
 
 import grpc
 from panthera_arm import arm_pb2_grpc, camera_pb2_grpc
-from panthera_camera.backend import CameraWorker
-from panthera_camera.service import CameraService
 
+from .camera.backend import CameraWorker
+from .camera.service import CameraService
 from .control import LeaseManager
 from .execution import ExecutionRegistry
 from .grpc_service import ArmService, SafetyInterceptor

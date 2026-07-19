@@ -14,6 +14,7 @@ elif [[ $# -gt 0 ]]; then
 fi
 
 mkdir -p "$config_dir" "$systemd_dir"
+"$repo_root/deploy/build-realsense-wsl.sh"
 if [[ ! -f "$config_dir/armd.env" ]]; then
     sed "s|__PANTHERA_REPO_ROOT__|$repo_root|g" \
         "$repo_root/deploy/armd.env.example" > "$config_dir/armd.env"
@@ -29,8 +30,9 @@ systemctl --user enable armd.service
 
 echo "armd user service installed: $systemd_dir/armd.service"
 echo "environment file: $config_dir/armd.env"
-echo "install the serial rule once with:"
+echo "install the robot and D405 rules once with:"
 echo "  sudo install -m 0644 '$repo_root/deploy/99-panthera-ht.rules' /etc/udev/rules.d/"
+echo "  sudo install -m 0644 '$repo_root/vendor/librealsense/config/99-realsense-libusb.rules' /etc/udev/rules.d/"
 echo "  sudo udevadm control --reload-rules && sudo udevadm trigger"
 
 if $start_service; then

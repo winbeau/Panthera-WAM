@@ -1,4 +1,4 @@
-"""RealSense D405 采集后端与 latest-wins 独立工作线程。"""
+"""armd 内部的 RealSense D405 采集后端与 latest-wins 工作线程。"""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from typing import Protocol
 
@@ -121,7 +122,7 @@ class RealSenseCameraBackend:
             import pyrealsense2 as rs
         except ImportError as exc:
             raise CameraUnavailableError(
-                "未安装 pyrealsense2；请执行 uv sync --all-packages --all-extras"
+                "未安装 vendored pyrealsense2；请执行 ./deploy/build-realsense-wsl.sh"
             ) from exc
 
         context = rs.context()
@@ -162,7 +163,7 @@ class RealSenseCameraBackend:
             serial=self._get_info(active_device, rs.camera_info.serial_number),
             firmware=self._get_info(active_device, rs.camera_info.firmware_version),
             usb_type=self._get_info(active_device, rs.camera_info.usb_type_descriptor),
-            sdk_version=self._sdk_version(),
+            sdk_version=self._sdk_version(rs),
             profiles=(
                 CameraProfileInfo(
                     CameraStream.DEPTH,
@@ -230,7 +231,17 @@ class RealSenseCameraBackend:
             return ""
 
     @staticmethod
-    def _sdk_version() -> str:
+    def _sdk_version(rs) -> str:
+        sdk_version = getattr(rs, "__version__", "")
+        if sdk_version:
+            return str(sdk_version)
+        try:
+            native_module = import_module("pyrealsense2.pyrealsense2")
+            sdk_version = getattr(native_module, "__version__", "")
+            if sdk_version:
+                return str(sdk_version)
+        except ImportError:
+            pass
         try:
             return version("pyrealsense2")
         except PackageNotFoundError:

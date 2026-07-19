@@ -11,9 +11,9 @@ from pathlib import Path
 
 import grpc
 from panthera_arm import arm_pb2, arm_pb2_grpc, camera_pb2, camera_pb2_grpc
-from panthera_camera.backend import CameraWorker, RealSenseCameraBackend, SimCameraBackend
 
 from .backend import DEFAULT_MOTOR_TIMEOUT_MS, RealBackend, SimBackend
+from .camera.backend import CameraWorker, RealSenseCameraBackend, SimCameraBackend
 from .hardware_loop import HardwareLoop
 from .server import ArmdServer
 

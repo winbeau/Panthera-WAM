@@ -1,4 +1,4 @@
-"""Panthera-WAM RealSense D405 采集服务。"""
+"""armd 独占的 RealSense D405 采集组件。"""
 
 from .backend import CameraWorker, RealSenseCameraBackend, SimCameraBackend
 

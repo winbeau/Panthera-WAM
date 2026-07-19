@@ -6,6 +6,8 @@ public interface IArmdClient : IAsyncDisposable
 
     Task<DaemonSnapshot> GetDaemonStatusAsync(CancellationToken cancellationToken = default);
 
+    Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default);
+
     Task<ControlSnapshot> GetControlStatusAsync(CancellationToken cancellationToken = default);
 
     Task<SoftLimitSnapshot> GetSoftLimitsAsync(CancellationToken cancellationToken = default);
