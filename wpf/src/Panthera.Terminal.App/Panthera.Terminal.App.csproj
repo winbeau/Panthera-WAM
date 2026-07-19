@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
     <PackageReference Include="WPF-UI" Version="4.3.0" />
     <ProjectReference Include="../Panthera.Terminal.Contracts/Panthera.Terminal.Contracts.csproj" />
@@ -13,5 +14,14 @@
     <ProjectReference Include="../Panthera.Terminal.Core/Panthera.Terminal.Core.csproj" />
     <ProjectReference Include="../Panthera.Terminal.Grpc/Panthera.Terminal.Grpc.csproj" />
     <ProjectReference Include="../Panthera.Terminal.Settings/Panthera.Terminal.Settings.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets/TriView/panthera-wpf-host.html" CopyToOutputDirectory="PreserveNewest" Link="TriView/panthera-wpf-host.html" />
+    <Content Include="../../../vendor/Panthera-HT-TriView/docs/mockups/panthera-six-axis-three-view.html" CopyToOutputDirectory="PreserveNewest" Link="TriView/docs/mockups/panthera-six-axis-three-view.html" />
+    <Content Include="../../../vendor/Panthera-HT-TriView/docs/mockups/assets/three-r160.min.js" CopyToOutputDirectory="PreserveNewest" Link="TriView/docs/mockups/assets/three-r160.min.js" />
+    <Content Include="../../../vendor/Panthera-HT-TriView/docs/mockups/assets/panthera-ht-meshes.min.js" CopyToOutputDirectory="PreserveNewest" Link="TriView/docs/mockups/assets/panthera-ht-meshes.min.js" />
+    <Content Include="../../../vendor/Panthera-HT-TriView/docs/blender/exports/panthera-ht-exact-cad.glb" CopyToOutputDirectory="PreserveNewest" Link="TriView/docs/blender/exports/panthera-ht-exact-cad.glb" />
+    <Content Include="../../../vendor/Panthera-HT-TriView/THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" Link="TriView/THIRD_PARTY_NOTICES.md" />
+    <Content Include="../../../vendor/Panthera-HT-TriView/LICENSES/*.txt" CopyToOutputDirectory="PreserveNewest" Link="TriView/LICENSES/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

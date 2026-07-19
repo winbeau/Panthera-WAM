@@ -1,14 +1,14 @@
 # Panthera-WAM
 
 Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Action Model 数据平台。
-当前状态：**v1.0.0 已完成。进度以 `docs/MILESTONES.md` 为准**；RealBackend 已含 N1/N4/N5 防护，固件看门狗定为 150ms。
+当前状态：**v1.0.0 已完成，v2 后端与 WPF 增量已进入持续集成验收。进度以 `docs/MILESTONES.md` 为准**；RealBackend 已含 N1/N4/N5 防护，固件看门狗定为 150ms。
 
 ## 必读文档（按顺序）
 
 1. `docs/FINAL_PLAN.md` — **唯一权威计划**。架构决策、42 个 SDK 方法覆盖映射、arm.proto 草案、CLI 命令树、里程碑 M0→v1→WPF v1→v2、14 项审计修订。与其它文档冲突时以它为准。文末「**SDK 源码核实结论**」是逐行核对官方源码得到的一手事实（含 4 项契约修正与 N1–N10 新发现），**与 SDK README 冲突时以该节为准**（README 多处过时）。
 2. `docs/MILESTONES.md` — **进度看板**。每项打勾即 commit+push；🔒 标记＝需真机且用户在场，不可自动执行。
 3. `docs/CLI_PLAN.md` / `docs/WPF_PLAN.md` — 两侧的展开细节。
-3. `docs/mockups/mockup-C-fluent-cockpit.html` — **WPF 已定稿的视觉基准**（驾驶舱式：中央 SVG 雷达俯视图 + 左右圆形关节仪表 + jog pod）。A/B 两稿仅作参考。
+3. WPF v2 视觉基准为用户选定的 **A 版控制台**：双 Tab、中央精确 CAD 三视图、左侧 6 轴状态、右侧夹爪与 Jog 控制；`docs/mockups/mockup-C-fluent-cockpit.html` 仅保留为 WPF v1 历史基线。
 
 ## 已敲定的决策（不要重新讨论）
 

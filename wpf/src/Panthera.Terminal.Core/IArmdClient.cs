@@ -63,6 +63,40 @@ public interface IArmdClient : IAsyncDisposable
     Task<IReadOnlyList<double>> ForwardKinematicsAsync(
         IReadOnlyList<double> joints,
         CancellationToken cancellationToken = default);
+
+    Task<OperationResult> StartTeachAsync(CancellationToken cancellationToken = default);
+
+    Task<OperationResult> StopTeachAsync(CancellationToken cancellationToken = default);
+
+    Task<string> StartTeachRecordingAsync(
+        string path = "",
+        CancellationToken cancellationToken = default);
+
+    Task<TeachRecordingSnapshot?> StopTeachRecordingAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<TeachRecordingSnapshot>> ListTeachRecordingsAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<ExecutionHandle> PlayTeachRecordingAsync(
+        string path,
+        CancellationToken cancellationToken = default);
+
+    Task<DatasetJobHandle> ExportLeRobotAsync(
+        string trajectoryPath,
+        string outputDirectory,
+        string repoId,
+        string task,
+        bool overwrite = false,
+        CancellationToken cancellationToken = default);
+
+    IAsyncEnumerable<DatasetJobSnapshot> WatchDatasetJobAsync(
+        string jobId,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> CancelDatasetJobAsync(
+        string jobId,
+        CancellationToken cancellationToken = default);
 }
 
 public interface ITerminalSettingsStore

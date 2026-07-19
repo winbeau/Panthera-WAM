@@ -1,6 +1,7 @@
 @echo off
 setlocal
-if not defined DOTNET_ROOT set "DOTNET_ROOT=%USERPROFILE%\.dotnet"
+if exist "%USERPROFILE%\.dotnet\dotnet.exe" set "DOTNET_ROOT=%USERPROFILE%\.dotnet"
+if not defined DOTNET_ROOT set "DOTNET_ROOT=%ProgramFiles%\dotnet"
 set "MSBuildSDKsPath="
 set "PATH=%DOTNET_ROOT%;%PATH%"
 set "PANTHERA_RUN_UI_TESTS=1"

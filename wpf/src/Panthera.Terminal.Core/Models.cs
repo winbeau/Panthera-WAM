@@ -125,6 +125,36 @@ public sealed record CartesianTarget(
     double Yaw,
     bool PreserveOrientation = true);
 
+public sealed record TeachRecordingSnapshot(
+    string Path,
+    DateTimeOffset RecordedAt,
+    double DurationSeconds,
+    long FrameCount)
+{
+    public string Name => System.IO.Path.GetFileNameWithoutExtension(Path);
+
+    public string Summary => $"{FrameCount:N0} frames · {DurationSeconds:F1} s";
+}
+
+public enum DatasetExportState
+{
+    Queued,
+    Running,
+    Done,
+    Failed,
+    Cancelled,
+}
+
+public sealed record DatasetJobHandle(string JobId);
+
+public sealed record DatasetJobSnapshot(
+    string JobId,
+    DatasetExportState State,
+    double Progress,
+    string OutputDirectory,
+    long FrameCount,
+    string ErrorMessage);
+
 public sealed record TerminalSettings(
     string Endpoint = "http://127.0.0.1:50050",
     string CameraEndpoint = "http://127.0.0.1:50049",
@@ -133,7 +163,8 @@ public sealed record TerminalSettings(
     string WslUser = "",
     string UsbSerial = "",
     double JogSpeed = 0.15,
-    double JogStep = 0.02);
+    double JogStep = 0.02,
+    double UiScale = 1.0);
 
 public sealed record TerminalLogEntry(
     DateTimeOffset Timestamp,

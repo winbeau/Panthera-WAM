@@ -5,3 +5,7 @@
 [submodule "vendor/librealsense"]
 	path = vendor/librealsense
 	url = https://github.com/winbeau/librealsense.git
+[submodule "vendor/Panthera-HT-TriView"]
+	path = vendor/Panthera-HT-TriView
+	url = https://github.com/winbeau/Panthera-HT-TriView.git
+	branch = main

@@ -56,7 +56,22 @@ public partial class MainWindow : FluentWindow
     {
         _renderTimer.Start();
         await _viewModel.InitializeAsync();
+        if (App.IsScreenshotMode)
+        {
+            await CadView.WaitUntilReadyAsync(TimeSpan.FromSeconds(15));
+        }
         await CaptureRequestedScreenshotAsync();
+    }
+
+    private void MainTab_Checked(object sender, RoutedEventArgs eventArgs)
+    {
+        if (ControlPage is null || DataPage is null || sender is not RadioButton { Tag: string page })
+        {
+            return;
+        }
+        var showControl = page.Equals("Control", StringComparison.OrdinalIgnoreCase);
+        ControlPage.Visibility = showControl ? Visibility.Visible : Visibility.Collapsed;
+        DataPage.Visibility = showControl ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private async void OnDeactivated(object? sender, EventArgs eventArgs)

@@ -16,6 +16,16 @@ public sealed partial class JointGaugeViewModel : ObservableObject
 
     public string Name { get; }
 
+    public string Subtitle => Index switch
+    {
+        0 => "底座旋转",
+        1 => "肩部",
+        2 => "肘部",
+        3 => "腕部旋转",
+        4 => "腕部俯仰",
+        _ => "末端旋转",
+    };
+
     [ObservableProperty]
     private double _minimum;
 

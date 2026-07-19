@@ -1,0 +1,203 @@
+using System.Diagnostics;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Threading;
+using Microsoft.Web.WebView2.Core;
+
+namespace Panthera.Terminal.App;
+
+public partial class CadThreeView : UserControl
+{
+    public static readonly DependencyProperty J1Property = StateProperty(nameof(J1));
+    public static readonly DependencyProperty J2Property = StateProperty(nameof(J2));
+    public static readonly DependencyProperty J3Property = StateProperty(nameof(J3));
+    public static readonly DependencyProperty J4Property = StateProperty(nameof(J4));
+    public static readonly DependencyProperty J5Property = StateProperty(nameof(J5));
+    public static readonly DependencyProperty J6Property = StateProperty(nameof(J6));
+    public static readonly DependencyProperty GripperPercentProperty = StateProperty(nameof(GripperPercent));
+    public static readonly DependencyProperty ThemeProperty = DependencyProperty.Register(
+        nameof(Theme),
+        typeof(string),
+        typeof(CadThreeView),
+        new PropertyMetadata("System", OnThemeChanged));
+
+    private readonly DispatcherTimer _pushTimer;
+    private readonly TaskCompletionSource<string> _modelReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _bridgeReady;
+    private bool _stateDirty = true;
+    private bool _pushActive;
+    private bool _initializing;
+
+    public CadThreeView()
+    {
+        InitializeComponent();
+        _pushTimer = new DispatcherTimer(DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromMilliseconds(1000.0 / 30.0),
+        };
+        _pushTimer.Tick += PushTimer_Tick;
+        Loaded += CadThreeView_Loaded;
+        Unloaded += CadThreeView_Unloaded;
+    }
+
+    public double J1 { get => (double)GetValue(J1Property); set => SetValue(J1Property, value); }
+    public double J2 { get => (double)GetValue(J2Property); set => SetValue(J2Property, value); }
+    public double J3 { get => (double)GetValue(J3Property); set => SetValue(J3Property, value); }
+    public double J4 { get => (double)GetValue(J4Property); set => SetValue(J4Property, value); }
+    public double J5 { get => (double)GetValue(J5Property); set => SetValue(J5Property, value); }
+    public double J6 { get => (double)GetValue(J6Property); set => SetValue(J6Property, value); }
+    public double GripperPercent { get => (double)GetValue(GripperPercentProperty); set => SetValue(GripperPercentProperty, value); }
+    public string Theme { get => (string)GetValue(ThemeProperty); set => SetValue(ThemeProperty, value); }
+
+    public async Task<bool> WaitUntilReadyAsync(TimeSpan timeout)
+    {
+        var completed = await Task.WhenAny(_modelReady.Task, Task.Delay(timeout));
+        return completed == _modelReady.Task;
+    }
+
+    private static DependencyProperty StateProperty(string name) => DependencyProperty.Register(
+        name,
+        typeof(double),
+        typeof(CadThreeView),
+        new PropertyMetadata(0.0, OnStateChanged));
+
+    private static void OnStateChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs eventArgs) =>
+        ((CadThreeView)dependencyObject)._stateDirty = true;
+
+    private static void OnThemeChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs eventArgs) =>
+        _ = ((CadThreeView)dependencyObject).ApplyThemeAsync();
+
+    private async void CadThreeView_Loaded(object sender, RoutedEventArgs eventArgs)
+    {
+        _pushTimer.Start();
+        await InitializeBrowserAsync();
+    }
+
+    private void CadThreeView_Unloaded(object sender, RoutedEventArgs eventArgs) => _pushTimer.Stop();
+
+    private async Task InitializeBrowserAsync()
+    {
+        if (_initializing || Browser.CoreWebView2 is not null)
+        {
+            return;
+        }
+        _initializing = true;
+        try
+        {
+            await Browser.EnsureCoreWebView2Async();
+            var core = Browser.CoreWebView2
+                ?? throw new InvalidOperationException("WebView2 初始化完成后 CoreWebView2 仍为空");
+            core.Settings.AreDefaultContextMenusEnabled = false;
+            core.Settings.AreDevToolsEnabled = Debugger.IsAttached;
+            core.Settings.AreBrowserAcceleratorKeysEnabled = false;
+            core.Settings.IsZoomControlEnabled = false;
+            core.SetVirtualHostNameToFolderMapping(
+                "panthera.assets",
+                AppContext.BaseDirectory,
+                CoreWebView2HostResourceAccessKind.Allow);
+            core.WebMessageReceived += Core_WebMessageReceived;
+            core.Navigate("https://panthera.assets/TriView/panthera-wpf-host.html");
+        }
+        catch (Exception exception)
+        {
+            LoadingText.Text = $"CAD 初始化失败：{exception.Message}";
+            _modelReady.TrySetResult("failed");
+        }
+        finally
+        {
+            _initializing = false;
+        }
+    }
+
+    private void Core_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs eventArgs)
+    {
+        try
+        {
+            using var message = JsonDocument.Parse(eventArgs.WebMessageAsJson);
+            var root = message.RootElement;
+            var type = root.TryGetProperty("type", out var typeValue) ? typeValue.GetString() : string.Empty;
+            if (type == "bridge-ready")
+            {
+                _bridgeReady = true;
+                _stateDirty = true;
+                _ = ApplyThemeAsync();
+                return;
+            }
+            if (type == "model-ready")
+            {
+                var model = root.TryGetProperty("model", out var modelValue) ? modelValue.GetString() : "unknown";
+                LoadingText.Text = model == "exact" ? "EXACT GLB" : "轻量 CAD";
+                LoadingOverlay.Visibility = Visibility.Collapsed;
+                _modelReady.TrySetResult(model ?? "unknown");
+            }
+        }
+        catch (JsonException exception)
+        {
+            AppDiagnostics.Write("cad-web-message", exception);
+        }
+    }
+
+    private async void PushTimer_Tick(object? sender, EventArgs eventArgs)
+    {
+        if (!_bridgeReady || !_stateDirty || _pushActive || Browser.CoreWebView2 is null)
+        {
+            return;
+        }
+        _stateDirty = false;
+        _pushActive = true;
+        try
+        {
+            var payload = JsonSerializer.Serialize(new
+            {
+                positions = new[] { J1, J2, J3, J4, J5, J6 },
+                gripper = Math.Clamp(GripperPercent / 100.0, 0, 1),
+                source = "WPF",
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
+            await Browser.ExecuteScriptAsync($"window.PantheraWpfBridge?.setState({payload})");
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
+        {
+            _stateDirty = true;
+        }
+        finally
+        {
+            _pushActive = false;
+        }
+    }
+
+    private async Task ApplyThemeAsync()
+    {
+        if (!_bridgeReady || Browser.CoreWebView2 is null)
+        {
+            return;
+        }
+        var theme = Theme.Equals("Dark", StringComparison.OrdinalIgnoreCase)
+            || Theme.Equals("HighContrast", StringComparison.OrdinalIgnoreCase)
+            ? "dark"
+            : "light";
+        await Browser.ExecuteScriptAsync(
+            $"window.PantheraWpfBridge?.setTheme({JsonSerializer.Serialize(theme)})");
+    }
+
+    private async void StylePicker_SelectionChanged(object sender, SelectionChangedEventArgs eventArgs)
+    {
+        if (!_bridgeReady || Browser.CoreWebView2 is null || StylePicker.SelectedItem is not ComboBoxItem { Tag: string style })
+        {
+            return;
+        }
+        await Browser.ExecuteScriptAsync(
+            $"window.PantheraWpfBridge?.setStyle({JsonSerializer.Serialize(style)})");
+    }
+
+    private async void CameraPicker_SelectionChanged(object sender, SelectionChangedEventArgs eventArgs)
+    {
+        if (!_bridgeReady || Browser.CoreWebView2 is null || CameraPicker.SelectedItem is not ComboBoxItem { Tag: string mode })
+        {
+            return;
+        }
+        await Browser.ExecuteScriptAsync(
+            $"window.PantheraWpfBridge?.setCameraMode({JsonSerializer.Serialize(mode)})");
+    }
+}

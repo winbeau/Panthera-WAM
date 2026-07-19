@@ -126,6 +126,47 @@ public sealed class MainWindowViewModelTests
         public Task<IReadOnlyList<double>> ForwardKinematicsAsync(
             IReadOnlyList<double> joints,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<OperationResult> StartTeachAsync(CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<OperationResult> StopTeachAsync(CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<string> StartTeachRecordingAsync(
+            string path = "",
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<TeachRecordingSnapshot?> StopTeachRecordingAsync(
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<TeachRecordingSnapshot>> ListTeachRecordingsAsync(
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<ExecutionHandle> PlayTeachRecordingAsync(
+            string path,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<DatasetJobHandle> ExportLeRobotAsync(
+            string trajectoryPath,
+            string outputDirectory,
+            string repoId,
+            string task,
+            bool overwrite = false,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<DatasetJobSnapshot> WatchDatasetJobAsync(
+            string jobId,
+            [EnumeratorCancellation]
+            CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+
+        public Task<bool> CancelDatasetJobAsync(
+            string jobId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class StubEnvironmentGuideService : IEnvironmentGuideService

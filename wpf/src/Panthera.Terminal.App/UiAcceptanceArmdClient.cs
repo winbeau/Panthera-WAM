@@ -7,6 +7,13 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
 {
     private bool _held;
     private bool _estopEngaged;
+    private bool _teachActive;
+    private bool _recording;
+    private readonly List<TeachRecordingSnapshot> _recordings =
+    [
+        new("/home/winbeau/.local/share/panthera/teach/pick_cube_good_07.jsonl", DateTimeOffset.Now.AddMinutes(-8), 16.0, 3205),
+        new("/home/winbeau/.local/share/panthera/teach/calibration_reach_02.jsonl", DateTimeOffset.Now.AddMinutes(-18), 9.1, 1824),
+    ];
 
     public TerminalConnectionState ConnectionState => TerminalConnectionState.Connected;
 
@@ -146,6 +153,82 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
         IReadOnlyList<double> joints,
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<double>>([0.25, 0.0, 0.17, 0.0, 0.0, 0.0]);
+
+    public Task<OperationResult> StartTeachAsync(CancellationToken cancellationToken = default)
+    {
+        _teachActive = true;
+        return Task.FromResult(new OperationResult(true));
+    }
+
+    public Task<OperationResult> StopTeachAsync(CancellationToken cancellationToken = default)
+    {
+        _teachActive = false;
+        _recording = false;
+        return Task.FromResult(new OperationResult(true));
+    }
+
+    public Task<string> StartTeachRecordingAsync(
+        string path = "",
+        CancellationToken cancellationToken = default)
+    {
+        if (!_teachActive)
+        {
+            throw new InvalidOperationException("请先启动拖动示教");
+        }
+        _recording = true;
+        return Task.FromResult(string.IsNullOrWhiteSpace(path)
+            ? "/home/winbeau/.local/share/panthera/teach/trajectory_ui_acceptance.jsonl"
+            : path);
+    }
+
+    public Task<TeachRecordingSnapshot?> StopTeachRecordingAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!_recording)
+        {
+            return Task.FromResult<TeachRecordingSnapshot?>(null);
+        }
+        _recording = false;
+        var result = new TeachRecordingSnapshot(
+            "/home/winbeau/.local/share/panthera/teach/trajectory_ui_acceptance.jsonl",
+            DateTimeOffset.Now,
+            12.4,
+            2486);
+        _recordings.Insert(0, result);
+        return Task.FromResult<TeachRecordingSnapshot?>(result);
+    }
+
+    public Task<IReadOnlyList<TeachRecordingSnapshot>> ListTeachRecordingsAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TeachRecordingSnapshot>>(_recordings.ToArray());
+
+    public Task<ExecutionHandle> PlayTeachRecordingAsync(
+        string path,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ExecutionHandle("ui-acceptance-teach-playback"));
+
+    public Task<DatasetJobHandle> ExportLeRobotAsync(
+        string trajectoryPath,
+        string outputDirectory,
+        string repoId,
+        string task,
+        bool overwrite = false,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new DatasetJobHandle("ui-acceptance-dataset"));
+
+    public async IAsyncEnumerable<DatasetJobSnapshot> WatchDatasetJobAsync(
+        string jobId,
+        [EnumeratorCancellation]
+        CancellationToken cancellationToken = default)
+    {
+        yield return new DatasetJobSnapshot(jobId, DatasetExportState.Running, 0.45, "", 0, "");
+        await Task.Delay(80, cancellationToken);
+        yield return new DatasetJobSnapshot(jobId, DatasetExportState.Done, 1.0, "datasets/ui-acceptance", 2486, "");
+    }
+
+    public Task<bool> CancelDatasetJobAsync(
+        string jobId,
+        CancellationToken cancellationToken = default) => Task.FromResult(true);
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 

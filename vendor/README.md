@@ -17,5 +17,11 @@ Third-party SDKs are tracked as git submodules rather than copied into this repo
 - License: Apache-2.0
 - Sync fork: `gh repo sync winbeau/librealsense --source realsenseai/librealsense`
 
-Initialize both SDKs with `git submodule update --init --recursive`. SDK changes belong in the
+## Panthera-HT TriView
+
+- Repository: `https://github.com/winbeau/Panthera-HT-TriView`
+- Tracked branch: `main`
+- Purpose: exact CAD three-view assets and rendering runtime reused by the WPF v2 terminal
+
+Initialize all dependencies with `git submodule update --init --recursive`. SDK and visualization changes belong in the
 corresponding fork first; commit an updated submodule gitlink separately in this repository.

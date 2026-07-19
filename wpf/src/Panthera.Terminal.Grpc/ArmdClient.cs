@@ -3,7 +3,9 @@ using Grpc.Core;
 using Grpc.Net.Client;
 using Panthera.Arm.V1;
 using Panthera.Camera.V1;
+using Panthera.Dataset.V1;
 using Panthera.Terminal.Core;
+using DatasetProtoState = Panthera.Dataset.V1.DatasetJobState;
 
 namespace Panthera.Terminal.Grpc;
 
@@ -21,6 +23,7 @@ public sealed class ArmdClient : IArmdClient
     private readonly ArmService.ArmServiceClient _jogClient;
     private readonly ArmService.ArmServiceClient _executionClient;
     private readonly CameraService.CameraServiceClient _cameraClient;
+    private readonly DatasetService.DatasetServiceClient _datasetClient;
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _heartbeatLifetime;
     private Task? _heartbeatTask;
@@ -40,6 +43,7 @@ public sealed class ArmdClient : IArmdClient
         _jogClient = new ArmService.ArmServiceClient(_jogChannel);
         _executionClient = new ArmService.ArmServiceClient(_executionChannel);
         _cameraClient = new CameraService.CameraServiceClient(_cameraChannel);
+        _datasetClient = new DatasetService.DatasetServiceClient(_executionChannel);
     }
 
     public TerminalConnectionState ConnectionState { get; private set; } = TerminalConnectionState.Disconnected;
@@ -384,6 +388,151 @@ public sealed class ArmdClient : IArmdClient
             deadline: DateTime.UtcNow.AddSeconds(5),
             cancellationToken: cancellationToken), cancellationToken);
         return response.Position.ToArray();
+    }
+
+    public async Task<OperationResult> StartTeachAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await InvokeAsync(async () => await _client.TeachStartAsync(
+            new TeachStartRequest(),
+            Headers(),
+            deadline: DateTime.UtcNow.AddSeconds(3),
+            cancellationToken: cancellationToken));
+        return new OperationResult(response.Accepted, response.RejectReason);
+    }
+
+    public async Task<OperationResult> StopTeachAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await InvokeAsync(async () => await _client.TeachStopAsync(
+            new Empty(),
+            Headers(),
+            deadline: DateTime.UtcNow.AddSeconds(3),
+            cancellationToken: cancellationToken));
+        return new OperationResult(response.Accepted, response.Accepted ? string.Empty : "拖动示教未启动");
+    }
+
+    public async Task<string> StartTeachRecordingAsync(
+        string path = "",
+        CancellationToken cancellationToken = default)
+    {
+        var response = await InvokeAsync(async () => await _client.TeachRecordStartAsync(
+            new TeachRecordStartRequest { Path = path ?? string.Empty },
+            Headers(),
+            deadline: DateTime.UtcNow.AddSeconds(3),
+            cancellationToken: cancellationToken));
+        if (!response.Accepted)
+        {
+            throw new InvalidOperationException("示教录制已在运行");
+        }
+        return response.Path;
+    }
+
+    public async Task<TeachRecordingSnapshot?> StopTeachRecordingAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var response = await InvokeAsync(async () => await _client.TeachRecordStopAsync(
+            new Empty(),
+            Headers(),
+            deadline: DateTime.UtcNow.AddSeconds(8),
+            cancellationToken: cancellationToken));
+        return response.Accepted
+            ? new TeachRecordingSnapshot(
+                response.SavedPath,
+                DateTimeOffset.Now,
+                0,
+                response.FrameCount)
+            : null;
+    }
+
+    public async Task<IReadOnlyList<TeachRecordingSnapshot>> ListTeachRecordingsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var response = await InvokeRetryableAsync(async () => await _client.TeachListAsync(
+            new Empty(),
+            deadline: DateTime.UtcNow.AddSeconds(5),
+            cancellationToken: cancellationToken), cancellationToken);
+        return response.Files.Select(file => new TeachRecordingSnapshot(
+            file.Path,
+            file.RecordedAt > 0
+                ? DateTimeOffset.FromUnixTimeMilliseconds(file.RecordedAt)
+                : DateTimeOffset.MinValue,
+            file.DurationS,
+            file.FrameCount)).ToArray();
+    }
+
+    public async Task<ExecutionHandle> PlayTeachRecordingAsync(
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await InvokeAsync(async () => await _client.TeachPlayAsync(
+            new TeachPlayRequest
+            {
+                Path = path,
+                Mode = PlaybackMode.Posvel,
+            },
+            Headers(),
+            deadline: DateTime.UtcNow.AddSeconds(15),
+            cancellationToken: cancellationToken));
+        return new ExecutionHandle(response.ExecutionId);
+    }
+
+    public async Task<DatasetJobHandle> ExportLeRobotAsync(
+        string trajectoryPath,
+        string outputDirectory,
+        string repoId,
+        string task,
+        bool overwrite = false,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await InvokeRetryableAsync(async () => await _datasetClient.ExportLeRobotAsync(
+            new ExportLeRobotRequest
+            {
+                TrajectoryPath = trajectoryPath,
+                OutputDir = outputDirectory,
+                RepoId = repoId,
+                Task = task,
+                Overwrite = overwrite,
+            },
+            deadline: DateTime.UtcNow.AddSeconds(8),
+            cancellationToken: cancellationToken), cancellationToken);
+        return new DatasetJobHandle(response.JobId);
+    }
+
+    public async IAsyncEnumerable<DatasetJobSnapshot> WatchDatasetJobAsync(
+        string jobId,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        using var call = _datasetClient.WatchJob(
+            new DatasetJobRequest { JobId = jobId },
+            cancellationToken: cancellationToken);
+        while (await call.ResponseStream.MoveNext(cancellationToken))
+        {
+            var value = call.ResponseStream.Current;
+            yield return new DatasetJobSnapshot(
+                value.JobId,
+                value.State switch
+                {
+                    DatasetProtoState.Queued => DatasetExportState.Queued,
+                    DatasetProtoState.Running => DatasetExportState.Running,
+                    DatasetProtoState.Done => DatasetExportState.Done,
+                    DatasetProtoState.Cancelled => DatasetExportState.Cancelled,
+                    _ => DatasetExportState.Failed,
+                },
+                value.Progress,
+                value.OutputDir,
+                value.FrameCount,
+                value.ErrorMessage);
+        }
+    }
+
+    public async Task<bool> CancelDatasetJobAsync(
+        string jobId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await InvokeRetryableAsync(async () => await _datasetClient.CancelJobAsync(
+            new DatasetJobRequest { JobId = jobId },
+            deadline: DateTime.UtcNow.AddSeconds(3),
+            cancellationToken: cancellationToken), cancellationToken);
+        return response.Cancelled;
     }
 
     public async ValueTask DisposeAsync()

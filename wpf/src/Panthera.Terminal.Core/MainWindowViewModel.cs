@@ -19,6 +19,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private Task? _jogPumpTask;
     private Task? _jogCallTask;
     private string _activeExecutionId = string.Empty;
+    private string _activeDatasetJobId = string.Empty;
     private int _poseRefreshActive;
     private bool _jointTargetsInitialized;
     private bool _cartesianTargetInitialized;
@@ -42,8 +43,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 JointMinimum[index],
                 JointMaximum[index])));
         Theme = settings.Theme;
+        UiScale = Math.Clamp(settings.UiScale, 0.75, 1.40);
         JogSpeed = settings.JogSpeed;
         TargetDuration = 3.0;
+        DatasetRepoId = "local/panthera-wam";
+        DatasetTask = "Panthera demonstration";
         ConnectionDetail = $"arm {settings.Endpoint} · camera {settings.CameraEndpoint}";
     }
 
@@ -54,6 +58,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<TerminalLogEntry> Logs { get; } = [];
 
     public ObservableCollection<EnvironmentGuideStep> EnvironmentSteps { get; } = [];
+
+    public ObservableCollection<TeachRecordingSnapshot> TeachRecordings { get; } = [];
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(AcquireControlCommand))]
@@ -175,6 +181,54 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private string _theme;
 
+    [ObservableProperty]
+    private double _uiScale;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PlayTeachRecordingCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportDatasetCommand))]
+    private TeachRecordingSnapshot? _selectedTeachRecording;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(StartTeachCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StopTeachCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StartTeachRecordingCommand))]
+    private bool _isTeachActive;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(StartTeachRecordingCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StopTeachRecordingCommand))]
+    private bool _isTeachRecording;
+
+    [ObservableProperty]
+    private string _teachStatus = "未启动";
+
+    [ObservableProperty]
+    private string _recordingPath = string.Empty;
+
+    [ObservableProperty]
+    private string _datasetRepoId = string.Empty;
+
+    [ObservableProperty]
+    private string _datasetTask = string.Empty;
+
+    [ObservableProperty]
+    private string _datasetOutputDirectory = string.Empty;
+
+    [ObservableProperty]
+    private double _datasetProgress;
+
+    [ObservableProperty]
+    private string _datasetStatus = "IDLE";
+
+    [ObservableProperty]
+    private string _datasetResult = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ExportDatasetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelDatasetExportCommand))]
+    private bool _isDatasetBusy;
+
     public bool CanControl => HasControl && !EStopEngaged && ConnectionState == TerminalConnectionState.Connected && !IsBusy;
 
     public bool IsConnected => ConnectionState == TerminalConnectionState.Connected;
@@ -193,6 +247,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public string LiveSummary => $"LIVE · {StateAgeMs} ms";
 
+    public string UiScaleLabel => $"{UiScale * 100:F0}%";
+
     public double GripperPercent
     {
         get
@@ -205,6 +261,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public string GripperStatus => !GripperValid
         ? "离线"
         : GripperFault != 0 ? $"故障 0x{GripperFault:X2}" : "就绪";
+
+    public string GripperOpeningState => !GripperValid
+        ? "OFFLINE"
+        : GripperPercent <= 8 ? "CLOSED" : GripperPercent >= 92 ? "OPEN" : "PARTIAL";
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -237,6 +297,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             AddLog("Info", "Connection", $"机械臂 {Settings.Endpoint}");
             AddLog("Info", "Connection", $"相机 {Settings.CameraEndpoint}");
             AddLog(CameraAvailable ? "Info" : "Warning", "D405", CameraSummary);
+            await RefreshTeachRecordingsAsync();
         }
         catch (Exception exception)
         {
@@ -285,6 +346,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public async Task ShutdownAsync()
     {
         await StopJogAsync();
+        if (IsTeachRecording)
+        {
+            await StopTeachRecordingAsync();
+        }
+        if (IsTeachActive)
+        {
+            await StopTeachAsync();
+        }
+        if (IsDatasetBusy && !string.IsNullOrWhiteSpace(_activeDatasetJobId))
+        {
+            await _client.CancelDatasetJobAsync(_activeDatasetJobId);
+        }
         if (!string.IsNullOrEmpty(_activeExecutionId))
         {
             await CancelExecutionAsync();
@@ -426,12 +499,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
             result.Accepted ? $"夹爪{label}指令已接受" : result.RejectReason);
     }
 
-    private bool CanRunMotion() => CanControl;
+    private bool CanRunMotion() => CanControl && !IsTeachActive && !IsTeachRecording;
 
     [RelayCommand]
     private async Task StartJogAsync(string? parameter)
     {
-        if (!CanControl || !TryParseJog(parameter, out var jointIndex, out var direction))
+        if (!CanRunMotion() || !TryParseJog(parameter, out var jointIndex, out var direction))
         {
             return;
         }
@@ -490,6 +563,216 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         Theme = theme;
         Settings = Settings with { Theme = theme, JogSpeed = JogSpeed };
+        _settingsStore.Save(Settings);
+    }
+
+    [RelayCommand]
+    private void ZoomIn() => SetUiScale(UiScale + 0.05);
+
+    [RelayCommand]
+    private void ZoomOut() => SetUiScale(UiScale - 0.05);
+
+    [RelayCommand]
+    private void ResetZoom() => SetUiScale(1.0);
+
+    [RelayCommand(CanExecute = nameof(CanStartTeach))]
+    private async Task StartTeachAsync()
+    {
+        await RunBusyAsync("Teach", async () =>
+        {
+            var result = await _client.StartTeachAsync();
+            IsTeachActive = result.Accepted;
+            TeachStatus = result.Accepted ? "拖动示教中" : $"拒绝：{result.RejectReason}";
+            AddLog(result.Accepted ? "Info" : "Warning", "Teach", TeachStatus);
+        });
+    }
+
+    private bool CanStartTeach() => CanControl && !IsTeachActive;
+
+    [RelayCommand(CanExecute = nameof(CanStopTeach))]
+    private async Task StopTeachAsync()
+    {
+        try
+        {
+            if (IsTeachRecording)
+            {
+                await StopTeachRecordingAsync();
+            }
+            var result = await _client.StopTeachAsync();
+            IsTeachActive = false;
+            TeachStatus = result.Accepted ? "已安全停止" : "未在示教";
+            AddLog(result.Accepted ? "Info" : "Warning", "Teach", TeachStatus);
+        }
+        catch (Exception exception)
+        {
+            AddLog("Error", "Teach", exception.Message);
+        }
+        finally
+        {
+            NotifyMotionCommands();
+        }
+    }
+
+    private bool CanStopTeach() => HasControl && IsTeachActive;
+
+    [RelayCommand(CanExecute = nameof(CanStartTeachRecording))]
+    private async Task StartTeachRecordingAsync()
+    {
+        try
+        {
+            RecordingPath = await _client.StartTeachRecordingAsync();
+            IsTeachRecording = true;
+            TeachStatus = "正在同步录制";
+            AddLog("Info", "Recorder", RecordingPath);
+        }
+        catch (Exception exception)
+        {
+            AddLog("Error", "Recorder", exception.Message);
+        }
+    }
+
+    private bool CanStartTeachRecording() => HasControl && IsTeachActive && !IsTeachRecording;
+
+    [RelayCommand(CanExecute = nameof(CanStopTeachRecording))]
+    private async Task StopTeachRecordingAsync()
+    {
+        try
+        {
+            var recording = await _client.StopTeachRecordingAsync();
+            IsTeachRecording = false;
+            TeachStatus = IsTeachActive ? "拖动示教中" : "已停止";
+            if (recording is not null)
+            {
+                RecordingPath = recording.Path;
+                AddLog("Info", "Recorder", $"已保存 {recording.FrameCount:N0} frames · {recording.Path}");
+            }
+            await RefreshTeachRecordingsAsync();
+        }
+        catch (Exception exception)
+        {
+            AddLog("Error", "Recorder", exception.Message);
+        }
+    }
+
+    private bool CanStopTeachRecording() => HasControl && IsTeachRecording;
+
+    [RelayCommand]
+    private async Task RefreshTeachRecordingsAsync()
+    {
+        try
+        {
+            var selectedPath = SelectedTeachRecording?.Path;
+            var recordings = await _client.ListTeachRecordingsAsync();
+            TeachRecordings.Clear();
+            foreach (var recording in recordings.OrderByDescending(recording => recording.RecordedAt))
+            {
+                TeachRecordings.Add(recording);
+            }
+            SelectedTeachRecording = TeachRecordings.FirstOrDefault(recording => recording.Path == selectedPath)
+                ?? TeachRecordings.FirstOrDefault();
+        }
+        catch (Exception exception)
+        {
+            AddLog("Warning", "Teach", $"读取轨迹列表失败：{exception.Message}");
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanPlayTeachRecording))]
+    private async Task PlayTeachRecordingAsync()
+    {
+        var recording = SelectedTeachRecording;
+        if (recording is null)
+        {
+            return;
+        }
+        await RunBusyAsync("Teach playback", async () =>
+        {
+            var handle = await _client.PlayTeachRecordingAsync(recording.Path);
+            _activeExecutionId = handle.ExecutionId;
+            ExecutionStatus = "示教回放中";
+            await foreach (var progress in _client.StreamExecutionAsync(handle.ExecutionId))
+            {
+                ExecutionFraction = progress.Fraction;
+                ExecutionStatus = progress.State switch
+                {
+                    ExecutionState.Done => "回放完成",
+                    ExecutionState.Cancelled => "回放已取消",
+                    ExecutionState.Failed => $"回放失败：{progress.ErrorMessage}",
+                    _ => "示教回放中",
+                };
+            }
+            AddLog(ExecutionStatus == "回放完成" ? "Info" : "Warning", "Teach", ExecutionStatus);
+            _activeExecutionId = string.Empty;
+        });
+    }
+
+    private bool CanPlayTeachRecording() => CanControl && !IsTeachActive && SelectedTeachRecording is not null;
+
+    [RelayCommand(CanExecute = nameof(CanExportDataset))]
+    private async Task ExportDatasetAsync()
+    {
+        var recording = SelectedTeachRecording;
+        if (recording is null)
+        {
+            return;
+        }
+        IsDatasetBusy = true;
+        DatasetProgress = 0;
+        DatasetStatus = "QUEUED";
+        DatasetResult = string.Empty;
+        try
+        {
+            var handle = await _client.ExportLeRobotAsync(
+                recording.Path,
+                DatasetOutputDirectory,
+                DatasetRepoId,
+                DatasetTask);
+            _activeDatasetJobId = handle.JobId;
+            CancelDatasetExportCommand.NotifyCanExecuteChanged();
+            await foreach (var job in _client.WatchDatasetJobAsync(handle.JobId))
+            {
+                DatasetProgress = Math.Clamp(job.Progress * 100.0, 0, 100);
+                DatasetStatus = job.State.ToString().ToUpperInvariant();
+                DatasetResult = job.State == DatasetExportState.Done
+                    ? $"{job.OutputDirectory} · {job.FrameCount:N0} frames"
+                    : job.ErrorMessage;
+            }
+            AddLog(DatasetStatus == "DONE" ? "Info" : "Warning", "Dataset",
+                string.IsNullOrWhiteSpace(DatasetResult) ? DatasetStatus : DatasetResult);
+        }
+        catch (Exception exception)
+        {
+            DatasetStatus = "FAILED";
+            DatasetResult = exception.Message;
+            AddLog("Error", "Dataset", exception.Message);
+        }
+        finally
+        {
+            _activeDatasetJobId = string.Empty;
+            IsDatasetBusy = false;
+            CancelDatasetExportCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private bool CanExportDataset() => SelectedTeachRecording is not null && !IsDatasetBusy;
+
+    [RelayCommand(CanExecute = nameof(CanCancelDatasetExport))]
+    private async Task CancelDatasetExportAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_activeDatasetJobId))
+        {
+            return;
+        }
+        var cancelled = await _client.CancelDatasetJobAsync(_activeDatasetJobId);
+        AddLog(cancelled ? "Info" : "Warning", "Dataset", cancelled ? "已请求取消导出" : "导出已结束");
+    }
+
+    private bool CanCancelDatasetExport() => IsDatasetBusy && !string.IsNullOrWhiteSpace(_activeDatasetJobId);
+
+    private void SetUiScale(double scale)
+    {
+        UiScale = Math.Clamp(Math.Round(scale * 20) / 20, 0.75, 1.40);
+        Settings = Settings with { UiScale = UiScale, JogSpeed = JogSpeed };
         _settingsStore.Save(Settings);
     }
 
@@ -672,6 +955,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         MoveLCommand.NotifyCanExecuteChanged();
         GripperOpenCommand.NotifyCanExecuteChanged();
         GripperCloseCommand.NotifyCanExecuteChanged();
+        StartTeachCommand.NotifyCanExecuteChanged();
+        StopTeachCommand.NotifyCanExecuteChanged();
+        StartTeachRecordingCommand.NotifyCanExecuteChanged();
+        StopTeachRecordingCommand.NotifyCanExecuteChanged();
+        PlayTeachRecordingCommand.NotifyCanExecuteChanged();
     }
 
     private void AddLog(string level, string source, string message)
@@ -731,9 +1019,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     partial void OnStateAgeMsChanged(long value) => OnPropertyChanged(nameof(LiveSummary));
 
-    partial void OnGripperPositionChanged(double value) => OnPropertyChanged(nameof(GripperPercent));
+    partial void OnGripperPositionChanged(double value)
+    {
+        OnPropertyChanged(nameof(GripperPercent));
+        OnPropertyChanged(nameof(GripperOpeningState));
+    }
 
-    partial void OnGripperValidChanged(bool value) => OnPropertyChanged(nameof(GripperStatus));
+    partial void OnGripperValidChanged(bool value)
+    {
+        OnPropertyChanged(nameof(GripperStatus));
+        OnPropertyChanged(nameof(GripperOpeningState));
+    }
 
     partial void OnGripperFaultChanged(uint value) => OnPropertyChanged(nameof(GripperStatus));
+
+    partial void OnUiScaleChanged(double value) => OnPropertyChanged(nameof(UiScaleLabel));
+
+    partial void OnIsTeachActiveChanged(bool value) => NotifyMotionCommands();
+
+    partial void OnIsTeachRecordingChanged(bool value) => NotifyMotionCommands();
 }
