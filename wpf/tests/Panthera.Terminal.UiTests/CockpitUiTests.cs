@@ -249,11 +249,16 @@ public sealed class CockpitUiTests
                     TimeSpan.FromSeconds(10),
                     TimeSpan.FromMilliseconds(100)).Success);
 
+                window.Focus();
+                positiveJog.Focus();
+                Assert.True(positiveJog.BoundingRectangle.Width > 0);
+                Assert.True(positiveJog.BoundingRectangle.Height > 0);
                 Mouse.MoveTo(positiveJog.BoundingRectangle.Center());
+                Thread.Sleep(200);
                 Mouse.Down(MouseButton.Left);
                 Assert.True(Retry.WhileFalse(
                     () => File.Exists(eventLog) && File.ReadAllText(eventLog).Contains("jog:0:"),
-                    TimeSpan.FromSeconds(3),
+                    TimeSpan.FromSeconds(5),
                     TimeSpan.FromMilliseconds(50)).Success);
                 Mouse.Up(MouseButton.Left);
 

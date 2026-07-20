@@ -22,22 +22,26 @@ public partial class App : Application
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
-        _singleInstanceMutex = new Mutex(
-            initiallyOwned: true,
-            name: @"Local\Panthera.Terminal.App",
-            createdNew: out _ownsSingleInstanceMutex);
-        if (!_ownsSingleInstanceMutex)
+        var uiTestMode = Environment.GetEnvironmentVariable("PANTHERA_UI_TEST") == "1";
+        if (!uiTestMode)
         {
-            if (!IsScreenshotMode)
+            _singleInstanceMutex = new Mutex(
+                initiallyOwned: true,
+                name: @"Local\Panthera.Terminal.App",
+                createdNew: out _ownsSingleInstanceMutex);
+            if (!_ownsSingleInstanceMutex)
             {
-                System.Windows.MessageBox.Show(
-                    "Panthera-HT 控制终端已经在运行。请切换到现有窗口，避免两个终端争抢控制权。",
-                    "终端已启动",
-                    System.Windows.MessageBoxButton.OK,
-                    System.Windows.MessageBoxImage.Information);
+                if (!IsScreenshotMode)
+                {
+                    System.Windows.MessageBox.Show(
+                        "Panthera-HT 控制终端已经在运行。请切换到现有窗口，避免两个终端争抢控制权。",
+                        "终端已启动",
+                        System.Windows.MessageBoxButton.OK,
+                        System.Windows.MessageBoxImage.Information);
+                }
+                Shutdown();
+                return;
             }
-            Shutdown();
-            return;
         }
         var settingsStore = new JsonTerminalSettingsStore();
         var settings = settingsStore.Load();

@@ -230,7 +230,9 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
         cancelled = await self._cancel_active_motion_and_wait(CancelReason.CLIENT)
         if cancelled:
-            await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.enter_idle_damping()))
+            await asyncio.wrap_future(
+                self._hardware_loop.submit(lambda backend: backend.enter_idle_damping())
+            )
         return arm_pb2.Empty()
 
     async def _cancel_active_motion_and_wait(

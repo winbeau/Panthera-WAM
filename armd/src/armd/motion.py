@@ -75,9 +75,7 @@ def gripper_position_frame(
     也不会因按整个夹爪行程分摊力矩而让短距离动作失去驱动力。
     """
     limits = backend.limits
-    safe_position = float(
-        np.clip(gripper_position, limits.gripper_lower, limits.gripper_upper)
-    )
+    safe_position = float(np.clip(gripper_position, limits.gripper_lower, limits.gripper_upper))
     position_budget = gripper_max_torque * GRIPPER_POSITION_TORQUE_FRACTION
     velocity_budget = gripper_max_torque - position_budget
     position_error = abs(safe_position - gripper_current_position)
@@ -161,26 +159,20 @@ class GripperPositionMotion:
             cancel_reason = self._cancel_reason
         arm_position = np.asarray([state.position for state in states[:6]], dtype=np.float64)
         if cancel_reason is not None:
-            backend.write_frame(
-                idle_damping_frame(backend.limits, arm_position, states[6].position)
-            )
+            backend.write_frame(idle_damping_frame(backend.limits, arm_position, states[6].position))
             self.reject_reason = f"夹爪运动已取消: {cancel_reason.value}"
             return MotionStepResult.CANCELLED
 
         error = self.position - states[6].position
         if abs(error) <= self.tolerance:
-            backend.write_frame(
-                idle_damping_frame(backend.limits, arm_position, states[6].position)
-            )
+            backend.write_frame(idle_damping_frame(backend.limits, arm_position, states[6].position))
             return MotionStepResult.DONE
         if (
             self._started_at is not None
             and self.timeout_s is not None
             and now - self._started_at >= self.timeout_s
         ):
-            backend.write_frame(
-                idle_damping_frame(backend.limits, arm_position, states[6].position)
-            )
+            backend.write_frame(idle_damping_frame(backend.limits, arm_position, states[6].position))
             self.reject_reason = "夹爪运动超时"
             return MotionStepResult.FAILED
 
@@ -313,9 +305,7 @@ class JointJogMotion:
             stale = now - self._last_command_at > self.freshness_s
         if cancel_reason is not None:
             positions = np.array([state.position for state in states[:6]], dtype=np.float64)
-            backend.write_frame(
-                idle_damping_frame(backend.limits, positions, states[6].position)
-            )
+            backend.write_frame(idle_damping_frame(backend.limits, positions, states[6].position))
             return MotionStepResult.CANCELLED
         elif stale:
             velocities.fill(0.0)

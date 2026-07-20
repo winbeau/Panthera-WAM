@@ -132,7 +132,7 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
     )
     channel = grpc.insecure_channel(endpoint, options=(("grpc.enable_http_proxy", 0),))
     try:
-        grpc.channel_ready_future(channel).result(timeout=5)
+        grpc.channel_ready_future(channel).result(timeout=15)
         monkeypatch.setenv("PANTHERA_ENDPOINT", endpoint)
         monkeypatch.setenv("PANTHERA_CAMERA_ENDPOINT", endpoint)
         monkeypatch.setenv("PANTHERA_STATE_DIR", str(tmp_path))

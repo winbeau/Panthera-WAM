@@ -122,7 +122,7 @@ async def run(args: argparse.Namespace) -> None:
                 )
             return
         binds = ", ".join(filter(None, (args.bind, args.local_bind)))
-        print(f"camerad 已启动：grpc://{binds}，D405={args.mode}")
+        print(f"camerad 已启动：grpc://{binds}，D405={args.mode}", flush=True)
         await stop_requested.wait()
     finally:
         for signal_number in registered_signals:

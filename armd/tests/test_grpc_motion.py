@@ -125,11 +125,7 @@ async def test_movej_wait_and_gripper_commands(motion_stack) -> None:
     for _ in range(20):
         await asyncio.sleep(0.01)
         frame = await asyncio.wrap_future(loop.submit(lambda backend: backend._last_frame))
-        if (
-            frame is not None
-            and frame.mode is FrameMode.POS_VEL_TQE_KP_KD
-            and frame.gripper_kp > 0.0
-        ):
+        if frame is not None and frame.mode is FrameMode.POS_VEL_TQE_KP_KD and frame.gripper_kp > 0.0:
             break
     assert frame is not None
     assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD

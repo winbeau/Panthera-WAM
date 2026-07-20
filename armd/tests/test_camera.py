@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import select
 import subprocess
 import sys
 import threading
@@ -143,7 +144,10 @@ def test_camerad_sigterm_stops_cleanly() -> None:
         text=True,
     )
     try:
-        time.sleep(2.0)
+        assert process.stdout is not None
+        ready, _, _ = select.select([process.stdout], [], [], 15.0)
+        assert ready, "camerad 未在 15 秒内完成启动"
+        assert "camerad 已启动" in process.stdout.readline()
         process.terminate()
         assert process.wait(timeout=3) == 0
     finally:
