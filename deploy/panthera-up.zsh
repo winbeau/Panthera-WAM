@@ -141,6 +141,15 @@ panthera-up() {
             sleep 0.25
         done
     fi
+    # 进程退出与 gRPC socket 释放不是同一时刻；等待监听端口消失，避免
+    # 重启竞态把刚退出的旧后端误判成“其他进程占用”。
+    for attempt in {1..40}; do
+        if ! command ss -ltn | command grep -qE ':50051[[:space:]]' \
+            && ! command ss -ltn | command grep -qE ':50052[[:space:]]'; then
+            break
+        fi
+        sleep 0.25
+    done
     if command ss -ltn | command grep -qE ':50051[[:space:]]'; then
         print -u2 "端口 50051 仍被其他进程占用，请运行：ss -ltnp | grep 50051"
         return 4
