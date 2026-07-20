@@ -12,6 +12,8 @@ namespace Panthera.Terminal.App;
 
 public partial class CadThreeView : UserControl
 {
+    private static readonly TimeSpan CameraPushInterval = TimeSpan.FromSeconds(1.0 / 30.0);
+
     public static readonly DependencyProperty J1Property = StateProperty(nameof(J1));
     public static readonly DependencyProperty J2Property = StateProperty(nameof(J2));
     public static readonly DependencyProperty J3Property = StateProperty(nameof(J3));
@@ -65,7 +67,7 @@ public partial class CadThreeView : UserControl
     public void UpdateColorCameraFrame(BitmapSource frame)
     {
         if (!_bridgeReady || _cameraPushActive || _browser?.CoreWebView2 is null
-            || DateTimeOffset.UtcNow - _lastCameraPush < TimeSpan.FromMilliseconds(180))
+            || DateTimeOffset.UtcNow - _lastCameraPush < CameraPushInterval)
         {
             return;
         }
@@ -235,11 +237,7 @@ public partial class CadThreeView : UserControl
         _cameraPushActive = true;
         try
         {
-            using var stream = new MemoryStream();
-            var encoder = new JpegBitmapEncoder { QualityLevel = 72 };
-            encoder.Frames.Add(BitmapFrame.Create(frame));
-            encoder.Save(stream);
-            var dataUrl = $"data:image/jpeg;base64,{Convert.ToBase64String(stream.ToArray())}";
+            var dataUrl = await Task.Run(() => EncodeJpegDataUrl(frame));
             await browser.ExecuteScriptAsync(
                 $"window.PantheraWpfBridge?.setCameraFrame({JsonSerializer.Serialize(dataUrl)})");
             _lastCameraPush = DateTimeOffset.UtcNow;
@@ -252,6 +250,15 @@ public partial class CadThreeView : UserControl
         {
             _cameraPushActive = false;
         }
+    }
+
+    private static string EncodeJpegDataUrl(BitmapSource frame)
+    {
+        using var stream = new MemoryStream();
+        var encoder = new JpegBitmapEncoder { QualityLevel = 72 };
+        encoder.Frames.Add(BitmapFrame.Create(frame));
+        encoder.Save(stream);
+        return $"data:image/jpeg;base64,{Convert.ToBase64String(stream.ToArray())}";
     }
 
     private async void StylePicker_SelectionChanged(object sender, SelectionChangedEventArgs eventArgs)

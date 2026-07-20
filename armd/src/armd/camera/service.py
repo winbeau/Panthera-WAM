@@ -120,12 +120,9 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
         last_sequence = 0
         sent = 0
         interval_s = 1.0 / max_rate_hz
-        next_emit_at = time.monotonic()
+        last_emitted_at = 0.0
         try:
             while request.max_frames == 0 or sent < request.max_frames:
-                delay = next_emit_at - time.monotonic()
-                if delay > 0:
-                    await asyncio.sleep(delay)
                 frame = await asyncio.to_thread(
                     worker.wait_for_frame,
                     stream,
@@ -140,10 +137,13 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
                             status.error or "D405 当前不可用",
                         )
                     continue
-                yield frame_message(frame)
                 last_sequence = frame.sequence
+                delay = last_emitted_at + interval_s - time.monotonic()
+                if last_emitted_at > 0 and delay > 0:
+                    await asyncio.sleep(delay)
+                yield frame_message(frame)
                 sent += 1
-                next_emit_at = max(next_emit_at + interval_s, time.monotonic())
+                last_emitted_at = time.monotonic()
         except asyncio.CancelledError:
             return
 

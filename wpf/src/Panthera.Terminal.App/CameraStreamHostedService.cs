@@ -6,6 +6,8 @@ namespace Panthera.Terminal.App;
 
 public sealed class CameraStreamHostedService : BackgroundService
 {
+    private const double CameraStreamRateHz = 30.0;
+
     private readonly IArmdClient _client;
     private readonly LatestCameraFrames _frames;
     private readonly ILogger<CameraStreamHostedService> _logger;
@@ -31,7 +33,7 @@ public sealed class CameraStreamHostedService : BackgroundService
         {
             try
             {
-                await foreach (var frame in _client.StreamCameraFramesAsync(stream, 15, stoppingToken))
+                await foreach (var frame in _client.StreamCameraFramesAsync(stream, CameraStreamRateHz, stoppingToken))
                 {
                     _frames.Publish(frame);
                 }
