@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -123,6 +124,32 @@ def test_camerad_sim_check() -> None:
         "height": 6,
         "bytes": 96,
     }
+
+
+@pytest.mark.skipif(os.name == "nt", reason="SIGTERM graceful shutdown is a POSIX deployment contract")
+def test_camerad_sigterm_stops_cleanly() -> None:
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "armd.camera",
+            "--mode",
+            "sim",
+            "--bind",
+            "127.0.0.1:0",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        time.sleep(2.0)
+        process.terminate()
+        assert process.wait(timeout=3) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
 
 
 @pytest.mark.asyncio

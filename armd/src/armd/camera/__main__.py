@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 from functools import partial
 
 import grpc
@@ -79,6 +80,17 @@ async def run(args: argparse.Namespace) -> None:
         if server.add_insecure_port(additional_bind) == 0:
             raise RuntimeError(f"无法监听附加 gRPC 地址: {additional_bind}")
 
+    stop_requested = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    registered_signals: list[signal.Signals] = []
+    if not args.check:
+        for signal_number in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(signal_number, stop_requested.set)
+                registered_signals.append(signal_number)
+            except (NotImplementedError, RuntimeError):
+                pass
+
     worker.start()
     await server.start()
     try:
@@ -111,8 +123,10 @@ async def run(args: argparse.Namespace) -> None:
             return
         binds = ", ".join(filter(None, (args.bind, args.local_bind)))
         print(f"camerad 已启动：grpc://{binds}，D405={args.mode}")
-        await server.wait_for_termination()
+        await stop_requested.wait()
     finally:
+        for signal_number in registered_signals:
+            loop.remove_signal_handler(signal_number)
         await server.stop(0)
         worker.stop()
 
