@@ -95,24 +95,145 @@ public sealed class MainWindowViewModelTests
         Assert.Single(viewModel.TeachRecordings);
         Assert.Equal(viewModel.RecordingPath, viewModel.SelectedTeachRecording?.Path);
         Assert.Equal(
-            new[] { "acquire", "teach-start", "record-start", "teach-stop", "record-stop", "list" },
+            new[] { "acquire", "teach-start", "record-start", "record-stop", "teach-stop", "list" },
             client.TeachCalls);
+    }
+
+    [Fact]
+    public async Task TeachSession_ReacquiresWhenDisplayedControlLeaseIsStale()
+    {
+        var client = new FailingJogClient(enableTeachSession: true, hasActiveLease: false);
+        var viewModel = new MainWindowViewModel(
+            client,
+            new StubEnvironmentGuideService(),
+            new StubSettingsStore(),
+            new TerminalSettings())
+        {
+            HasControl = true,
+            ConnectionState = TerminalConnectionState.Connected,
+            TeachRecordingName = "stale_lease_demo",
+        };
+
+        await viewModel.StartTeachSessionCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.HasControl);
+        Assert.True(viewModel.IsTeachActive);
+        Assert.True(viewModel.IsTeachRecording);
+        Assert.Equal("acquire", client.TeachCalls[0]);
+    }
+
+    [Fact]
+    public async Task GripperLeaseFailure_IsContainedAndClearsDisplayedControl()
+    {
+        var client = new FailingJogClient(failGripperWithLostLease: true);
+        var viewModel = new MainWindowViewModel(
+            client,
+            new StubEnvironmentGuideService(),
+            new StubSettingsStore(),
+            new TerminalSettings())
+        {
+            HasControl = true,
+            ConnectionState = TerminalConnectionState.Connected,
+        };
+
+        var exception = await Record.ExceptionAsync(() => viewModel.GripperOpenCommand.ExecuteAsync(null));
+
+        Assert.Null(exception);
+        Assert.False(viewModel.HasControl);
+        Assert.Contains(viewModel.Logs, entry =>
+            entry.Source == "Control"
+            && entry.Message.Contains("lease 已失效", StringComparison.Ordinal));
+        Assert.Contains(viewModel.Logs, entry => entry.Source == "Gripper");
+    }
+
+    [Fact]
+    public async Task JogStop_IsBoundedWhenTransportIgnoresCancellation()
+    {
+        var client = new FailingJogClient(hangJog: true);
+        var viewModel = new MainWindowViewModel(
+            client,
+            new StubEnvironmentGuideService(),
+            new StubSettingsStore(),
+            new TerminalSettings())
+        {
+            HasControl = true,
+            ConnectionState = TerminalConnectionState.Connected,
+        };
+
+        await viewModel.StartJogCommand.ExecuteAsync("0:1");
+        await client.JogStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await viewModel.StopJogAsync().WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.False(viewModel.IsJogging);
+        Assert.Contains(viewModel.Logs, entry =>
+            entry.Source == "Jog"
+            && entry.Message.Contains("新鲜度窗口停止", StringComparison.Ordinal));
+        client.ReleaseHungJog();
+    }
+
+    [Fact]
+    public async Task MoveL_ForwardsSixDimensionalTargetWhenOrientationIsEnabled()
+    {
+        var client = new FailingJogClient(enableMotion: true);
+        var viewModel = new MainWindowViewModel(
+            client,
+            new StubEnvironmentGuideService(),
+            new StubSettingsStore(),
+            new TerminalSettings())
+        {
+            HasControl = true,
+            ConnectionState = TerminalConnectionState.Connected,
+            TargetX = 0.31,
+            TargetY = -0.04,
+            TargetZ = 0.28,
+            TargetRoll = 0.1,
+            TargetPitch = 0.2,
+            TargetYaw = -0.3,
+            PreserveOrientation = false,
+        };
+
+        await viewModel.MoveLCommand.ExecuteAsync(null);
+
+        Assert.Equal(
+            new CartesianTarget(0.31, -0.04, 0.28, 0.1, 0.2, -0.3, false),
+            client.LastMoveLTarget);
     }
 
     private sealed class FailingJogClient : IArmdClient
     {
         private readonly bool _enableTeachSession;
+        private readonly bool _enableMotion;
+        private readonly bool _failGripperWithLostLease;
+        private readonly bool _hangJog;
         private readonly List<TeachRecordingSnapshot> _recordings = [];
         private string _recordingPath = string.Empty;
+        private readonly TaskCompletionSource _releaseHungJog = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public FailingJogClient(bool enableTeachSession = false)
+        public FailingJogClient(
+            bool enableTeachSession = false,
+            bool enableMotion = false,
+            bool failGripperWithLostLease = false,
+            bool hangJog = false,
+            bool hasActiveLease = true)
         {
             _enableTeachSession = enableTeachSession;
+            _enableMotion = enableMotion;
+            _failGripperWithLostLease = failGripperWithLostLease;
+            _hangJog = hangJog;
+            HasActiveLease = hasActiveLease;
         }
 
         public List<string> TeachCalls { get; } = [];
 
+        public TaskCompletionSource JogStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public CartesianTarget? LastMoveLTarget { get; private set; }
+
         public TerminalConnectionState ConnectionState { get; private set; } = TerminalConnectionState.Connected;
+
+        public bool HasActiveLease { get; private set; }
+
+        public void ReleaseHungJog() => _releaseHungJog.TrySetResult();
 
         public async Task JogAsync(
             IAsyncEnumerable<IReadOnlyList<double>> commands,
@@ -120,6 +241,12 @@ public sealed class MainWindowViewModelTests
         {
             await foreach (var _ in commands.WithCancellation(cancellationToken))
             {
+                if (_hangJog)
+                {
+                    JogStarted.TrySetResult();
+                    await _releaseHungJog.Task;
+                    return;
+                }
                 ConnectionState = TerminalConnectionState.Disconnected;
                 throw new IOException("simulated transport failure");
             }
@@ -159,6 +286,7 @@ public sealed class MainWindowViewModelTests
                 throw new NotSupportedException();
             }
             TeachCalls.Add("acquire");
+            HasActiveLease = true;
             return Task.FromResult(new ControlSnapshot(true, clientId, true, false));
         }
 
@@ -189,12 +317,28 @@ public sealed class MainWindowViewModelTests
         public Task<OperationResult> GripperMoveAsync(
             double position,
             double velocity,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            CancellationToken cancellationToken = default)
+        {
+            if (_failGripperWithLostLease)
+            {
+                HasActiveLease = false;
+                throw new IOException("缺少或无效的控制权 lease");
+            }
+            throw new NotSupportedException();
+        }
 
         public Task<ExecutionHandle> MoveLAsync(
             CartesianTarget target,
             double durationSeconds,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            CancellationToken cancellationToken = default)
+        {
+            if (!_enableMotion)
+            {
+                throw new NotSupportedException();
+            }
+            LastMoveLTarget = target;
+            return Task.FromResult(new ExecutionHandle("move-l-test"));
+        }
 
         public async IAsyncEnumerable<ExecutionProgress> StreamExecutionAsync(
             string executionId,

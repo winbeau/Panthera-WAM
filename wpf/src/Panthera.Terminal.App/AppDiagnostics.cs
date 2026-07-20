@@ -22,6 +22,11 @@ internal static class AppDiagnostics
 
     public static void Write(string source, Exception exception)
     {
+        Write(source, exception.ToString());
+    }
+
+    public static void Write(string source, string message)
+    {
         try
         {
             lock (Gate)
@@ -29,7 +34,7 @@ internal static class AppDiagnostics
                 Directory.CreateDirectory(Path.GetDirectoryName(LogPath) ?? DirectoryPath);
                 File.AppendAllText(
                     LogPath,
-                    $"[{DateTimeOffset.Now:O}] {source}{Environment.NewLine}{exception}{Environment.NewLine}{Environment.NewLine}");
+                    $"[{DateTimeOffset.Now:O}] {source}{Environment.NewLine}{message}{Environment.NewLine}{Environment.NewLine}");
             }
         }
         catch

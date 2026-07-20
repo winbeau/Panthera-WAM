@@ -197,6 +197,44 @@ def test_estop_recovery_failure_relatches_stop() -> None:
         loop.stop()
 
 
+def test_estop_recovery_frame_is_not_replayed_as_idle() -> None:
+    holder: dict[str, ThreadRecordingBackend] = {}
+
+    def factory() -> ThreadRecordingBackend:
+        backend = ThreadRecordingBackend()
+        holder["backend"] = backend
+        return backend
+
+    loop = HardwareLoop(factory, control_hz=200.0)
+    loop.start()
+    try:
+        loop.request_estop()
+        deadline = time.monotonic() + 1.0
+        while not loop.estop_applied and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert loop.clear_estop()
+        deadline = time.monotonic() + 1.0
+        while not loop.estop_recovery_applied and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert loop.wait_for_cycles(loop.stats().cycles + 2)
+
+        frames = holder["backend"].frames
+        recovery_index = next(
+            index
+            for index, frame in enumerate(frames)
+            if frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+            and frame.arm_kd is not None
+            and np.array_equal(frame.arm_kd, ESTOP_RECOVERY_DAMPING_KD)
+        )
+        idle_frame = frames[recovery_index + 1]
+        assert idle_frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+        assert idle_frame.arm_torque == pytest.approx([0.0] * 6)
+        assert idle_frame.arm_kp == pytest.approx([0.0] * 6)
+        assert idle_frame.arm_kd == pytest.approx(IDLE_DAMPING_KD)
+    finally:
+        loop.stop()
+
+
 def test_state_cache_and_cycle_stats_keep_advancing() -> None:
     loop = HardwareLoop(SimBackend, control_hz=100.0)
     loop.start()

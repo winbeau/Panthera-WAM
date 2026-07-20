@@ -4,6 +4,8 @@ public interface IArmdClient : IAsyncDisposable
 {
     TerminalConnectionState ConnectionState { get; }
 
+    bool HasActiveLease => true;
+
     Task<DaemonSnapshot> GetDaemonStatusAsync(CancellationToken cancellationToken = default);
 
     Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default);

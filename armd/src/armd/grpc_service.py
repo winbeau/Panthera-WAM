@@ -24,13 +24,13 @@ from .hardware_loop import CancelReason, HardwareLoop, MotionStepResult
 from .kinematics import KinematicsWorker
 from .motion import (
     CartesianTrajectoryMotion,
+    GripperPositionMotion,
     JointJogMotion,
     JointMITMotion,
     JointPositionMotion,
     TEACH_TAU_LIMIT,
     TeachMotion,
     TeachPlaybackMotion,
-    position_frame,
 )
 from .safety import apply_watchdog_stop
 from .state import gripper_state_message, joint_state_message, robot_state_message
@@ -1449,7 +1449,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         if self._hardware_loop.has_active_motion:
             return arm_pb2.GripperMoveResponse(accepted=False, reject_reason="已有运动正在执行")
 
-        def command(backend):
+        def validate(backend):
             limits = backend.limits
             if position < limits.gripper_lower:
                 return False, f"gripper 目标 {position:.6g} 超过下限 {limits.gripper_lower:.6g}"
@@ -1459,26 +1459,26 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 return False, f"gripper 速度 {velocity:.6g} 超过限值 {limits.gripper_velocity:.6g}"
             if max_torque > limits.gripper_torque:
                 return False, f"gripper 最大力矩 {max_torque:.6g} 超过限值 {limits.gripper_torque:.6g}"
-            states = backend.read_all()
-            if len(states) != 7 or not all(state.valid for state in states):
-                return False, "电机状态无效或连接不完整"
-            backend.write_frame(
-                position_frame(
-                    backend,
-                    arm_position=np.array([state.position for state in states[:6]], dtype=np.float64),
-                    arm_velocity=np.full(6, 0.1),
-                    gripper_position=position,
-                    gripper_velocity=velocity,
-                    gripper_max_torque=max_torque,
-                )
-            )
             return True, ""
 
         try:
-            accepted, reject_reason = await asyncio.wrap_future(self._hardware_loop.submit(command))
+            accepted, reject_reason = await asyncio.wrap_future(self._hardware_loop.submit(validate))
         except (BackendError, LimitViolationError, ValueError) as exc:
             return arm_pb2.GripperMoveResponse(accepted=False, reject_reason=str(exc))
-        return arm_pb2.GripperMoveResponse(accepted=accepted, reject_reason=reject_reason)
+        if not accepted:
+            return arm_pb2.GripperMoveResponse(accepted=False, reject_reason=reject_reason)
+
+        motion = GripperPositionMotion(
+            position=position,
+            velocity=velocity,
+            max_torque=max_torque,
+        )
+        start_ack, _completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(start_ack)
+        except RuntimeError as exc:
+            return arm_pb2.GripperMoveResponse(accepted=False, reject_reason=str(exc))
+        return arm_pb2.GripperMoveResponse(accepted=True)
 
     async def _request_joint_angles(self, values, context) -> np.ndarray:
         if values:

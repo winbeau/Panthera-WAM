@@ -10,15 +10,22 @@ public sealed class WslTcpBridge
     private readonly string _distribution;
     private readonly string _user;
     private readonly int _listenPort;
+    private readonly string _targetHost;
     private readonly int _targetPort;
     private readonly ConcurrentDictionary<long, Task> _connections = new();
     private long _connectionId;
 
-    public WslTcpBridge(string distribution, string user, int listenPort = 50050, int targetPort = 50051)
+    public WslTcpBridge(
+        string distribution,
+        string user,
+        int listenPort = 50050,
+        int targetPort = 50051,
+        string targetHost = "::1")
     {
         _distribution = distribution;
         _user = user;
         _listenPort = listenPort;
+        _targetHost = targetHost;
         _targetPort = targetPort;
     }
 
@@ -101,7 +108,7 @@ public sealed class WslTcpBridge
         }
         startInfo.ArgumentList.Add("--");
         startInfo.ArgumentList.Add("nc");
-        startInfo.ArgumentList.Add("127.0.0.1");
+        startInfo.ArgumentList.Add(_targetHost);
         startInfo.ArgumentList.Add(_targetPort.ToString());
         return Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 WSL TCP 桥");
     }

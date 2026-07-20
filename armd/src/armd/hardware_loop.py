@@ -349,6 +349,9 @@ class HardwareLoop:
                     states[6].position,
                 )
             )
+            # 恢复帧只用于从 STOP 平滑切回 MIT 的单个周期，不能成为空闲时
+            # 无限重发的最后一帧，否则重力补偿力矩会长期压在 J2/J3 上。
+            backend.enter_idle_damping()
         except Exception as exc:
             error = str(exc)
             try:

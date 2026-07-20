@@ -17,25 +17,56 @@ public sealed class JogButton : Button
     public JogButton()
     {
         IsEnabledChanged += HandleIsEnabledChanged;
+        AddHandler(
+            Mouse.PreviewMouseDownEvent,
+            new MouseButtonEventHandler(HandlePreviewMouseDown),
+            handledEventsToo: true);
+        AddHandler(
+            Mouse.PreviewMouseUpEvent,
+            new MouseButtonEventHandler(HandlePreviewMouseUp),
+            handledEventsToo: true);
+        AddHandler(
+            Keyboard.PreviewKeyDownEvent,
+            new KeyEventHandler(HandlePreviewKeyDown),
+            handledEventsToo: true);
+        AddHandler(
+            Keyboard.PreviewKeyUpEvent,
+            new KeyEventHandler(HandlePreviewKeyUp),
+            handledEventsToo: true);
     }
 
     public ICommand? PressCommand { get => (ICommand?)GetValue(PressCommandProperty); set => SetValue(PressCommandProperty, value); }
     public ICommand? ReleaseCommand { get => (ICommand?)GetValue(ReleaseCommandProperty); set => SetValue(ReleaseCommandProperty, value); }
     public object? JogParameter { get => GetValue(JogParameterProperty); set => SetValue(JogParameterProperty, value); }
 
-    protected override void OnPreviewMouseLeftButtonDown(MouseButtonEventArgs eventArgs)
+    private void HandlePreviewMouseDown(object sender, MouseButtonEventArgs eventArgs)
     {
-        base.OnPreviewMouseLeftButtonDown(eventArgs);
-        CaptureMouse();
+        if (eventArgs.ChangedButton != MouseButton.Left || _pressed)
+        {
+            return;
+        }
+
+        Focus();
+        if (!CaptureMouse())
+        {
+            return;
+        }
         BeginJog();
         eventArgs.Handled = true;
     }
 
-    protected override void OnPreviewMouseLeftButtonUp(MouseButtonEventArgs eventArgs)
+    private void HandlePreviewMouseUp(object sender, MouseButtonEventArgs eventArgs)
     {
+        if (eventArgs.ChangedButton != MouseButton.Left)
+        {
+            return;
+        }
+
         EndJog();
-        ReleaseMouseCapture();
-        base.OnPreviewMouseLeftButtonUp(eventArgs);
+        if (IsMouseCaptured)
+        {
+            ReleaseMouseCapture();
+        }
         eventArgs.Handled = true;
     }
 
@@ -54,24 +85,22 @@ public sealed class JogButton : Button
         base.OnMouseLeave(eventArgs);
     }
 
-    protected override void OnPreviewKeyDown(KeyEventArgs eventArgs)
+    private void HandlePreviewKeyDown(object sender, KeyEventArgs eventArgs)
     {
         if (!eventArgs.IsRepeat && eventArgs.Key is Key.Space or Key.Enter)
         {
             BeginJog();
             eventArgs.Handled = true;
         }
-        base.OnPreviewKeyDown(eventArgs);
     }
 
-    protected override void OnPreviewKeyUp(KeyEventArgs eventArgs)
+    private void HandlePreviewKeyUp(object sender, KeyEventArgs eventArgs)
     {
         if (eventArgs.Key is Key.Space or Key.Enter)
         {
             EndJog();
             eventArgs.Handled = true;
         }
-        base.OnPreviewKeyUp(eventArgs);
     }
 
     protected override void OnLostKeyboardFocus(KeyboardFocusChangedEventArgs eventArgs)

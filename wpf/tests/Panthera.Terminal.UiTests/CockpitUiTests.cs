@@ -12,6 +12,267 @@ namespace Panthera.Terminal.UiTests;
 public sealed class CockpitUiTests
 {
     [Fact]
+    public async Task Real_hardware_wpf_movel_1mm_requires_explicit_confirmation()
+    {
+        if (Environment.GetEnvironmentVariable("PANTHERA_RUN_REAL_MOVEL_TEST") != "1")
+        {
+            return;
+        }
+
+        const string confirmation = "CONFIRM_WPF_MOVEL_X_PLUS_0.001_M_3_S";
+        Assert.Equal(confirmation, Environment.GetEnvironmentVariable("PANTHERA_REAL_CONFIRM"));
+        Assert.True(
+            int.TryParse(Environment.GetEnvironmentVariable("PANTHERA_WPF_PID"), out var processId),
+            "PANTHERA_WPF_PID must identify the already-running real WPF terminal");
+        Assert.True(
+            double.TryParse(
+                Environment.GetEnvironmentVariable("PANTHERA_MOVEL_TARGET_X"),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var targetX),
+            "PANTHERA_MOVEL_TARGET_X must be an invariant-culture number");
+
+        Console.WriteLine($"REAL TEST ACTION: acquire control, clear EStop, set X={targetX:R} m, preserve orientation, MoveL over 3.0 s, F12 EStop");
+        Console.WriteLine($"SECOND CONFIRMATION: {confirmation}");
+
+        using var application = Application.Attach(processId);
+        using var automation = new UIA3Automation();
+        var window = Retry.WhileNull(
+            () => application.GetMainWindow(automation),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromMilliseconds(100)).Result;
+        Assert.NotNull(window);
+
+        try
+        {
+            var acquire = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("AcquireControlButton"));
+            var release = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("ReleaseControlButton"));
+            var resetEStop = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("ResetEStopBannerButton"));
+            var targetXBox = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("MoveLTargetX"));
+            var preserveOrientation = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("MoveLPreserveOrientationCheckBox"));
+            var moveL = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("MoveLButton"));
+            Assert.NotNull(acquire);
+            Assert.NotNull(release);
+            Assert.NotNull(resetEStop);
+            Assert.NotNull(targetXBox);
+            Assert.NotNull(preserveOrientation);
+            Assert.NotNull(moveL);
+
+            if (acquire.IsEnabled)
+            {
+                acquire.AsButton().Invoke();
+            }
+            Assert.True(Retry.WhileFalse(
+                () => release.IsEnabled,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(50)).Success);
+
+            if (resetEStop.IsEnabled)
+            {
+                resetEStop.AsButton().Invoke();
+            }
+            Assert.True(Retry.WhileFalse(
+                () => moveL.IsEnabled,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(50)).Success);
+
+            preserveOrientation.AsCheckBox().IsChecked = true;
+            targetXBox.AsTextBox().Text = targetX.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            targetXBox.Focus();
+            Keyboard.Press(VirtualKeyShort.TAB);
+            Thread.Sleep(200);
+
+            using var guard = new CancellationTokenSource();
+            var guardTask = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), guard.Token);
+                window.Focus();
+                Keyboard.Press(VirtualKeyShort.F12);
+            }, guard.Token);
+
+            moveL.AsButton().Invoke();
+            Assert.True(Retry.WhileFalse(
+                () => !moveL.IsEnabled,
+                TimeSpan.FromSeconds(1),
+                TimeSpan.FromMilliseconds(25)).Success);
+            Assert.True(Retry.WhileFalse(
+                () => moveL.IsEnabled,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(50)).Success);
+            window.Focus();
+            Keyboard.Press(VirtualKeyShort.F12);
+            guard.Cancel();
+            try
+            {
+                await guardTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+        finally
+        {
+            window.Focus();
+            Keyboard.Press(VirtualKeyShort.F12);
+        }
+    }
+
+    [Fact]
+    public async Task Real_hardware_wpf_j1_micro_jog_requires_explicit_confirmation()
+    {
+        if (Environment.GetEnvironmentVariable("PANTHERA_RUN_REAL_UI_TEST") != "1")
+        {
+            return;
+        }
+
+        const string confirmation = "CONFIRM_WPF_J1_0.02_RAD_S_0.5_S";
+        Assert.Equal(confirmation, Environment.GetEnvironmentVariable("PANTHERA_REAL_CONFIRM"));
+        Assert.True(
+            int.TryParse(Environment.GetEnvironmentVariable("PANTHERA_WPF_PID"), out var processId),
+            "PANTHERA_WPF_PID must identify the already-running real WPF terminal");
+
+        Console.WriteLine("REAL TEST ACTION: acquire control, clear EStop, set jog speed 0.02 rad/s, hold J1+ for 0.5 s, release, F12 EStop");
+        Console.WriteLine($"SECOND CONFIRMATION: {confirmation}");
+
+        using var application = Application.Attach(processId);
+        using var automation = new UIA3Automation();
+        var window = Retry.WhileNull(
+            () => application.GetMainWindow(automation),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromMilliseconds(100)).Result;
+        Assert.NotNull(window);
+
+        try
+        {
+            var acquire = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("AcquireControlButton"));
+            var release = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("ReleaseControlButton"));
+            var resetEStop = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("ResetEStopBannerButton"));
+            var jogSpeed = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("JogSpeedSlider"));
+            var positiveJog = window.FindFirstDescendant(
+                condition => condition.ByAutomationId("J1PositiveJogButton"));
+            Assert.NotNull(acquire);
+            Assert.NotNull(release);
+            Assert.NotNull(resetEStop);
+            Assert.NotNull(jogSpeed);
+            Assert.NotNull(positiveJog);
+
+            if (acquire.IsEnabled)
+            {
+                acquire.AsButton().Invoke();
+            }
+            Assert.True(Retry.WhileFalse(
+                () => release.IsEnabled,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(50)).Success);
+
+            Assert.True(resetEStop.IsEnabled);
+            resetEStop.AsButton().Invoke();
+            Assert.True(Retry.WhileFalse(
+                () => positiveJog.IsEnabled,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(50)).Success);
+
+            jogSpeed.Focus();
+            Keyboard.Press(VirtualKeyShort.HOME);
+            Thread.Sleep(200);
+
+            positiveJog.Focus();
+            Mouse.MoveTo(positiveJog.BoundingRectangle.Center());
+            using var guard = new CancellationTokenSource();
+            var guardTask = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1.5), guard.Token);
+                window.Focus();
+                Keyboard.Press(VirtualKeyShort.F12);
+            }, guard.Token);
+
+            Mouse.Down(MouseButton.Left);
+            Thread.Sleep(500);
+            Mouse.Up(MouseButton.Left);
+            window.Focus();
+            Keyboard.Press(VirtualKeyShort.F12);
+            guard.Cancel();
+            try
+            {
+                await guardTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+        finally
+        {
+            Mouse.Up(MouseButton.Left);
+            window.Focus();
+            Keyboard.Press(VirtualKeyShort.F12);
+        }
+    }
+
+    [Fact]
+    public void Hold_to_run_mouse_input_and_f12_reach_the_view_model()
+    {
+        if (Environment.GetEnvironmentVariable("PANTHERA_RUN_UI_TESTS") != "1")
+        {
+            return;
+        }
+
+        var (application, automation, window, eventLog) = LaunchAcceptanceApp("motion-input");
+        using (application)
+        using (automation)
+        {
+            try
+            {
+                var acquire = window.FindFirstDescendant(
+                    condition => condition.ByAutomationId("AcquireControlButton"));
+                Assert.NotNull(acquire);
+                Assert.True(Retry.WhileFalse(
+                    () => acquire.IsEnabled,
+                    TimeSpan.FromSeconds(10),
+                    TimeSpan.FromMilliseconds(100)).Success);
+                acquire.AsButton().Invoke();
+
+                var positiveJog = window.FindFirstDescendant(
+                    condition => condition.ByAutomationId("J1PositiveJogButton"));
+                Assert.NotNull(positiveJog);
+                Assert.True(Retry.WhileFalse(
+                    () => positiveJog.IsEnabled,
+                    TimeSpan.FromSeconds(10),
+                    TimeSpan.FromMilliseconds(100)).Success);
+
+                Mouse.MoveTo(positiveJog.BoundingRectangle.Center());
+                Mouse.Down(MouseButton.Left);
+                Assert.True(Retry.WhileFalse(
+                    () => File.Exists(eventLog) && File.ReadAllText(eventLog).Contains("jog:0:"),
+                    TimeSpan.FromSeconds(3),
+                    TimeSpan.FromMilliseconds(50)).Success);
+                Mouse.Up(MouseButton.Left);
+
+                window.Focus();
+                Keyboard.Press(VirtualKeyShort.F12);
+                Assert.True(Retry.WhileFalse(
+                    () => File.Exists(eventLog) && File.ReadAllText(eventLog).Contains("estop"),
+                    TimeSpan.FromSeconds(3),
+                    TimeSpan.FromMilliseconds(50)).Success);
+            }
+            finally
+            {
+                Mouse.Up(MouseButton.Left);
+                CloseApplication(application);
+            }
+        }
+    }
+
+    [Fact]
     public void Keyboard_navigation_reaches_every_v1_control_and_cycles()
     {
         if (Environment.GetEnvironmentVariable("PANTHERA_RUN_UI_TESTS") != "1")
@@ -237,6 +498,43 @@ public sealed class CockpitUiTests
             Path.Combine(artifactDirectory, $"started-{testName}.txt"),
             $"Started {DateTimeOffset.UtcNow:O}{Environment.NewLine}");
         return artifactDirectory;
+    }
+
+    private static (Application Application, UIA3Automation Automation, Window Window, string EventLog)
+        LaunchAcceptanceApp(string testName)
+    {
+        var applicationAssembly = Path.Combine(AppContext.BaseDirectory, "Panthera.Terminal.App.dll");
+        Assert.True(File.Exists(applicationAssembly), $"WPF app assembly was not copied to {applicationAssembly}");
+
+        var dotnetRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet");
+        var dotnetHost = Path.Combine(dotnetRoot, "dotnet.exe");
+        Assert.True(File.Exists(dotnetHost), $".NET host was not found at {dotnetHost}");
+
+        var artifactDirectory = PrepareArtifactDirectory(testName);
+        var eventLog = Path.Combine(artifactDirectory, $"events-{testName}.log");
+        File.Delete(eventLog);
+        var startInfo = new ProcessStartInfo(dotnetHost)
+        {
+            UseShellExecute = false,
+            WorkingDirectory = AppContext.BaseDirectory,
+        };
+        startInfo.ArgumentList.Add(applicationAssembly);
+        startInfo.Environment["PANTHERA_UI_TEST"] = "1";
+        startInfo.Environment["PANTHERA_UI_ACCEPTANCE"] = "1";
+        startInfo.Environment["PANTHERA_UI_ACCEPTANCE_LOG"] = eventLog;
+        startInfo.Environment["PANTHERA_FAILURE_LOG"] = Path.Combine(
+            artifactDirectory,
+            $"terminal-failures-{testName}.log");
+
+        var application = Application.Launch(startInfo);
+        var automation = new UIA3Automation();
+        var window = Retry.WhileNull(
+            () => application.GetMainWindow(automation),
+            TimeSpan.FromSeconds(15),
+            TimeSpan.FromMilliseconds(200)).Result;
+        Assert.NotNull(window);
+        return (application, automation, window, eventLog);
     }
 
     private static void CloseApplication(Application application)

@@ -439,8 +439,8 @@ class KinematicsEngine:
     ) -> tuple[list[np.ndarray], float]:
         if len(waypoints) < 2:
             raise ValueError("至少需要 2 个笛卡尔路径点")
-        trajectory: list[np.ndarray] = []
         active_q = np.asarray(current_q, dtype=np.float64)
+        trajectory: list[np.ndarray] = [active_q.copy()]
         for segment_index, (start, end) in enumerate(zip(waypoints, waypoints[1:], strict=False)):
             segment, success = self._interpolate_segment(start, end, active_q)
             if not success:
@@ -477,7 +477,9 @@ class KinematicsEngine:
                 target_rotation=Rotation.from_quat(quaternion).as_matrix(),
                 init_q=active_q,
                 max_iter=1000,
-                eps=1e-3,
+                # Path interpolation must resolve sub-millimetre waypoints;
+                # the public IK default can swallow a 1 mm MoveL as "reached".
+                eps=1e-5,
                 damping=1e-2,
                 adaptive_damping=True,
                 multi_init=False,
@@ -485,7 +487,7 @@ class KinematicsEngine:
             )
             if result is None:
                 return trajectory, False
-            if trajectory and np.any(np.abs(result - active_q) > self.jump_threshold):
+            if np.any(np.abs(result - active_q) > self.jump_threshold):
                 return trajectory, False
             trajectory.append(result)
             active_q = result

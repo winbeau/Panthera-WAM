@@ -13,6 +13,8 @@ namespace Panthera.Terminal.App;
 public partial class App : Application
 {
     private IHost? _host;
+    private Mutex? _singleInstanceMutex;
+    private bool _ownsSingleInstanceMutex;
 
     protected override async void OnStartup(StartupEventArgs eventArgs)
     {
@@ -20,6 +22,23 @@ public partial class App : Application
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+        _singleInstanceMutex = new Mutex(
+            initiallyOwned: true,
+            name: @"Local\Panthera.Terminal.App",
+            createdNew: out _ownsSingleInstanceMutex);
+        if (!_ownsSingleInstanceMutex)
+        {
+            if (!IsScreenshotMode)
+            {
+                System.Windows.MessageBox.Show(
+                    "Panthera-HT 控制终端已经在运行。请切换到现有窗口，避免两个终端争抢控制权。",
+                    "终端已启动",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Information);
+            }
+            Shutdown();
+            return;
+        }
         var settingsStore = new JsonTerminalSettingsStore();
         var settings = settingsStore.Load();
         var screenshotTheme = Environment.GetEnvironmentVariable("PANTHERA_SCREENSHOT_THEME");
@@ -66,13 +85,28 @@ public partial class App : Application
             await _host.StopAsync(TimeSpan.FromSeconds(2));
             _host.Dispose();
         }
+        if (_ownsSingleInstanceMutex)
+        {
+            try
+            {
+                _singleInstanceMutex?.ReleaseMutex();
+            }
+            catch (ApplicationException)
+            {
+            }
+        }
+        _singleInstanceMutex?.Dispose();
+        _singleInstanceMutex = null;
         base.OnExit(eventArgs);
     }
 
     private static void OnDispatcherUnhandledException(
         object sender,
-        DispatcherUnhandledExceptionEventArgs eventArgs) =>
+        DispatcherUnhandledExceptionEventArgs eventArgs)
+    {
         AppDiagnostics.Write("dispatcher-unhandled", eventArgs.Exception);
+        eventArgs.Handled = true;
+    }
 
     private static void OnUnhandledException(object? sender, UnhandledExceptionEventArgs eventArgs)
     {

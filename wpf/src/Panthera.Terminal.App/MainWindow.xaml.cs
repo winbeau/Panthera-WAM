@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -53,7 +54,26 @@ public partial class MainWindow : FluentWindow
         Loaded += OnLoaded;
         Deactivated += OnDeactivated;
         Closing += OnClosing;
+        AddHandler(
+            Keyboard.PreviewKeyDownEvent,
+            new KeyEventHandler(OnWindowPreviewKeyDown),
+            handledEventsToo: true);
         ApplyThemePreference(viewModel.Theme);
+    }
+
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs eventArgs)
+    {
+        if (eventArgs.Key != Key.F12 || eventArgs.IsRepeat)
+        {
+            return;
+        }
+
+        eventArgs.Handled = true;
+        AppDiagnostics.Write("safety-input", "F12 preview key received");
+        if (_viewModel.TriggerEStopCommand.CanExecute(null))
+        {
+            _viewModel.TriggerEStopCommand.Execute(null);
+        }
     }
 
     private static double ScreenshotDimension(string variable, double fallback, double minimum) =>

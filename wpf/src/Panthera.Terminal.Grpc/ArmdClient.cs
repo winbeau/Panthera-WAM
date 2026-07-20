@@ -48,6 +48,8 @@ public sealed class ArmdClient : IArmdClient
 
     public TerminalConnectionState ConnectionState { get; private set; } = TerminalConnectionState.Disconnected;
 
+    public bool HasActiveLease => !string.IsNullOrWhiteSpace(Volatile.Read(ref _leaseToken));
+
     public async Task<DaemonSnapshot> GetDaemonStatusAsync(CancellationToken cancellationToken = default)
     {
         return await InvokeRetryableAsync(async () =>
@@ -161,8 +163,12 @@ public sealed class ArmdClient : IArmdClient
             cancellationToken: cancellationToken), cancellationToken);
         if (response.Granted)
         {
-            _leaseToken = response.LeaseToken;
+            Interlocked.Exchange(ref _leaseToken, response.LeaseToken);
             StartHeartbeat();
+        }
+        else
+        {
+            InvalidateLease();
         }
         return new ControlSnapshot(
             response.Granted,
@@ -173,17 +179,23 @@ public sealed class ArmdClient : IArmdClient
 
     public async Task ReleaseControlAsync(CancellationToken cancellationToken = default)
     {
-        await InvokeAsync(async () =>
+        try
         {
-            await _client.ReleaseControlAsync(
-                new Empty(),
-                Headers(),
-                deadline: DateTime.UtcNow.AddSeconds(3),
-                cancellationToken: cancellationToken);
-            return true;
-        });
-        StopHeartbeat();
-        _leaseToken = string.Empty;
+            await InvokeAsync(async () =>
+            {
+                await _client.ReleaseControlAsync(
+                    new Empty(),
+                    Headers(),
+                    deadline: DateTime.UtcNow.AddSeconds(3),
+                    cancellationToken: cancellationToken);
+                return true;
+            });
+        }
+        finally
+        {
+            InvalidateLease();
+            StopHeartbeat();
+        }
     }
 
     public async Task TriggerEStopAsync(string reason, CancellationToken cancellationToken = default)
@@ -560,11 +572,12 @@ public sealed class ArmdClient : IArmdClient
 
     private Metadata Headers()
     {
-        if (string.IsNullOrWhiteSpace(_leaseToken))
+        var leaseToken = Volatile.Read(ref _leaseToken);
+        if (string.IsNullOrWhiteSpace(leaseToken))
         {
             throw new InvalidOperationException("尚未获取控制权");
         }
-        return new Metadata { { "x-panthera-lease", _leaseToken } };
+        return new Metadata { { "x-panthera-lease", leaseToken } };
     }
 
     private void StartHeartbeat()
@@ -603,9 +616,14 @@ public sealed class ArmdClient : IArmdClient
                     ConnectionState = TerminalConnectionState.Disconnected;
                     await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
                 }
-                catch (RpcException)
+                catch (RpcException exception)
                 {
-                    ConnectionState = TerminalConnectionState.Faulted;
+                    InvalidateLease();
+                    ApplyRpcFailure(exception);
+                    return;
+                }
+                catch (InvalidOperationException) when (!HasActiveLease)
+                {
                     return;
                 }
             }
@@ -626,9 +644,7 @@ public sealed class ArmdClient : IArmdClient
         }
         catch (RpcException exception)
         {
-            ConnectionState = exception.StatusCode == StatusCode.Unavailable
-                ? TerminalConnectionState.Disconnected
-                : TerminalConnectionState.Faulted;
+            ApplyRpcFailure(exception);
             throw new ArmdClientException(exception.StatusCode, exception.Status.Detail, exception);
         }
     }
@@ -656,9 +672,7 @@ public sealed class ArmdClient : IArmdClient
             }
             catch (RpcException exception)
             {
-                ConnectionState = exception.StatusCode == StatusCode.Unavailable
-                    ? TerminalConnectionState.Disconnected
-                    : TerminalConnectionState.Faulted;
+                ApplyRpcFailure(exception);
                 throw new ArmdClientException(exception.StatusCode, exception.Status.Detail, exception);
             }
         }
@@ -690,12 +704,30 @@ public sealed class ArmdClient : IArmdClient
             }
             catch (RpcException exception)
             {
-                ConnectionState = exception.StatusCode == StatusCode.Unavailable
-                    ? TerminalConnectionState.Disconnected
-                    : TerminalConnectionState.Faulted;
+                ApplyRpcFailure(exception);
                 throw new ArmdClientException(exception.StatusCode, exception.Status.Detail, exception);
             }
         }
+    }
+
+    private void ApplyRpcFailure(RpcException exception)
+    {
+        if (exception.StatusCode is StatusCode.PermissionDenied or StatusCode.Unauthenticated)
+        {
+            InvalidateLease();
+        }
+        ConnectionState = exception.StatusCode switch
+        {
+            StatusCode.Unavailable or StatusCode.DeadlineExceeded => TerminalConnectionState.Disconnected,
+            StatusCode.Internal or StatusCode.Unknown or StatusCode.DataLoss => TerminalConnectionState.Faulted,
+            _ => TerminalConnectionState.Connected,
+        };
+    }
+
+    private void InvalidateLease()
+    {
+        Interlocked.Exchange(ref _leaseToken, string.Empty);
+        _heartbeatLifetime?.Cancel();
     }
 
     private static GrpcChannel CreateChannel(string endpoint)

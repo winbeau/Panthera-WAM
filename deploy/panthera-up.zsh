@@ -28,6 +28,10 @@ panthera-up() {
     local camera_pid=""
     local daemon_status=""
     local camera_status=""
+    local armd_entry_pattern='[.]venv/bin/[a]rmd'
+    local armd_module_pattern="$repo/[.]venv/bin/python -m [a]rmd"
+    local camerad_entry_pattern='[.]venv/bin/[c]amerad'
+    local camerad_module_pattern="$repo/[.]venv/bin/python -m [a]rmd.camera"
     local attempt
     local -a devices
 
@@ -105,23 +109,33 @@ panthera-up() {
     local -x no_proxy="127.0.0.1,localhost,::1"
 
     print "[5/7] 清理旧 armd/camerad/仿真进程..."
-    command pkill -INT -f '[.]venv/bin/[a]rmd' 2>/dev/null || true
-    command pkill -INT -f '[.]venv/bin/[c]amerad' 2>/dev/null || true
+    command pkill -INT -f "$armd_entry_pattern" 2>/dev/null || true
+    command pkill -INT -f "$armd_module_pattern" 2>/dev/null || true
+    command pkill -INT -f "$camerad_entry_pattern" 2>/dev/null || true
+    command pkill -INT -f "$camerad_module_pattern" 2>/dev/null || true
     for attempt in {1..60}; do
-        if ! command pgrep -f '[.]venv/bin/[a]rmd' >/dev/null 2>&1 \
-            && ! command pgrep -f '[.]venv/bin/[c]amerad' >/dev/null 2>&1; then
+        if ! command pgrep -f "$armd_entry_pattern" >/dev/null 2>&1 \
+            && ! command pgrep -f "$armd_module_pattern" >/dev/null 2>&1 \
+            && ! command pgrep -f "$camerad_entry_pattern" >/dev/null 2>&1 \
+            && ! command pgrep -f "$camerad_module_pattern" >/dev/null 2>&1; then
             break
         fi
         sleep 0.25
     done
-    if command pgrep -f '[.]venv/bin/[a]rmd' >/dev/null 2>&1 \
-        || command pgrep -f '[.]venv/bin/[c]amerad' >/dev/null 2>&1; then
+    if command pgrep -f "$armd_entry_pattern" >/dev/null 2>&1 \
+        || command pgrep -f "$armd_module_pattern" >/dev/null 2>&1 \
+        || command pgrep -f "$camerad_entry_pattern" >/dev/null 2>&1 \
+        || command pgrep -f "$camerad_module_pattern" >/dev/null 2>&1; then
         print "      旧后端未响应 SIGINT，发送 SIGTERM..."
-        command pkill -TERM -f '[.]venv/bin/[a]rmd' 2>/dev/null || true
-        command pkill -TERM -f '[.]venv/bin/[c]amerad' 2>/dev/null || true
+        command pkill -TERM -f "$armd_entry_pattern" 2>/dev/null || true
+        command pkill -TERM -f "$armd_module_pattern" 2>/dev/null || true
+        command pkill -TERM -f "$camerad_entry_pattern" 2>/dev/null || true
+        command pkill -TERM -f "$camerad_module_pattern" 2>/dev/null || true
         for attempt in {1..20}; do
-            if ! command pgrep -f '[.]venv/bin/[a]rmd' >/dev/null 2>&1 \
-                && ! command pgrep -f '[.]venv/bin/[c]amerad' >/dev/null 2>&1; then
+            if ! command pgrep -f "$armd_entry_pattern" >/dev/null 2>&1 \
+                && ! command pgrep -f "$armd_module_pattern" >/dev/null 2>&1 \
+                && ! command pgrep -f "$camerad_entry_pattern" >/dev/null 2>&1 \
+                && ! command pgrep -f "$camerad_module_pattern" >/dev/null 2>&1; then
                 break
             fi
             sleep 0.25
@@ -150,21 +164,27 @@ panthera-up() {
     camera_pid=$!
 
     for attempt in {1..80}; do
+        if command ss -ltn | command grep -qE ':50052[[:space:]]'; then
+            camera_status=$(command timeout 2s env \
+                NO_COLOR=1 PANTHERA_CAMERA_ENDPOINT="$camera_endpoint" \
+                "$cli" camera status --json 2>/dev/null) || camera_status=""
+            break
+        fi
         if ! command kill -0 "$camera_pid" 2>/dev/null; then
             break
         fi
-        if camera_status=$(NO_COLOR=1 PANTHERA_CAMERA_ENDPOINT="$camera_endpoint" \
-            "$cli" camera status --json 2>/dev/null); then
-            break
-        fi
-        camera_status=""
         sleep 0.5
     done
-    if [[ -z "$camera_status" ]]; then
+    if ! command ss -ltn | command grep -qE ':50052[[:space:]]'; then
         print -u2 "camerad 启动失败，最近日志："
         command tail -60 "$camera_log" >&2
         command kill -INT "$camera_pid" 2>/dev/null || true
         return 5
+    fi
+    if [[ -z "$camera_status" ]]; then
+        print -u2 "      警告：camerad 已监听，但 D405 状态仍在初始化；继续启动机械臂后端。"
+    elif [[ "$camera_status" == *'"available": false'* ]]; then
+        print -u2 "      警告：camerad 已启动，但 D405 暂不可用；继续启动机械臂后端。"
     fi
 
     print "[7/7] 启动机械臂 armd（150ms 固件看门狗）..."
@@ -190,11 +210,19 @@ panthera-up() {
             break
         fi
         if command ss -ltn | command grep -qE ':50051[[:space:]]'; then
-            if daemon_status=$(NO_COLOR=1 PANTHERA_ENDPOINT="$endpoint" "$cli" daemon status --json 2>/dev/null) \
-                && camera_status=$(NO_COLOR=1 PANTHERA_CAMERA_ENDPOINT="$camera_endpoint" "$cli" camera status --json 2>/dev/null); then
+            if daemon_status=$(command timeout 3s env \
+                NO_COLOR=1 PANTHERA_ENDPOINT="$endpoint" \
+                "$cli" daemon status --json 2>/dev/null); then
+                camera_status=$(command timeout 2s env \
+                    NO_COLOR=1 PANTHERA_CAMERA_ENDPOINT="$camera_endpoint" \
+                    "$cli" camera status --json 2>/dev/null) || camera_status=""
                 print "Panthera 统一后端已恢复：armd PID=$pid，camerad PID=$camera_pid"
                 print "  机械臂：localhost:50051；WSL 探活：$endpoint"
-                print "  D405：  localhost:50052；WSL 探活：$camera_endpoint"
+                if [[ -n "$camera_status" ]]; then
+                    print "  D405：  localhost:50052；WSL 探活：$camera_endpoint"
+                else
+                    print -u2 "  D405：  camerad 已监听，状态仍在初始化（不影响机械臂控制）"
+                fi
                 export PANTHERA_ENDPOINT="$endpoint"
                 export PANTHERA_CAMERA_ENDPOINT="$camera_endpoint"
                 return 0

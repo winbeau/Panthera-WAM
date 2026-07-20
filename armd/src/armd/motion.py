@@ -8,7 +8,14 @@ from collections.abc import Callable
 
 import numpy as np
 
-from .backend import Backend, BackendError, FrameMode, JointFrame, idle_damping_frame
+from .backend import (
+    IDLE_DAMPING_KD,
+    Backend,
+    BackendError,
+    FrameMode,
+    JointFrame,
+    idle_damping_frame,
+)
 from .hardware_loop import CancelReason, MotionStepResult
 from .teach import PlaybackFrame
 
@@ -18,6 +25,9 @@ JOG_LIMIT_MARGIN = 0.02
 MIT_FRESHNESS_S = 0.12
 TEACH_VEL_THRESHOLD_S = 0.02
 TEACH_TAU_LIMIT = np.array([15.0, 30.0, 30.0, 15.0, 5.0, 5.0], dtype=np.float64)
+GRIPPER_POSITION_TORQUE_FRACTION = 0.8
+GRIPPER_POSITION_MAX_KP = 5.0
+GRIPPER_POSITION_MAX_KD = 0.5
 
 
 def position_frame(
@@ -46,6 +56,57 @@ def position_frame(
     )
 
 
+def gripper_position_frame(
+    backend: Backend,
+    *,
+    arm_position: np.ndarray,
+    gripper_position: float,
+    gripper_current_position: float,
+    gripper_current_velocity: float,
+    gripper_velocity: float,
+    gripper_max_torque: float,
+) -> JointFrame:
+    """用同一 MIT 帧控制夹爪，同时让六个关节保持零刚度阻尼。
+
+    夹爪与机械臂共用 CAN TX 帧，不能让夹爪使用 POS-VEL 而关节使用 MIT。
+    因此把 POS-VEL 风格的夹爪请求转换成逐周期受限 MIT 阻抗：80% 力矩预算
+    分配给当前位置误差，20% 分配给当前速度误差，并限制 kp/kd 不超过 SDK
+    回放默认量级。这样既不会为了移动夹爪把六个关节切进持续刚性位置保持，
+    也不会因按整个夹爪行程分摊力矩而让短距离动作失去驱动力。
+    """
+    limits = backend.limits
+    safe_position = float(
+        np.clip(gripper_position, limits.gripper_lower, limits.gripper_upper)
+    )
+    position_budget = gripper_max_torque * GRIPPER_POSITION_TORQUE_FRACTION
+    velocity_budget = gripper_max_torque - position_budget
+    position_error = abs(safe_position - gripper_current_position)
+    gripper_kp = min(
+        GRIPPER_POSITION_MAX_KP,
+        position_budget / max(position_error, np.finfo(np.float64).eps),
+    )
+    direction = float(np.sign(safe_position - gripper_current_position))
+    desired_velocity = direction * gripper_velocity
+    velocity_error = abs(desired_velocity - gripper_current_velocity)
+    gripper_kd = min(
+        GRIPPER_POSITION_MAX_KD,
+        velocity_budget / max(velocity_error, np.finfo(np.float64).eps),
+    )
+    return JointFrame(
+        mode=FrameMode.POS_VEL_TQE_KP_KD,
+        arm_position=np.clip(arm_position, limits.joint_lower, limits.joint_upper),
+        arm_velocity=np.zeros(6),
+        arm_torque=np.zeros(6),
+        arm_kp=np.zeros(6),
+        arm_kd=IDLE_DAMPING_KD,
+        gripper_position=safe_position,
+        gripper_velocity=desired_velocity,
+        gripper_torque=0.0,
+        gripper_kp=gripper_kp,
+        gripper_kd=gripper_kd,
+    )
+
+
 def hold_current_position(backend: Backend) -> None:
     states = backend.read_all()
     if len(states) != 7 or not all(state.valid for state in states):
@@ -59,6 +120,82 @@ def hold_current_position(backend: Backend) -> None:
             gripper_position=states[6].position,
         )
     )
+
+
+class GripperPositionMotion:
+    """受限 MIT 夹爪位置运动；机械臂始终保持零刚度阻尼。"""
+
+    def __init__(
+        self,
+        *,
+        position: float,
+        velocity: float,
+        max_torque: float,
+        tolerance: float = 0.01,
+    ) -> None:
+        self.position = float(position)
+        self.velocity = float(velocity)
+        self.max_torque = float(max_torque)
+        self.tolerance = float(tolerance)
+        self.timeout_s: float | None = None
+        self.reject_reason = ""
+        self._started_at: float | None = None
+        self._cancel_reason: CancelReason | None = None
+        self._lock = threading.Lock()
+
+    def request_cancel(self, reason: CancelReason) -> None:
+        with self._lock:
+            self._cancel_reason = reason
+
+    def step(self, backend: Backend, now: float) -> MotionStepResult:
+        states = backend.read_all()
+        if len(states) != 7 or not all(state.valid for state in states):
+            backend.stop()
+            self.reject_reason = "电机状态无效或连接不完整"
+            return MotionStepResult.FAILED
+        if self._started_at is None:
+            self._started_at = now
+            distance = abs(self.position - states[6].position)
+            self.timeout_s = max(2.0, 4.0 * distance / max(self.velocity, 0.05) + 2.0)
+        with self._lock:
+            cancel_reason = self._cancel_reason
+        arm_position = np.asarray([state.position for state in states[:6]], dtype=np.float64)
+        if cancel_reason is not None:
+            backend.write_frame(
+                idle_damping_frame(backend.limits, arm_position, states[6].position)
+            )
+            self.reject_reason = f"夹爪运动已取消: {cancel_reason.value}"
+            return MotionStepResult.CANCELLED
+
+        error = self.position - states[6].position
+        if abs(error) <= self.tolerance:
+            backend.write_frame(
+                idle_damping_frame(backend.limits, arm_position, states[6].position)
+            )
+            return MotionStepResult.DONE
+        if (
+            self._started_at is not None
+            and self.timeout_s is not None
+            and now - self._started_at >= self.timeout_s
+        ):
+            backend.write_frame(
+                idle_damping_frame(backend.limits, arm_position, states[6].position)
+            )
+            self.reject_reason = "夹爪运动超时"
+            return MotionStepResult.FAILED
+
+        backend.write_frame(
+            gripper_position_frame(
+                backend,
+                arm_position=arm_position,
+                gripper_position=self.position,
+                gripper_current_position=states[6].position,
+                gripper_current_velocity=states[6].velocity,
+                gripper_velocity=self.velocity,
+                gripper_max_torque=self.max_torque,
+            )
+        )
+        return MotionStepResult.RUNNING
 
 
 class JointPositionMotion:
@@ -175,7 +312,10 @@ class JointJogMotion:
             velocities = self._velocities.copy()
             stale = now - self._last_command_at > self.freshness_s
         if cancel_reason is not None:
-            hold_current_position(backend)
+            positions = np.array([state.position for state in states[:6]], dtype=np.float64)
+            backend.write_frame(
+                idle_damping_frame(backend.limits, positions, states[6].position)
+            )
             return MotionStepResult.CANCELLED
         elif stale:
             velocities.fill(0.0)
@@ -288,7 +428,7 @@ class CartesianTrajectoryMotion:
         velocities: list[np.ndarray],
         timestamps: list[float],
         max_torque: np.ndarray,
-        tolerance: float = 0.01,
+        tolerance: float = 0.001,
         settle_timeout_s: float = 2.0,
         operation_name: str = "moveL",
     ) -> None:

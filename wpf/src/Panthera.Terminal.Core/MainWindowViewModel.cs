@@ -242,7 +242,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(CancelDatasetExportCommand))]
     private bool _isDatasetBusy;
 
-    public bool CanControl => HasControl && !EStopEngaged && ConnectionState == TerminalConnectionState.Connected && !IsBusy;
+    public bool CanControl => HasControl
+        && _client.HasActiveLease
+        && !EStopEngaged
+        && ConnectionState == TerminalConnectionState.Connected
+        && !IsBusy;
 
     public bool IsConnected => ConnectionState == TerminalConnectionState.Connected;
 
@@ -305,7 +309,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var control = await _client.GetControlStatusAsync(cancellationToken);
             var limits = await _client.GetSoftLimitsAsync(cancellationToken);
             ConnectionState = _client.ConnectionState;
-            HasControl = control.Held && control.HolderClientId == Environment.MachineName;
+            HasControl = control.Held
+                && control.HolderClientId == Environment.MachineName
+                && _client.HasActiveLease;
             ControlHolder = control.Held ? control.HolderClientId : "无";
             EStopEngaged = control.EStopEngaged;
             DaemonSummary = daemon.Simulation
@@ -339,6 +345,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void ApplySnapshot(RobotSnapshot snapshot)
     {
+        ReconcileControlLease();
         StateAgeMs = snapshot.AgeMs;
         EStopEngaged = snapshot.EStopEngaged;
         ConnectionState = TerminalConnectionState.Connected;
@@ -415,7 +422,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             var status = await _client.AcquireControlAsync(Environment.MachineName);
-            HasControl = status.Held;
+            HasControl = status.Held && _client.HasActiveLease;
             ControlHolder = status.HolderClientId;
             AddLog(status.Held ? "Info" : "Warning", "Control",
                 status.Held ? "已获取控制权" : $"控制权由 {status.HolderClientId} 持有");
@@ -431,11 +438,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanReleaseControl))]
     private async Task ReleaseControlAsync()
     {
-        await StopJogAsync();
-        await _client.ReleaseControlAsync();
-        HasControl = false;
-        ControlHolder = "无";
-        AddLog("Info", "Control", "已释放控制权");
+        try
+        {
+            await StopJogAsync();
+            await _client.ReleaseControlAsync();
+            AddLog("Info", "Control", "已释放控制权");
+        }
+        catch (Exception exception)
+        {
+            AddLog("Warning", "Control", $"释放控制权失败，等待后端 watchdog 收尾：{exception.Message}");
+        }
+        finally
+        {
+            HasControl = false;
+            ControlHolder = "无";
+        }
     }
 
     private bool CanReleaseControl() => HasControl;
@@ -443,10 +460,17 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task TriggerEStopAsync()
     {
-        await StopJogAsync();
-        await _client.TriggerEStopAsync("WPF operator E-STOP");
-        EStopEngaged = true;
-        AddLog("Fault", "Safety", "已触发急停");
+        try
+        {
+            await StopJogAsync();
+            await _client.TriggerEStopAsync("WPF operator E-STOP");
+            EStopEngaged = true;
+            AddLog("Fault", "Safety", "已触发急停");
+        }
+        catch (Exception exception)
+        {
+            HandleOperationFailure("Safety", exception);
+        }
     }
 
     [RelayCommand]
@@ -525,8 +549,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             return;
         }
-        var cancelled = await _client.CancelExecutionAsync(_activeExecutionId);
-        AddLog(cancelled ? "Info" : "Warning", "Motion", cancelled ? "已请求平滑取消" : "执行已结束或不存在");
+        try
+        {
+            var cancelled = await _client.CancelExecutionAsync(_activeExecutionId);
+            AddLog(cancelled ? "Info" : "Warning", "Motion", cancelled ? "已请求平滑取消" : "执行已结束或不存在");
+        }
+        catch (Exception exception)
+        {
+            HandleOperationFailure("Motion", exception);
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanRunMotion))]
@@ -537,9 +568,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task RunGripperAsync(double position, string label)
     {
-        var result = await _client.GripperMoveAsync(position, 0.35);
-        AddLog(result.Accepted ? "Info" : "Warning", "Gripper",
-            result.Accepted ? $"夹爪{label}指令已接受" : result.RejectReason);
+        await RunBusyAsync("Gripper", async () =>
+        {
+            var result = await _client.GripperMoveAsync(position, 0.35);
+            AddLog(result.Accepted ? "Info" : "Warning", "Gripper",
+                result.Accepted ? $"夹爪{label}指令已接受" : result.RejectReason);
+        });
     }
 
     private bool CanRunMotion() => CanControl && !IsTeachActive && !IsTeachRecording;
@@ -574,7 +608,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             await StopJogCoreAsync();
             ConnectionState = _client.ConnectionState;
-            AddLog("Error", "Jog", $"点动启动失败：{exception.Message}");
+            HandleOperationFailure("Jog", new InvalidOperationException($"点动启动失败：{exception.Message}", exception));
         }
         finally
         {
@@ -623,12 +657,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         await RunBusyAsync("Teach session", async () =>
         {
-            if (!HasControl)
+            if (!HasControl || !_client.HasActiveLease)
             {
+                ReconcileControlLease();
                 var control = await _client.AcquireControlAsync(Environment.MachineName);
-                HasControl = control.Held;
+                HasControl = control.Held && _client.HasActiveLease;
                 ControlHolder = control.HolderClientId;
-                if (!control.Held)
+                if (!HasControl)
                 {
                     TeachStatus = $"无法获取控制权：{control.HolderClientId}";
                     AddLog("Warning", "Teach", TeachStatus);
@@ -678,16 +713,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             TeachRecordingSnapshot? recording = null;
             var wasRecording = IsTeachRecording;
-            if (IsTeachActive)
-            {
-                var stopped = await _client.StopTeachAsync();
-                IsTeachActive = false;
-                if (!stopped.Accepted)
-                {
-                    AddLog("Warning", "Teach", "后端报告拖动示教已提前结束");
-                }
-            }
-
             if (wasRecording)
             {
                 try
@@ -702,6 +727,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 {
                     IsTeachRecording = false;
                     FinishRecordingClock();
+                }
+            }
+
+            if (IsTeachActive)
+            {
+                try
+                {
+                    var stopped = await _client.StopTeachAsync();
+                    if (!stopped.Accepted)
+                    {
+                        AddLog("Warning", "Teach", "后端报告拖动示教已提前结束");
+                    }
+                }
+                finally
+                {
+                    IsTeachActive = false;
                 }
             }
 
@@ -748,8 +789,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             var wasRecording = IsTeachRecording;
-            var result = await _client.StopTeachAsync();
-            IsTeachActive = false;
             TeachRecordingSnapshot? recording = null;
             if (wasRecording)
             {
@@ -772,12 +811,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 }
                 await RefreshTeachRecordingsAsync();
             }
+            var result = await _client.StopTeachAsync();
+            IsTeachActive = false;
             TeachStatus = result.Accepted ? "已安全停止" : "未在示教";
             AddLog(result.Accepted ? "Info" : "Warning", "Teach", TeachStatus);
         }
         catch (Exception exception)
         {
-            AddLog("Error", "Teach", exception.Message);
+            HandleOperationFailure("Teach", exception);
         }
         finally
         {
@@ -799,7 +840,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception exception)
         {
-            AddLog("Error", "Recorder", exception.Message);
+            HandleOperationFailure("Recorder", exception);
         }
     }
 
@@ -823,7 +864,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception exception)
         {
-            AddLog("Error", "Recorder", exception.Message);
+            HandleOperationFailure("Recorder", exception);
         }
     }
 
@@ -1050,6 +1091,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private async Task StopJogCoreAsync()
     {
         Exception? failure = null;
+        var jogCallTask = _jogCallTask;
+        var jogCallLifetime = _jogCallLifetime;
+        var jogCallStillRunning = false;
         _jogPumpLifetime?.Cancel();
         if (_jogPumpTask is not null)
         {
@@ -1068,17 +1112,38 @@ public sealed partial class MainWindowViewModel : ObservableObject
             }
             _jogChannel.Writer.TryComplete();
         }
-        if (_jogCallTask is not null)
+        if (jogCallTask is not null)
         {
-            var completed = await Task.WhenAny(_jogCallTask, Task.Delay(500));
-            if (completed != _jogCallTask)
+            var completed = await Task.WhenAny(jogCallTask, Task.Delay(500));
+            if (completed != jogCallTask)
             {
-                _jogCallLifetime?.Cancel();
+                jogCallLifetime?.Cancel();
+                completed = await Task.WhenAny(jogCallTask, Task.Delay(750));
             }
-            failure = await ObserveCompletionAsync(_jogCallTask) ?? failure;
+            if (completed == jogCallTask)
+            {
+                failure = await ObserveCompletionAsync(jogCallTask) ?? failure;
+            }
+            else
+            {
+                jogCallStillRunning = true;
+                failure ??= new TimeoutException("点动传输未及时退出，已交由服务端新鲜度窗口停止");
+                _ = ObserveCompletionAsync(jogCallTask);
+            }
         }
         _jogPumpLifetime?.Dispose();
-        _jogCallLifetime?.Dispose();
+        if (jogCallStillRunning && jogCallTask is not null)
+        {
+            _ = jogCallTask.ContinueWith(
+                _ => jogCallLifetime?.Dispose(),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+        else
+        {
+            jogCallLifetime?.Dispose();
+        }
         _jogPumpLifetime = null;
         _jogCallLifetime = null;
         _jogChannel = null;
@@ -1089,6 +1154,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             ConnectionState = _client.ConnectionState;
             AddLog("Warning", "Jog", $"点动通道中断，已安全停止：{failure.Message}");
+            ReconcileControlLease();
         }
     }
 
@@ -1160,7 +1226,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception exception)
         {
-            AddLog("Error", operation, exception.Message);
+            HandleOperationFailure(operation, exception);
         }
         finally
         {
@@ -1183,6 +1249,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
         StartTeachRecordingCommand.NotifyCanExecuteChanged();
         StopTeachRecordingCommand.NotifyCanExecuteChanged();
         PlayTeachRecordingCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ReconcileControlLease()
+    {
+        if (!HasControl || _client.HasActiveLease)
+        {
+            return;
+        }
+        HasControl = false;
+        ControlHolder = "无";
+        AddLog("Warning", "Control", "控制权 lease 已失效，请重新获取控制权");
+    }
+
+    private void HandleOperationFailure(string operation, Exception exception)
+    {
+        ReconcileControlLease();
+        AddLog("Error", operation, exception.Message);
     }
 
     private void AddLog(string level, string source, string message)

@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from panthera_arm import arm_pb2, arm_pb2_grpc
 
-from armd.backend import SimBackend
+from armd.backend import FrameMode, IDLE_DAMPING_KD, SimBackend
 from armd.control import LEASE_METADATA_KEY
 from armd.hardware_loop import HardwareLoop
 from armd.server import ArmdServer
@@ -105,7 +105,7 @@ async def test_joint_move_wait_and_limit_rejection(motion_stack) -> None:
 
 @pytest.mark.asyncio
 async def test_movej_wait_and_gripper_commands(motion_stack) -> None:
-    _, stub, metadata = motion_stack
+    loop, stub, metadata = motion_stack
     moved = await stub.MoveJ(
         arm_pb2.MoveJRequest(
             positions=[0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -121,9 +121,35 @@ async def test_movej_wait_and_gripper_commands(motion_stack) -> None:
 
     opened = await stub.GripperOpen(arm_pb2.GripperOpenRequest(position=0.1), metadata=metadata)
     assert opened.accepted
+    frame = None
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+        frame = await asyncio.wrap_future(loop.submit(lambda backend: backend._last_frame))
+        if (
+            frame is not None
+            and frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+            and frame.gripper_kp > 0.0
+        ):
+            break
+    assert frame is not None
+    assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+    assert frame.arm_torque == pytest.approx([0.0] * 6)
+    assert frame.arm_kp == pytest.approx([0.0] * 6)
+    assert frame.arm_kd == pytest.approx(IDLE_DAMPING_KD)
+    assert frame.gripper_torque == 0.0
+    assert frame.gripper_velocity > 0.0
+    assert frame.gripper_kp <= 5.0
+    assert frame.gripper_kd <= 0.5
+
     await asyncio.sleep(0.25)
     state = await stub.GetGripperState(arm_pb2.Empty())
     assert state.state.position == pytest.approx(0.1, abs=0.01)
+    assert not loop.has_active_motion
+    settled_frame = await asyncio.wrap_future(loop.submit(lambda backend: backend._last_frame))
+    assert settled_frame is not None
+    assert settled_frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+    assert settled_frame.arm_kp == pytest.approx([0.0] * 6)
+    assert settled_frame.gripper_kp == 0.0
 
     rejected = await stub.GripperMove(
         arm_pb2.GripperMoveRequest(position=2.1, velocity=0.5),

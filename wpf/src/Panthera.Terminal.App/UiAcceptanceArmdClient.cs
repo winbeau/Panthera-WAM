@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.CompilerServices;
 using Panthera.Terminal.Core;
 
@@ -97,6 +98,7 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
     public Task TriggerEStopAsync(string reason, CancellationToken cancellationToken = default)
     {
         _estopEngaged = true;
+        WriteAcceptanceEvent("estop");
         return Task.CompletedTask;
     }
 
@@ -130,8 +132,15 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
         IAsyncEnumerable<IReadOnlyList<double>> commands,
         CancellationToken cancellationToken = default)
     {
-        await foreach (var _ in commands.WithCancellation(cancellationToken))
+        await foreach (var command in commands.WithCancellation(cancellationToken))
         {
+            var activeJoint = command
+                .Select((velocity, index) => (velocity, index))
+                .FirstOrDefault(item => Math.Abs(item.velocity) > 0);
+            if (Math.Abs(activeJoint.velocity) > 0)
+            {
+                WriteAcceptanceEvent($"jog:{activeJoint.index}:{activeJoint.velocity:F3}");
+            }
         }
     }
 
@@ -243,6 +252,18 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
         CancellationToken cancellationToken = default) => Task.FromResult(true);
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+    private static void WriteAcceptanceEvent(string message)
+    {
+        var path = Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE_LOG");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
+        File.AppendAllText(path, $"{message}{Environment.NewLine}");
+    }
 
     private ControlSnapshot CurrentControl(string? holder = null) =>
         new(_held, _held ? holder ?? Environment.MachineName : "", true, _estopEngaged);

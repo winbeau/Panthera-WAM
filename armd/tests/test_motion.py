@@ -3,10 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+import pytest
 
-from armd.backend import SimBackend
+from armd.backend import FrameMode, IDLE_DAMPING_KD, SimBackend
 from armd.hardware_loop import CancelReason, MotionStepResult
-from armd.motion import CartesianTrajectoryMotion, JOG_FRESHNESS_S, JointJogMotion, JointPositionMotion
+from armd.motion import (
+    CartesianTrajectoryMotion,
+    JOG_FRESHNESS_S,
+    JointJogMotion,
+    JointPositionMotion,
+    gripper_position_frame,
+)
 
 
 @dataclass
@@ -18,6 +25,26 @@ class FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+def test_gripper_position_frame_uses_requested_instantaneous_torque_budget() -> None:
+    backend = SimBackend()
+    frame = gripper_position_frame(
+        backend,
+        arm_position=np.zeros(6),
+        gripper_position=0.05,
+        gripper_current_position=-0.008,
+        gripper_current_velocity=0.0,
+        gripper_velocity=0.1,
+        gripper_max_torque=0.1,
+    )
+
+    position_effort = frame.gripper_kp * abs(0.05 - (-0.008))
+    velocity_effort = frame.gripper_kd * abs(frame.gripper_velocity - 0.0)
+    assert position_effort + velocity_effort == pytest.approx(0.1)
+    assert frame.arm_torque == pytest.approx([0.0] * 6)
+    assert frame.arm_kp == pytest.approx([0.0] * 6)
+    assert frame.arm_kd == pytest.approx(IDLE_DAMPING_KD)
 
 
 def test_position_motion_reaches_and_holds_target() -> None:
@@ -88,6 +115,12 @@ def test_jog_stale_window_zeroes_velocity_and_cancel_finishes() -> None:
 
     motion.request_cancel(CancelReason.CLIENT)
     assert motion.step(backend, clock.now) is MotionStepResult.CANCELLED
+    frame = backend._last_frame
+    assert frame is not None
+    assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+    assert frame.arm_torque == pytest.approx([0.0] * 6)
+    assert frame.arm_kp == pytest.approx([0.0] * 6)
+    assert frame.arm_kd == pytest.approx(IDLE_DAMPING_KD)
 
 
 def test_jog_blocks_velocity_toward_nearby_soft_limit() -> None:
@@ -123,3 +156,21 @@ def test_cartesian_cancel_uses_twelve_control_steps() -> None:
     backend.refresh_state()
     assert motion.step(backend, clock.now) is MotionStepResult.CANCELLED
     assert motion.reject_reason == "运动已取消: client"
+
+
+def test_cartesian_small_target_is_not_done_inside_old_loose_tolerance() -> None:
+    clock = FakeClock()
+    backend = SimBackend(clock=clock)
+    target = np.array([0.002, 0.0, 0.0, 0.0, 0.0, 0.0])
+    motion = CartesianTrajectoryMotion(
+        positions=[np.zeros(6), target],
+        velocities=[np.zeros(6), np.zeros(6)],
+        timestamps=[0.0, 1.0],
+        max_torque=backend.limits.joint_torque,
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    backend._positions[:] = 0.0
+    clock.advance(1.0)
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert motion.errors[0] == pytest.approx(0.002)

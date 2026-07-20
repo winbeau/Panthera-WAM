@@ -68,3 +68,36 @@ def test_trajectory_parameterization_enforces_velocity_and_acceleration_limits()
 
     with np.testing.assert_raises_regex(ValueError, "duration_s 过短"):
         engine.parameterize_trajectory(trajectory, duration=0.01, use_spline=True)
+
+
+def test_sub_eef_step_cartesian_path_keeps_start_and_requested_duration() -> None:
+    engine = KinematicsEngine(sdk_root=default_sdk_root())
+    current_q = np.array([0.2, 0.6, 0.8, 0.1, -0.2, 0.1])
+    start = engine.forward_kinematics(current_q)
+    target_position = np.asarray(start["position"]).copy()
+    target_position[0] += 0.001
+
+    trajectory, fraction = engine.compute_cartesian_path(
+        current_q=current_q,
+        waypoints=[
+            {
+                "position": np.asarray(start["position"]),
+                "rotation": np.asarray(start["rotation"]),
+            },
+            {"position": target_position, "rotation": np.asarray(start["rotation"])},
+        ],
+    )
+    positions, timestamps, _ = engine.parameterize_trajectory(
+        trajectory,
+        duration=3.0,
+        use_spline=True,
+    )
+
+    assert fraction == 1.0
+    assert len(trajectory) == 2
+    assert np.allclose(trajectory[0], current_q)
+    assert np.allclose(positions[0], current_q)
+    assert timestamps[0] == 0.0
+    assert timestamps[-1] == 3.0
+    endpoint_fk = engine.forward_kinematics(trajectory[-1])
+    assert np.linalg.norm(np.asarray(endpoint_fk["position"]) - target_position) < 2e-4
