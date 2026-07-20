@@ -46,8 +46,18 @@ sudo udevadm trigger
 
 ## 将两类硬件挂载到同一 WSL
 
-WPF 环境引导会按 VID/PID 查找并 attach 机械臂与 D405。也可在管理员
-PowerShell 中手动执行：
+WPF 环境引导会按 VID/PID 查找并 attach 机械臂与 D405。推荐在 Windows
+PowerShell 安装动态连接监督任务：
+
+```powershell
+./deploy/attach-wsl-usb.ps1
+./deploy/attach-wsl-usb.ps1 -InstallWatcher
+```
+
+监督任务每 2 秒读取 `usbipd state`，设备断电、拔插、换 USB 口或 WSL
+重启后，会按新的 BUSID 自动恢复两台设备。运行日志位于
+`%LOCALAPPDATA%\Panthera-WAM\usb-auto-attach.log`。首次 bind 如遇权限错误，
+在管理员 PowerShell 运行第一条命令。也可手动执行：
 
 ```powershell
 usbipd list

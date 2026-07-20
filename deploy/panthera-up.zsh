@@ -50,8 +50,8 @@ panthera-up() {
     done
     if (( ${#devices} < 4 )); then
         print -u2 "只发现 ${#devices} 路 ttyACM，真实机械臂后端未启动。"
-        print -u2 "请在管理员 PowerShell 执行："
-        print -u2 "  usbipd attach --wsl --hardware-id caf1:ffff"
+        print -u2 "请在 Windows PowerShell 执行统一动态连接："
+        print -u2 "  ./deploy/attach-wsl-usb.ps1"
         return 2
     fi
     print "      已发现 ${#devices} 路串口：${devices[*]}"
@@ -63,8 +63,8 @@ panthera-up() {
     done
     if ! command lsusb -d 8086:0b5b >/dev/null 2>&1; then
         print -u2 "WSL 中未发现 D405 (8086:0b5b)。"
-        print -u2 "请在管理员 PowerShell 执行："
-        print -u2 "  usbipd attach --wsl --hardware-id 8086:0b5b"
+        print -u2 "请在 Windows PowerShell 执行统一动态连接："
+        print -u2 "  ./deploy/attach-wsl-usb.ps1"
         return 2
     fi
     print "      D405 已挂载到 WSL。"

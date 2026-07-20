@@ -91,9 +91,17 @@ systemctl --user stop armd camerad
 电机 SDK 与 vendored librealsense，然后在同一 WSL 内启动隔离的 `armd` 和
 `camerad`。WPF 分别连接机械臂和相机端点，不直接访问硬件 SDK。
 
-Windows 侧先用 WPF 一键引导，或以管理员 PowerShell 将机械臂与 D405
-都执行 `usbipd attach --wsl --busid <BUSID>`。程序按 VID/PID 与序列号发现
-设备，不应把当前 busid 写进长期配置。
+Windows 侧先用 WPF 一键引导，或在 PowerShell 运行统一动态连接：
+
+```powershell
+./deploy/attach-wsl-usb.ps1
+./deploy/attach-wsl-usb.ps1 -InstallWatcher
+```
+
+第一条命令按 VID/PID 动态发现、bind、attach 并复检机械臂与 D405；第二条
+安装当前用户的登录任务，在设备断电、拔插、换 USB 口或 WSL 重启后持续按
+新的 BUSID 自动恢复。若设备首次 bind，需在管理员 PowerShell 运行第一条命令。
+不要把当前 BUSID 写进长期配置。
 
 D405 使用 vendored librealsense RSUSB/libusb 后端，由 WSL `camerad` 独占；
 机械臂与相机服务共享 Linux 生命周期，但不共享 gRPC 端口。

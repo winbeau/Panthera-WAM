@@ -28,6 +28,24 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "9.0.x"
+      - name: Verify Windows deployment scripts
+        shell: pwsh
+        run: |
+          $errors = @()
+          foreach ($script in @(
+            "deploy/attach-wsl-usb.ps1",
+            "deploy/build-wpf.ps1",
+            "deploy/setup-dotnet9.ps1"
+          )) {
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script),
+              [ref]$null,
+              [ref]$errors)
+          }
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            exit 1
+          }
       - name: Build, test, and publish WPF release
         shell: pwsh
         env:

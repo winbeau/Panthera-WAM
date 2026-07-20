@@ -40,10 +40,10 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         var camera = await LocateDeviceAsync(D405VidPid, string.Empty, cancellationToken);
         steps.Add(Step("机械臂 USB", device is not null,
             device is null ? $"未找到 {DescribeTarget(settings.UsbSerial)}" : $"已匹配 busid {device.BusId}",
-            "usbipd state --json"));
+            "usbipd state"));
         steps.Add(Step("D405 USB", camera is not null,
             camera is null ? $"未找到 {D405VidPid}" : $"已匹配 busid {camera.BusId}",
-            "usbipd state --json"));
+            "usbipd state"));
 
         var usbList = await RunAsync("usbipd", ["list"], cancellationToken);
         var stateLine = device is null ? string.Empty : FindBusLine(usbList.Output, device.BusId);
@@ -123,10 +123,10 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         var camera = await LocateDeviceAsync(D405VidPid, string.Empty, cancellationToken);
         steps.Add(Step("机械臂 USB", device is not null,
             device is null ? $"未找到 {DescribeTarget(settings.UsbSerial)}；请检查上电与 USB" : $"已匹配 busid {device.BusId}",
-            "usbipd state --json"));
+            "usbipd state"));
         steps.Add(Step("D405 USB", camera is not null,
             camera is null ? $"未找到 {D405VidPid}；请检查相机与 USB 3 连接" : $"已匹配 busid {camera.BusId}",
-            "usbipd state --json"));
+            "usbipd state"));
         if (device is null || camera is null)
         {
             return new EnvironmentGuideResult(steps);
@@ -214,7 +214,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         string targetSerial,
         CancellationToken cancellationToken)
     {
-        var state = await RunAsync("usbipd", ["state", "--json"], cancellationToken);
+        var state = await RunAsync("usbipd", ["state"], cancellationToken);
         if (!state.Success || string.IsNullOrWhiteSpace(state.Output))
         {
             return null;
