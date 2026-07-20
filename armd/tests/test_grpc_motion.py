@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from panthera_arm import arm_pb2, arm_pb2_grpc
 
-from armd.backend import FrameMode, IDLE_DAMPING_KD, SimBackend
+from armd.backend import FrameMode, SimBackend
 from armd.control import LEASE_METADATA_KEY
 from armd.hardware_loop import HardwareLoop
 from armd.server import ArmdServer
@@ -129,9 +129,8 @@ async def test_movej_wait_and_gripper_commands(motion_stack) -> None:
             break
     assert frame is not None
     assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
-    assert frame.arm_torque == pytest.approx([0.0] * 6)
     assert frame.arm_kp == pytest.approx([0.0] * 6)
-    assert frame.arm_kd == pytest.approx(IDLE_DAMPING_KD)
+    assert frame.arm_kd == pytest.approx([0.0] * 6)
     assert frame.gripper_torque == 0.0
     assert frame.gripper_velocity > 0.0
     assert frame.gripper_kp <= 5.0
@@ -145,6 +144,7 @@ async def test_movej_wait_and_gripper_commands(motion_stack) -> None:
     assert settled_frame is not None
     assert settled_frame.mode is FrameMode.POS_VEL_TQE_KP_KD
     assert settled_frame.arm_kp == pytest.approx([0.0] * 6)
+    assert settled_frame.arm_kd == pytest.approx([0.0] * 6)
     assert settled_frame.gripper_kp == 0.0
 
     rejected = await stub.GripperMove(
@@ -167,6 +167,43 @@ async def test_movej_wait_and_gripper_commands(motion_stack) -> None:
     )
     assert not rejected_close.accepted
     assert "目标" in rejected_close.reject_reason and "下限" in rejected_close.reject_reason
+
+
+@pytest.mark.asyncio
+async def test_estop_recovery_then_gripper_keeps_joint_firmware_kd_zero(motion_stack) -> None:
+    loop, stub, metadata = motion_stack
+    await stub.EStop(arm_pb2.EStopRequest(reason="gripper-regression"))
+    cleared = await stub.ClearEStop(
+        arm_pb2.ClearEStopRequest(confirm=True),
+        metadata=metadata,
+    )
+    assert not cleared.engaged
+
+    opened = await stub.GripperOpen(
+        arm_pb2.GripperOpenRequest(position=0.05, velocity=0.2),
+        metadata=metadata,
+    )
+    assert opened.accepted
+
+    active_frame = None
+    for _ in range(30):
+        await asyncio.sleep(0.01)
+        active_frame = await asyncio.wrap_future(loop.submit(lambda backend: backend._last_frame))
+        if active_frame is not None and active_frame.gripper_kp > 0.0:
+            break
+    assert active_frame is not None
+    assert active_frame.arm_kp == pytest.approx([0.0] * 6)
+    assert active_frame.arm_kd == pytest.approx([0.0] * 6)
+
+    for _ in range(200):
+        if not loop.has_active_motion:
+            break
+        await asyncio.sleep(0.01)
+    assert not loop.has_active_motion
+    settled_frame = await asyncio.wrap_future(loop.submit(lambda backend: backend._last_frame))
+    assert settled_frame is not None
+    assert settled_frame.arm_kp == pytest.approx([0.0] * 6)
+    assert settled_frame.arm_kd == pytest.approx([0.0] * 6)
 
 
 @pytest.mark.asyncio

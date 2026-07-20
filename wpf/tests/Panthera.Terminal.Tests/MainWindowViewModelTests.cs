@@ -199,27 +199,82 @@ public sealed class MainWindowViewModelTests
             client.LastMoveLTarget);
     }
 
+    [Fact]
+    public async Task ResetArm_UsesSdkSafeHomePosition()
+    {
+        var client = new FailingJogClient(enableMotion: true);
+        var viewModel = new MainWindowViewModel(
+            client,
+            new StubEnvironmentGuideService(),
+            new StubSettingsStore(),
+            new TerminalSettings())
+        {
+            HasControl = true,
+            ConnectionState = TerminalConnectionState.Connected,
+        };
+
+        await viewModel.ResetArmCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { 0.0, 0.6, 0.6, 0.0, 0.0, 0.0 }, client.LastMoveJPositions);
+        Assert.Equal(3.0, client.LastMoveJDuration);
+        Assert.Contains(viewModel.Logs, entry =>
+            entry.Source == "Motion" && entry.Message.Contains("安全姿态", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task DemoSequence_CanBeStoppedAfterCurrentMoveJSegment()
+    {
+        var client = new FailingJogClient(enableMotion: true, hangMoveJ: true);
+        var viewModel = new MainWindowViewModel(
+            client,
+            new StubEnvironmentGuideService(),
+            new StubSettingsStore(),
+            new TerminalSettings())
+        {
+            HasControl = true,
+            ConnectionState = TerminalConnectionState.Connected,
+        };
+
+        var demoTask = viewModel.ToggleDemoSequenceCommand.ExecuteAsync(null);
+        await client.MoveJStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.True(viewModel.IsDemoRunning);
+        Assert.Equal("停止展示", viewModel.DemoActionLabel);
+        Assert.Equal(new[] { 0.0, 0.6, 0.6, 0.0, 0.0, 0.0 }, client.LastMoveJPositions);
+
+        await viewModel.ToggleDemoSequenceCommand.ExecuteAsync(null);
+        client.ReleaseHungMoveJ();
+        await demoTask.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.False(viewModel.IsDemoRunning);
+        Assert.Equal("展示动作", viewModel.DemoActionLabel);
+    }
+
     private sealed class FailingJogClient : IArmdClient
     {
         private readonly bool _enableTeachSession;
         private readonly bool _enableMotion;
         private readonly bool _failGripperWithLostLease;
         private readonly bool _hangJog;
+        private readonly bool _hangMoveJ;
         private readonly List<TeachRecordingSnapshot> _recordings = [];
         private string _recordingPath = string.Empty;
         private readonly TaskCompletionSource _releaseHungJog = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseHungMoveJ = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public FailingJogClient(
             bool enableTeachSession = false,
             bool enableMotion = false,
             bool failGripperWithLostLease = false,
             bool hangJog = false,
+            bool hangMoveJ = false,
             bool hasActiveLease = true)
         {
             _enableTeachSession = enableTeachSession;
             _enableMotion = enableMotion;
             _failGripperWithLostLease = failGripperWithLostLease;
             _hangJog = hangJog;
+            _hangMoveJ = hangMoveJ;
             HasActiveLease = hasActiveLease;
         }
 
@@ -227,13 +282,21 @@ public sealed class MainWindowViewModelTests
 
         public TaskCompletionSource JogStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public TaskCompletionSource MoveJStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public CartesianTarget? LastMoveLTarget { get; private set; }
+
+        public IReadOnlyList<double>? LastMoveJPositions { get; private set; }
+
+        public double LastMoveJDuration { get; private set; }
 
         public TerminalConnectionState ConnectionState { get; private set; } = TerminalConnectionState.Connected;
 
         public bool HasActiveLease { get; private set; }
 
         public void ReleaseHungJog() => _releaseHungJog.TrySetResult();
+
+        public void ReleaseHungMoveJ() => _releaseHungMoveJ.TrySetResult();
 
         public async Task JogAsync(
             IAsyncEnumerable<IReadOnlyList<double>> commands,
@@ -308,11 +371,25 @@ public sealed class MainWindowViewModelTests
             yield break;
         }
 
-        public Task<JointMoveResult> MoveJAsync(
+        public async Task<JointMoveResult> MoveJAsync(
             IReadOnlyList<double> positions,
             double durationSeconds,
             bool wait,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            CancellationToken cancellationToken = default)
+        {
+            if (!_enableMotion)
+            {
+                throw new NotSupportedException();
+            }
+            LastMoveJPositions = positions.ToArray();
+            LastMoveJDuration = durationSeconds;
+            MoveJStarted.TrySetResult();
+            if (_hangMoveJ)
+            {
+                await _releaseHungMoveJ.Task;
+            }
+            return new JointMoveResult(true, true, Enumerable.Repeat(0.0, 6).ToArray(), "");
+        }
 
         public Task<OperationResult> GripperMoveAsync(
             double position,
@@ -323,6 +400,10 @@ public sealed class MainWindowViewModelTests
             {
                 HasActiveLease = false;
                 throw new IOException("缺少或无效的控制权 lease");
+            }
+            if (_enableMotion)
+            {
+                return Task.FromResult(new OperationResult(true));
             }
             throw new NotSupportedException();
         }

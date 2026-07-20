@@ -9,12 +9,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
 {
     private static readonly double[] JointMinimum = [-2.4, -0.1, -0.1, -1.6, -1.7, -2.5];
     private static readonly double[] JointMaximum = [2.4, 3.2, 4.0, 1.6, 1.7, 2.5];
+    private static readonly double[] HomeJointPosition = [0.0, 0.6, 0.6, 0.0, 0.0, 0.0];
+    private static readonly DemoStep[] DemoSequence =
+    [
+        new("安全复位位", HomeJointPosition, 2.5),
+        new("右侧展示位", [0.5, 0.8, 0.8, 0.3, 0.0, 0.0], 3.0),
+        new("左侧展示位", [-0.3, 1.2, 1.2, 0.4, 0.0, 0.0], 3.0),
+        new("返回安全位", HomeJointPosition, 2.5),
+    ];
     private readonly IArmdClient _client;
     private readonly IEnvironmentGuideService _environmentGuide;
     private readonly ITerminalSettingsStore _settingsStore;
     private readonly SemaphoreSlim _jogGate = new(1, 1);
     private CancellationTokenSource? _jogPumpLifetime;
     private CancellationTokenSource? _jogCallLifetime;
+    private CancellationTokenSource? _demoLifetime;
     private Channel<IReadOnlyList<double>>? _jogChannel;
     private Task? _jogPumpTask;
     private Task? _jogCallTask;
@@ -72,6 +81,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(MoveLCommand))]
     [NotifyCanExecuteChangedFor(nameof(GripperOpenCommand))]
     [NotifyCanExecuteChangedFor(nameof(GripperCloseCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ResetArmCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ToggleDemoSequenceCommand))]
     private bool _hasControl;
 
     [ObservableProperty]
@@ -180,6 +191,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool _isJogging;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ToggleDemoSequenceCommand))]
+    private bool _isDemoRunning;
+
+    [ObservableProperty]
     private bool _isEnvironmentBusy;
 
     [ObservableProperty]
@@ -265,6 +280,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public string LiveSummary => $"LIVE · {StateAgeMs} ms";
 
     public string UiScaleLabel => $"{UiScale * 100:F0}%";
+
+    public string DemoActionLabel => IsDemoRunning ? "停止展示" : "展示动作";
 
     public double GripperPercent
     {
@@ -386,6 +403,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task ShutdownAsync()
     {
+        RequestDemoStop();
         await StopJogAsync();
         if (IsTeachRecording)
         {
@@ -440,6 +458,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         try
         {
+            RequestDemoStop();
             await StopJogAsync();
             await _client.ReleaseControlAsync();
             AddLog("Info", "Control", "已释放控制权");
@@ -462,6 +481,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         try
         {
+            RequestDemoStop();
             await StopJogAsync();
             await _client.TriggerEStopAsync("WPF operator E-STOP");
             EStopEngaged = true;
@@ -508,6 +528,90 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 result.Accepted ? $"MoveJ 完成，到位={result.Reached}" : result.RejectReason);
         });
     }
+
+    [RelayCommand(CanExecute = nameof(CanRunMotion))]
+    private async Task ResetArmAsync()
+    {
+        await RunBusyAsync("Home", async () =>
+        {
+            SetJointTargets(HomeJointPosition);
+            var result = await _client.MoveJAsync(HomeJointPosition, 3.0, true);
+            AddLog(result.Accepted && result.Reached ? "Info" : "Warning", "Motion",
+                result.Accepted && result.Reached
+                    ? "已复位到安全姿态 J=[0.0, 0.6, 0.6, 0.0, 0.0, 0.0]"
+                    : string.IsNullOrWhiteSpace(result.RejectReason)
+                        ? "复位未到位"
+                        : result.RejectReason);
+        });
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = true, CanExecute = nameof(CanToggleDemoSequence))]
+    private async Task ToggleDemoSequenceAsync()
+    {
+        if (IsDemoRunning)
+        {
+            RequestDemoStop(logRequest: true);
+            return;
+        }
+        if (!CanRunMotion())
+        {
+            return;
+        }
+
+        _demoLifetime = new CancellationTokenSource();
+        var cancellationToken = _demoLifetime.Token;
+        IsDemoRunning = true;
+        IsBusy = true;
+        NotifyMotionCommands();
+        AddLog("Info", "Demo", "展示动作已启动；再次点击将在当前 MoveJ 段完成后停止");
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                foreach (var step in DemoSequence)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    SetJointTargets(step.Positions);
+                    ExecutionStatus = $"展示 · {step.Name}";
+                    var result = await _client.MoveJAsync(step.Positions, step.DurationSeconds, true);
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    if (!result.Accepted || !result.Reached)
+                    {
+                        throw new InvalidOperationException(
+                            string.IsNullOrWhiteSpace(result.RejectReason)
+                                ? $"{step.Name} 未到位"
+                                : result.RejectReason);
+                    }
+                    await Task.Delay(TimeSpan.FromMilliseconds(350), cancellationToken);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            HandleOperationFailure("Demo", exception);
+        }
+        finally
+        {
+            _demoLifetime?.Dispose();
+            _demoLifetime = null;
+            IsDemoRunning = false;
+            IsBusy = false;
+            ExecutionStatus = "空闲";
+            NotifyMotionCommands();
+            AddLog("Info", "Demo", "展示动作已停止");
+        }
+    }
+
+    private bool CanToggleDemoSequence() => IsDemoRunning || CanRunMotion();
 
     [RelayCommand(CanExecute = nameof(CanRunMotion))]
     private async Task MoveLAsync()
@@ -1242,6 +1346,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         MoveLCommand.NotifyCanExecuteChanged();
         GripperOpenCommand.NotifyCanExecuteChanged();
         GripperCloseCommand.NotifyCanExecuteChanged();
+        ResetArmCommand.NotifyCanExecuteChanged();
+        ToggleDemoSequenceCommand.NotifyCanExecuteChanged();
         StartTeachSessionCommand.NotifyCanExecuteChanged();
         StopTeachSessionCommand.NotifyCanExecuteChanged();
         StartTeachCommand.NotifyCanExecuteChanged();
@@ -1249,6 +1355,34 @@ public sealed partial class MainWindowViewModel : ObservableObject
         StartTeachRecordingCommand.NotifyCanExecuteChanged();
         StopTeachRecordingCommand.NotifyCanExecuteChanged();
         PlayTeachRecordingCommand.NotifyCanExecuteChanged();
+    }
+
+    private void RequestDemoStop(bool logRequest = false)
+    {
+        var lifetime = _demoLifetime;
+        if (lifetime is null || lifetime.IsCancellationRequested)
+        {
+            return;
+        }
+        lifetime.Cancel();
+        if (logRequest)
+        {
+            AddLog("Info", "Demo", "已请求停止，当前 MoveJ 段完成后退出循环");
+        }
+    }
+
+    private void SetJointTargets(IReadOnlyList<double> positions)
+    {
+        if (positions.Count != 6)
+        {
+            throw new ArgumentException("关节目标必须包含 6 个数值", nameof(positions));
+        }
+        TargetJ1 = positions[0];
+        TargetJ2 = positions[1];
+        TargetJ3 = positions[2];
+        TargetJ4 = positions[3];
+        TargetJ5 = positions[4];
+        TargetJ6 = positions[5];
     }
 
     private void ReconcileControlLease()
@@ -1312,7 +1446,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(ControlSummary));
     }
 
-    partial void OnEStopEngagedChanged(bool value) => NotifyMotionCommands();
+    partial void OnEStopEngagedChanged(bool value)
+    {
+        if (value)
+        {
+            RequestDemoStop();
+        }
+        NotifyMotionCommands();
+    }
 
     partial void OnConnectionStateChanged(TerminalConnectionState value)
     {
@@ -1361,4 +1502,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     partial void OnTeachRecordingFrameCountChanged(long value) =>
         OnPropertyChanged(nameof(TeachRecordingSummary));
+
+    partial void OnIsDemoRunningChanged(bool value)
+    {
+        OnPropertyChanged(nameof(DemoActionLabel));
+        NotifyMotionCommands();
+    }
+
+    private sealed record DemoStep(
+        string Name,
+        IReadOnlyList<double> Positions,
+        double DurationSeconds);
 }

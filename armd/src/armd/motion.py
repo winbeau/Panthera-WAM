@@ -9,12 +9,13 @@ from collections.abc import Callable
 import numpy as np
 
 from .backend import (
-    IDLE_DAMPING_KD,
     Backend,
     BackendError,
     FrameMode,
     JointFrame,
+    filter_idle_velocity,
     idle_damping_frame,
+    smooth_idle_damping_frame,
 )
 from .hardware_loop import CancelReason, MotionStepResult
 from .teach import PlaybackFrame
@@ -60,6 +61,7 @@ def gripper_position_frame(
     backend: Backend,
     *,
     arm_position: np.ndarray,
+    arm_filtered_velocity: np.ndarray,
     gripper_position: float,
     gripper_current_position: float,
     gripper_current_velocity: float,
@@ -71,8 +73,8 @@ def gripper_position_frame(
     夹爪与机械臂共用 CAN TX 帧，不能让夹爪使用 POS-VEL 而关节使用 MIT。
     因此把 POS-VEL 风格的夹爪请求转换成逐周期受限 MIT 阻抗：80% 力矩预算
     分配给当前位置误差，20% 分配给当前速度误差，并限制 kp/kd 不超过 SDK
-    回放默认量级。这样既不会为了移动夹爪把六个关节切进持续刚性位置保持，
-    也不会因按整个夹爪行程分摊力矩而让短距离动作失去驱动力。
+    回放默认量级。六轴沿用滤波速度生成的软件阻尼力矩，固件 kp/kd 保持为零，
+    避免夹爪动作期间重新引入速度量化导致的 J6 抽搐。
     """
     limits = backend.limits
     safe_position = float(np.clip(gripper_position, limits.gripper_lower, limits.gripper_upper))
@@ -90,13 +92,19 @@ def gripper_position_frame(
         GRIPPER_POSITION_MAX_KD,
         velocity_budget / max(velocity_error, np.finfo(np.float64).eps),
     )
+    arm_idle = smooth_idle_damping_frame(
+        limits,
+        arm_position,
+        arm_filtered_velocity,
+        gripper_current_position,
+    )
     return JointFrame(
         mode=FrameMode.POS_VEL_TQE_KP_KD,
-        arm_position=np.clip(arm_position, limits.joint_lower, limits.joint_upper),
-        arm_velocity=np.zeros(6),
-        arm_torque=np.zeros(6),
-        arm_kp=np.zeros(6),
-        arm_kd=IDLE_DAMPING_KD,
+        arm_position=arm_idle.arm_position,
+        arm_velocity=arm_idle.arm_velocity,
+        arm_torque=arm_idle.arm_torque,
+        arm_kp=arm_idle.arm_kp,
+        arm_kd=arm_idle.arm_kd,
         gripper_position=safe_position,
         gripper_velocity=desired_velocity,
         gripper_torque=0.0,
@@ -138,6 +146,8 @@ class GripperPositionMotion:
         self.timeout_s: float | None = None
         self.reject_reason = ""
         self._started_at: float | None = None
+        self._arm_filter_updated_at: float | None = None
+        self._arm_filtered_velocity = np.zeros(6, dtype=np.float64)
         self._cancel_reason: CancelReason | None = None
         self._lock = threading.Lock()
 
@@ -158,21 +168,36 @@ class GripperPositionMotion:
         with self._lock:
             cancel_reason = self._cancel_reason
         arm_position = np.asarray([state.position for state in states[:6]], dtype=np.float64)
+        arm_velocity = np.asarray([state.velocity for state in states[:6]], dtype=np.float64)
+        dt_s = (
+            0.0
+            if self._arm_filter_updated_at is None
+            else max(0.0, now - self._arm_filter_updated_at)
+        )
+        self._arm_filtered_velocity = filter_idle_velocity(
+            self._arm_filtered_velocity,
+            arm_velocity,
+            dt_s=dt_s,
+        )
+        self._arm_filter_updated_at = now
         if cancel_reason is not None:
-            backend.write_frame(idle_damping_frame(backend.limits, arm_position, states[6].position))
+            backend.enter_idle_damping()
+            backend.maintain_idle()
             self.reject_reason = f"夹爪运动已取消: {cancel_reason.value}"
             return MotionStepResult.CANCELLED
 
         error = self.position - states[6].position
         if abs(error) <= self.tolerance:
-            backend.write_frame(idle_damping_frame(backend.limits, arm_position, states[6].position))
+            backend.enter_idle_damping()
+            backend.maintain_idle()
             return MotionStepResult.DONE
         if (
             self._started_at is not None
             and self.timeout_s is not None
             and now - self._started_at >= self.timeout_s
         ):
-            backend.write_frame(idle_damping_frame(backend.limits, arm_position, states[6].position))
+            backend.enter_idle_damping()
+            backend.maintain_idle()
             self.reject_reason = "夹爪运动超时"
             return MotionStepResult.FAILED
 
@@ -180,6 +205,7 @@ class GripperPositionMotion:
             gripper_position_frame(
                 backend,
                 arm_position=arm_position,
+                arm_filtered_velocity=self._arm_filtered_velocity,
                 gripper_position=self.position,
                 gripper_current_position=states[6].position,
                 gripper_current_velocity=states[6].velocity,

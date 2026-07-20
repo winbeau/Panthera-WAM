@@ -105,40 +105,51 @@
                                  Checked="MainTab_Checked" AutomationProperties.AutomationId="DataTabButton" />
                 </StackPanel>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Margin="0,0,6,0" Style="{StaticResource CockpitBadgeStyle}">
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                            HorizontalAlignment="Right" Margin="2,0,4,0">
+                    <Border Margin="0,0,4,0" Style="{StaticResource CockpitBadgeStyle}">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse Margin="0,0,6,0">
                                 <Ellipse.Style><Style TargetType="Ellipse" BasedOn="{StaticResource StatusDotStyle}"><Style.Triggers><DataTrigger Binding="{Binding IsConnected}" Value="True"><Setter Property="Fill" Value="{DynamicResource SystemFillColorSuccessBrush}" /></DataTrigger></Style.Triggers></Style></Ellipse.Style>
                             </Ellipse>
-                            <TextBlock Text="机械臂 " FontSize="12.5" VerticalAlignment="Center" />
+                            <TextBlock Text="ARM " FontSize="12.5" VerticalAlignment="Center" />
                             <TextBlock Text="{Binding ConnectionLabel}" FontFamily="Cascadia Mono, Consolas" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
-                    <Border Margin="0,0,6,0" Style="{StaticResource CockpitBadgeStyle}">
+                    <Border Margin="0,0,4,0" Style="{StaticResource CockpitBadgeStyle}">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse Margin="0,0,6,0" Style="{StaticResource StatusDotStyle}" Fill="{DynamicResource SystemFillColorSuccessBrush}" />
                             <TextBlock Text="D405 " FontSize="12.5" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding CameraSummary}" MaxWidth="130" TextTrimming="CharacterEllipsis"
+                            <TextBlock Text="{Binding CameraSummary}" MaxWidth="100" TextTrimming="CharacterEllipsis"
                                        FontFamily="Cascadia Mono, Consolas" FontSize="12" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
-                    <Border Margin="0,0,6,0" Style="{StaticResource CockpitBadgeStyle}">
+                    <Border Margin="0,0,4,0" Style="{StaticResource CockpitBadgeStyle}">
                         <TextBlock Text="{Binding LiveSummary}" FontFamily="Cascadia Mono, Consolas" FontSize="12" VerticalAlignment="Center" />
                     </Border>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <ui:Button Content="−" Width="34" Height="34" Appearance="Secondary" Command="{Binding ZoomOutCommand}" ToolTip="Ctrl+-" />
                     <TextBlock Text="{Binding UiScaleLabel}" Width="45" HorizontalAlignment="Center" TextAlignment="Center"
                                VerticalAlignment="Center" FontFamily="Cascadia Mono, Consolas" FontSize="12" />
                     <ui:Button Content="+" Width="34" Height="34" Appearance="Secondary" Command="{Binding ZoomInCommand}" ToolTip="Ctrl++" />
-                    <ui:Button Content="重置" Height="34" Padding="10,0" Appearance="Transparent" Command="{Binding ResetZoomCommand}" Margin="3,0,4,0" />
-                    <ComboBox Width="96" Height="38" Padding="10,0" Margin="0,0,5,0" SelectedValuePath="Content"
+                    <ui:Button Content="复位" Icon="{ui:SymbolIcon ArrowSync20}" Height="36" Padding="10,1"
+                               Appearance="Secondary" Command="{Binding ResetArmCommand}" Margin="3,0,4,0"
+                               ToolTip="移动到安全复位姿态 J=[0.0, 0.6, 0.6, 0.0, 0.0, 0.0]"
+                               AutomationProperties.AutomationId="ResetArmButton" />
+                    <ui:Button Content="{Binding DemoActionLabel}" Height="36" Padding="10,1"
+                               Appearance="Secondary" Command="{Binding ToggleDemoSequenceCommand}" Margin="0,0,4,0"
+                               ToolTip="循环执行安全位与两组官方示例姿态；再次点击在当前段完成后停止"
+                               AutomationProperties.AutomationId="DemoSequenceButton" />
+                    <ComboBox Width="92" Height="38" Padding="9,0" Margin="0,0,5,0" SelectedValuePath="Content"
                               FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13.5"
                               VerticalContentAlignment="Center" HorizontalContentAlignment="Stretch"
                               SelectedValue="{Binding Theme}" SelectionChanged="Theme_SelectionChanged"
                               AutomationProperties.AutomationId="ThemeSelector">
                         <ComboBoxItem Content="System" /><ComboBoxItem Content="Light" /><ComboBoxItem Content="Dark" />
                     </ComboBox>
-                    <ui:Button Content="复位" Icon="{ui:SymbolIcon ArrowSync20}" Appearance="Secondary"
+                    <ui:Button Content="解除急停" Icon="{ui:SymbolIcon ArrowSync20}" Appearance="Secondary"
                                Height="36" Padding="10,1" FontSize="13" Command="{Binding ClearEStopCommand}" Margin="0,0,5,0"
                                AutomationProperties.AutomationId="ResetEStopButton" />
                     <ui:Button Content="急停 F12" Icon="{ui:SymbolIcon Warning20}" Appearance="Danger"

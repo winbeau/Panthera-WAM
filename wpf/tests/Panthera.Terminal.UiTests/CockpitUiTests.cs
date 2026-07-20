@@ -346,6 +346,8 @@ public sealed class CockpitUiTests
             string[] expectedIds =
             [
                 "ReleaseControlButton",
+                "ResetArmButton",
+                "DemoSequenceButton",
                 "ThemeSelector",
                 "ResetEStopButton",
                 "EStopButton",
@@ -460,6 +462,8 @@ public sealed class CockpitUiTests
             Assert.NotNull(window);
             Assert.Equal("Panthera-HT 控制终端", window.Title);
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("AcquireControlButton")));
+            Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("ResetArmButton")));
+            Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("DemoSequenceButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("ThemeSelector")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("EStopButton")));
             Assert.NotNull(window.FindFirstDescendant(condition => condition.ByAutomationId("ResetEStopButton")));

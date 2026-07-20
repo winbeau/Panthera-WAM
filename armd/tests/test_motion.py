@@ -32,6 +32,7 @@ def test_gripper_position_frame_uses_requested_instantaneous_torque_budget() -> 
     frame = gripper_position_frame(
         backend,
         arm_position=np.zeros(6),
+        arm_filtered_velocity=np.array([0.2, -0.2, 0.1, -0.1, 0.05, -0.05]),
         gripper_position=0.05,
         gripper_current_position=-0.008,
         gripper_current_velocity=0.0,
@@ -42,9 +43,9 @@ def test_gripper_position_frame_uses_requested_instantaneous_torque_budget() -> 
     position_effort = frame.gripper_kp * abs(0.05 - (-0.008))
     velocity_effort = frame.gripper_kd * abs(frame.gripper_velocity - 0.0)
     assert position_effort + velocity_effort == pytest.approx(0.1)
-    assert frame.arm_torque == pytest.approx([0.0] * 6)
+    assert np.all(np.sign(frame.arm_torque) == [-1, 1, -1, 1, -1, 1])
     assert frame.arm_kp == pytest.approx([0.0] * 6)
-    assert frame.arm_kd == pytest.approx(IDLE_DAMPING_KD)
+    assert frame.arm_kd == pytest.approx([0.0] * 6)
 
 
 def test_position_motion_reaches_and_holds_target() -> None:
