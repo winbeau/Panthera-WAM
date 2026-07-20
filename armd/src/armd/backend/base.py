@@ -206,6 +206,9 @@ class JointFrame:
 
 IDLE_DAMPING_KD = np.array([2.0, 3.0, 3.0, 1.5, 0.8, 0.8], dtype=np.float64)
 PASSIVE_IDLE_KD = np.zeros(6, dtype=np.float64)
+SMOOTH_IDLE_DAMPING_GAIN = IDLE_DAMPING_KD.copy()
+SMOOTH_IDLE_FILTER_TAU_S = 0.04
+SMOOTH_IDLE_TORQUE_LIMIT = np.array([1.0, 1.5, 1.5, 0.75, 0.4, 0.4], dtype=np.float64)
 ESTOP_RECOVERY_DAMPING_KD = np.array([10.0, 15.0, 15.0, 10.0, 5.0, 5.0], dtype=np.float64)
 ESTOP_RECOVERY_GRIPPER_KD = 0.6
 
@@ -244,6 +247,53 @@ def passive_idle_frame(
         arm_torque=np.zeros(6),
         arm_kp=np.zeros(6),
         arm_kd=PASSIVE_IDLE_KD,
+        gripper_position=float(np.clip(gripper_position, limits.gripper_lower, limits.gripper_upper)),
+        gripper_velocity=0.0,
+        gripper_torque=0.0,
+        gripper_kp=0.0,
+        gripper_kd=0.0,
+    )
+
+
+def filter_idle_velocity(
+    previous: np.ndarray,
+    measured: np.ndarray,
+    *,
+    dt_s: float,
+    tau_s: float = SMOOTH_IDLE_FILTER_TAU_S,
+) -> np.ndarray:
+    """一阶低通滤波速度，消除编码器量化台阶直接进入阻尼力矩。"""
+    old = _vector(previous, name="previous", length=6)
+    current = _vector(measured, name="measured", length=6)
+    if not np.isfinite(dt_s) or dt_s < 0:
+        raise ValueError("dt_s 必须是非负有限数值")
+    if not np.isfinite(tau_s) or tau_s <= 0:
+        raise ValueError("tau_s 必须是正有限数值")
+    alpha = 1.0 - float(np.exp(-dt_s / tau_s))
+    return old + alpha * (current - old)
+
+
+def smooth_idle_damping_frame(
+    limits: BackendLimits,
+    arm_position: np.ndarray,
+    filtered_velocity: np.ndarray,
+    gripper_position: float,
+) -> JointFrame:
+    """零刚度软件阻尼：滤波速度转连续力矩，固件 ``kd`` 保持为零。"""
+    velocity = _vector(filtered_velocity, name="filtered_velocity", length=6)
+    torque_limit = np.minimum(limits.joint_torque, SMOOTH_IDLE_TORQUE_LIMIT)
+    damping_torque = np.clip(
+        -SMOOTH_IDLE_DAMPING_GAIN * velocity,
+        -torque_limit,
+        torque_limit,
+    )
+    return JointFrame(
+        mode=FrameMode.POS_VEL_TQE_KP_KD,
+        arm_position=np.clip(arm_position, limits.joint_lower, limits.joint_upper),
+        arm_velocity=np.zeros(6),
+        arm_torque=damping_torque,
+        arm_kp=np.zeros(6),
+        arm_kd=np.zeros(6),
         gripper_position=float(np.clip(gripper_position, limits.gripper_lower, limits.gripper_upper)),
         gripper_velocity=0.0,
         gripper_torque=0.0,

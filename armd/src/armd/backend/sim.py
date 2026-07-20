@@ -17,8 +17,9 @@ from .base import (
     JointFrame,
     LimitViolationError,
     MotorSnapshot,
-    idle_damping_frame,
+    filter_idle_velocity,
     passive_idle_frame,
+    smooth_idle_damping_frame,
 )
 
 
@@ -62,7 +63,9 @@ class SimBackend:
         self._tor_limit_flags = np.zeros(7, dtype=np.int8)
         self._mode = FrameMode.STOP
         self._last_frame: JointFrame | None = None
-        self._idle_damping_enabled = False
+        self._idle_mode: str | None = "damping"
+        self._idle_filtered_velocity = np.zeros(6, dtype=np.float64)
+        self._idle_filter_updated_at = self._clock()
         self._last_update = self._clock()
         self._motor_time = self._last_update
         self._closed = False
@@ -95,6 +98,7 @@ class SimBackend:
     def write_frame(self, frame: JointFrame) -> None:
         self._require_open()
         frame.validate(self.n_joints)
+        self._idle_mode = None
         self._advance()
         if frame.mode in {FrameMode.STOP, FrameMode.BRAKE}:
             self._freeze(frame.mode)
@@ -151,26 +155,50 @@ class SimBackend:
 
     def maintain_idle(self) -> None:
         self._require_open()
-        if self._last_frame is None:
-            frame_factory = idle_damping_frame if self._idle_damping_enabled else passive_idle_frame
-            self.write_frame(frame_factory(self.limits, self._positions[:6], self._positions[6]))
+        idle_mode = self._idle_mode
+        if idle_mode is None:
+            if self._last_frame is not None:
+                self.write_frame(self._last_frame)
             return
-        self.write_frame(self._last_frame)
+
+        if idle_mode == "damping":
+            now = self._clock()
+            self._idle_filtered_velocity = filter_idle_velocity(
+                self._idle_filtered_velocity,
+                self._velocities[:6],
+                dt_s=max(0.0, now - self._idle_filter_updated_at),
+            )
+            self._idle_filter_updated_at = now
+            frame = smooth_idle_damping_frame(
+                self.limits,
+                self._positions[:6],
+                self._idle_filtered_velocity,
+                self._positions[6],
+            )
+        else:
+            frame = passive_idle_frame(self.limits, self._positions[:6], self._positions[6])
+        self.write_frame(frame)
+        self._idle_mode = idle_mode
 
     def enter_idle_damping(self) -> None:
         self._require_open()
         self._last_frame = None
-        self._idle_damping_enabled = True
+        self._idle_mode = "damping"
+        self._idle_filtered_velocity.fill(0.0)
+        self._idle_filter_updated_at = self._clock()
 
     def enter_passive_idle(self) -> None:
         self._require_open()
         self._last_frame = None
-        self._idle_damping_enabled = False
+        self._idle_mode = "passive"
+        self._idle_filtered_velocity.fill(0.0)
+        self._idle_filter_updated_at = self._clock()
 
     def stop(self) -> None:
         self._require_open()
         self._advance()
         self._freeze(FrameMode.STOP)
+        self._idle_mode = None
 
     def set_zero(self, motor_ids: list[int] | None = None) -> tuple[bool, bool, str]:
         self._require_open()

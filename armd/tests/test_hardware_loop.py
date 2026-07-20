@@ -230,7 +230,7 @@ def test_estop_recovery_frame_is_not_replayed_as_idle() -> None:
         assert idle_frame.mode is FrameMode.POS_VEL_TQE_KP_KD
         assert idle_frame.arm_torque == pytest.approx([0.0] * 6)
         assert idle_frame.arm_kp == pytest.approx([0.0] * 6)
-        assert idle_frame.arm_kd == pytest.approx(IDLE_DAMPING_KD)
+        assert idle_frame.arm_kd == pytest.approx([0.0] * 6)
     finally:
         loop.stop()
 

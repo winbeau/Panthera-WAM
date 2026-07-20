@@ -24,8 +24,9 @@ from .base import (
     JointFrame,
     LimitViolationError,
     MotorSnapshot,
-    idle_damping_frame,
+    filter_idle_velocity,
     passive_idle_frame,
+    smooth_idle_damping_frame,
 )
 
 EXPECTED_MOTOR_COUNT = 7
@@ -113,7 +114,9 @@ class RealBackend:
         self._clock = clock
         self._next_version_check_at = 0.0
         self._last_frame: JointFrame | None = None
-        self._idle_damping_enabled = False
+        self._idle_mode: str | None = "damping"
+        self._idle_filtered_velocity = np.zeros(6, dtype=np.float64)
+        self._idle_filter_updated_at = self._clock()
         self.motor_timeout_ms = motor_timeout_ms
 
         if source_audit is None and run_source_audit:
@@ -191,6 +194,7 @@ class RealBackend:
         self._require_open()
         frame.validate(self.n_joints)
         self._validate_frame_limits(frame)
+        self._idle_mode = None
         robot = self._require_robot()
 
         if frame.mode is FrameMode.STOP:
@@ -274,36 +278,55 @@ class RealBackend:
 
     def maintain_idle(self) -> None:
         self._require_open()
-        if self._last_frame is not None:
-            self.write_frame(self._last_frame)
+        idle_mode = self._idle_mode
+        if idle_mode is None:
+            if self._last_frame is not None:
+                self.write_frame(self._last_frame)
             return
         states = self.read_all()
         if len(states) != EXPECTED_MOTOR_COUNT or not all(state.valid for state in states):
             self.stop()
             return
-        frame_factory = idle_damping_frame if self._idle_damping_enabled else passive_idle_frame
-        self.write_frame(
-            frame_factory(
+
+        positions = np.array([state.position for state in states[:6]], dtype=np.float64)
+        if idle_mode == "damping":
+            now = self._clock()
+            self._idle_filtered_velocity = filter_idle_velocity(
+                self._idle_filtered_velocity,
+                np.array([state.velocity for state in states[:6]], dtype=np.float64),
+                dt_s=max(0.0, now - self._idle_filter_updated_at),
+            )
+            self._idle_filter_updated_at = now
+            frame = smooth_idle_damping_frame(
                 self.limits,
-                np.array([state.position for state in states[:6]], dtype=np.float64),
+                positions,
+                self._idle_filtered_velocity,
                 states[6].position,
             )
-        )
+        else:
+            frame = passive_idle_frame(self.limits, positions, states[6].position)
+        self.write_frame(frame)
+        self._idle_mode = idle_mode
 
     def enter_idle_damping(self) -> None:
         self._require_open()
         self._last_frame = None
-        self._idle_damping_enabled = True
+        self._idle_mode = "damping"
+        self._idle_filtered_velocity.fill(0.0)
+        self._idle_filter_updated_at = self._clock()
 
     def enter_passive_idle(self) -> None:
         self._require_open()
         self._last_frame = None
-        self._idle_damping_enabled = False
+        self._idle_mode = "passive"
+        self._idle_filtered_velocity.fill(0.0)
+        self._idle_filter_updated_at = self._clock()
 
     def stop(self) -> None:
         self._require_open()
         self._require_robot().set_stop()
         self._last_frame = None
+        self._idle_mode = None
 
     def set_zero(self, motor_ids: list[int] | None = None) -> tuple[bool, bool, str]:
         self._require_open()

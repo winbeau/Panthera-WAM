@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from armd.backend import FrameMode, JointFrame, PASSIVE_IDLE_KD, SimBackend
+from armd.backend import FrameMode, JointFrame, SimBackend
 from armd.control import LeaseManager
 from armd.safety import WatchdogStopAction, apply_watchdog_stop
 
@@ -79,11 +79,11 @@ def test_watchdog_enters_damping_from_position_mode() -> None:
     backend.refresh_state()
     after = backend.read_all()[0].position
 
-    assert action is WatchdogStopAction.PASSIVE_IDLE
+    assert action is WatchdogStopAction.SMOOTH_IDLE_DAMPING
     assert after == before
     assert backend.read_all()[0].mode == FrameMode.POS_VEL_TQE_KP_KD
     assert backend._last_frame is not None
-    assert backend._last_frame.arm_kd == pytest.approx(PASSIVE_IDLE_KD)
+    assert backend._last_frame.arm_kd == pytest.approx([0.0] * 6)
 
 
 def test_watchdog_enters_damping_from_velocity_mode() -> None:
@@ -98,9 +98,9 @@ def test_watchdog_enters_damping_from_velocity_mode() -> None:
     clock.advance(1.0)
     backend.refresh_state()
 
-    assert action is WatchdogStopAction.PASSIVE_IDLE
+    assert action is WatchdogStopAction.SMOOTH_IDLE_DAMPING
     assert backend.read_all()[0].position == stopped_at
     assert backend.read_all()[0].velocity == 0.0
     assert backend.read_all()[0].mode == FrameMode.POS_VEL_TQE_KP_KD
     assert backend._last_frame is not None
-    assert backend._last_frame.arm_kd == pytest.approx(PASSIVE_IDLE_KD)
+    assert backend._last_frame.arm_kd == pytest.approx([0.0] * 6)
