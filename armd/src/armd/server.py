@@ -108,4 +108,13 @@ class ArmdServer:
                 continue
             if self.hardware_loop.has_active_motion:
                 self.hardware_loop.request_cancel(CancelReason.WATCHDOG)
+                deadline = asyncio.get_running_loop().time() + 0.5
+                while self.hardware_loop.has_active_motion and asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(min(self.hardware_loop.period_s, 0.01))
+                if self.hardware_loop.has_active_motion:
+                    self.hardware_loop.request_estop()
+                    estop_deadline = asyncio.get_running_loop().time() + 0.2
+                    while not self.hardware_loop.estop_applied and asyncio.get_running_loop().time() < estop_deadline:
+                        await asyncio.sleep(min(self.hardware_loop.period_s, 0.005))
+                    continue
             await asyncio.wrap_future(self.hardware_loop.submit(apply_watchdog_stop))

@@ -18,6 +18,7 @@ from .base import (
     LimitViolationError,
     MotorSnapshot,
     idle_damping_frame,
+    passive_idle_frame,
 )
 
 
@@ -61,6 +62,7 @@ class SimBackend:
         self._tor_limit_flags = np.zeros(7, dtype=np.int8)
         self._mode = FrameMode.STOP
         self._last_frame: JointFrame | None = None
+        self._idle_damping_enabled = False
         self._last_update = self._clock()
         self._motor_time = self._last_update
         self._closed = False
@@ -150,13 +152,20 @@ class SimBackend:
     def maintain_idle(self) -> None:
         self._require_open()
         if self._last_frame is None:
-            self.write_frame(idle_damping_frame(self.limits, self._positions[:6], self._positions[6]))
+            frame_factory = idle_damping_frame if self._idle_damping_enabled else passive_idle_frame
+            self.write_frame(frame_factory(self.limits, self._positions[:6], self._positions[6]))
             return
         self.write_frame(self._last_frame)
 
     def enter_idle_damping(self) -> None:
         self._require_open()
         self._last_frame = None
+        self._idle_damping_enabled = True
+
+    def enter_passive_idle(self) -> None:
+        self._require_open()
+        self._last_frame = None
+        self._idle_damping_enabled = False
 
     def stop(self) -> None:
         self._require_open()

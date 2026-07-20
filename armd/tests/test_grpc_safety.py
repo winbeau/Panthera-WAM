@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 from panthera_arm import arm_pb2, arm_pb2_grpc
 
-from armd.backend import FrameMode, JointFrame, SimBackend
+from armd.backend import FrameMode, JointFrame, PASSIVE_IDLE_KD, SimBackend
 from armd.control import LEASE_METADATA_KEY
 from armd.hardware_loop import HardwareLoop
 from armd.server import ArmdServer
@@ -116,6 +116,34 @@ async def test_estop_is_lock_free_and_blocks_motion_until_confirmed_clear(grpc_s
 
 
 @pytest.mark.asyncio
+async def test_release_control_enters_passive_idle(grpc_stack) -> None:
+    loop, _, stub = grpc_stack
+    acquired = await stub.AcquireControl(arm_pb2.AcquireControlRequest(client_id="holder"))
+    metadata = lease_metadata(acquired.lease_token)
+    moved = await stub.MoveJ(
+        arm_pb2.MoveJRequest(
+            positions=[0.5, 0.0, 0.0, 0.0, 0.0, 0.0],
+            duration_s=1.0,
+            wait=False,
+        ),
+        metadata=metadata,
+    )
+    assert moved.accepted
+    assert loop.has_active_motion
+
+    await stub.ReleaseControl(arm_pb2.Empty(), metadata=metadata)
+    assert not loop.has_active_motion
+    await asyncio.sleep(0.01)
+    frame = await asyncio.wrap_future(loop.submit(lambda backend: backend._last_frame))
+
+    assert frame is not None
+    assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+    assert frame.arm_torque == pytest.approx([0.0] * 6)
+    assert frame.arm_kp == pytest.approx([0.0] * 6)
+    assert frame.arm_kd == pytest.approx(PASSIVE_IDLE_KD)
+
+
+@pytest.mark.asyncio
 async def test_watchdog_releases_lease_and_zeroes_velocity(grpc_stack) -> None:
     loop, _, stub = grpc_stack
     acquired = await stub.AcquireControl(arm_pb2.AcquireControlRequest(client_id="holder"))
@@ -132,6 +160,9 @@ async def test_watchdog_releases_lease_and_zeroes_velocity(grpc_stack) -> None:
     assert not status.held
     assert status.watchdog_ok
     assert second == pytest.approx(first, abs=1e-6)
+    frame = await asyncio.wrap_future(loop.submit(lambda backend: backend._last_frame))
+    assert frame is not None
+    assert frame.arm_kd == pytest.approx(PASSIVE_IDLE_KD)
 
 
 @pytest.mark.asyncio

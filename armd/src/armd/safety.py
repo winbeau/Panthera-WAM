@@ -8,7 +8,7 @@ from .backend import Backend, FrameMode
 
 
 class WatchdogStopAction(str, enum.Enum):
-    IDLE_DAMPING = "idle_damping"
+    PASSIVE_IDLE = "passive_idle"
     HOLD_POSITION = "hold_position"
     ZERO_VELOCITY = "zero_velocity"
     HOLD_MIT = "hold_mit"
@@ -35,9 +35,9 @@ def apply_watchdog_stop(backend: Backend) -> WatchdogStopAction:
         return WatchdogStopAction.HARD_STOP
 
     if mode in {FrameMode.POS_VEL_TQE, FrameMode.VELOCITY, FrameMode.POS_VEL_TQE_KP_KD}:
-        backend.enter_idle_damping()
+        backend.enter_passive_idle()
         backend.maintain_idle()
-        return WatchdogStopAction.IDLE_DAMPING
+        return WatchdogStopAction.PASSIVE_IDLE
 
     if mode in {FrameMode.STOP, FrameMode.BRAKE}:
         return WatchdogStopAction.ALREADY_STOPPED

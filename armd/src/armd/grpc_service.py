@@ -214,9 +214,9 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         if result.replaced_holder:
-            if self._hardware_loop.has_active_motion:
-                self._hardware_loop.request_cancel(CancelReason.FORCE_ACQUIRE)
-            await asyncio.wrap_future(self._hardware_loop.submit(apply_watchdog_stop))
+            cancelled = await self._cancel_active_motion_and_wait(CancelReason.FORCE_ACQUIRE)
+            if cancelled:
+                await asyncio.wrap_future(self._hardware_loop.submit(apply_watchdog_stop))
         return arm_pb2.AcquireControlResponse(
             granted=result.granted,
             holder_client_id=result.holder_client_id,
@@ -228,8 +228,31 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
         if not self._leases.release(token):
             await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
-        await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.enter_idle_damping()))
+        cancelled = await self._cancel_active_motion_and_wait(CancelReason.CLIENT)
+        if cancelled:
+            await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.enter_passive_idle()))
         return arm_pb2.Empty()
+
+    async def _cancel_active_motion_and_wait(
+        self,
+        reason: CancelReason,
+        *,
+        timeout_s: float = 0.5,
+    ) -> bool:
+        """释放控制权前，等待非阻塞运动完成安全减速，再进入被动空闲。"""
+        if not self._hardware_loop.has_active_motion:
+            return True
+        self._hardware_loop.request_cancel(reason)
+        deadline = time.monotonic() + timeout_s
+        while self._hardware_loop.has_active_motion and time.monotonic() < deadline:
+            await asyncio.sleep(min(self._hardware_loop.period_s, 0.01))
+        if self._hardware_loop.has_active_motion:
+            self._hardware_loop.request_estop()
+            estop_deadline = time.monotonic() + 0.2
+            while not self._hardware_loop.estop_applied and time.monotonic() < estop_deadline:
+                await asyncio.sleep(min(self._hardware_loop.period_s, 0.005))
+            return False
+        return True
 
     async def GetControlStatus(self, request, context):
         del request, context

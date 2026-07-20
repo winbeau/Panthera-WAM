@@ -205,6 +205,7 @@ class JointFrame:
 
 
 IDLE_DAMPING_KD = np.array([2.0, 3.0, 3.0, 1.5, 0.8, 0.8], dtype=np.float64)
+PASSIVE_IDLE_KD = np.zeros(6, dtype=np.float64)
 ESTOP_RECOVERY_DAMPING_KD = np.array([10.0, 15.0, 15.0, 10.0, 5.0, 5.0], dtype=np.float64)
 ESTOP_RECOVERY_GRIPPER_KD = 0.6
 
@@ -227,6 +228,27 @@ def idle_damping_frame(
         gripper_torque=0.0,
         gripper_kp=0.0,
         gripper_kd=0.3,
+    )
+
+
+def passive_idle_frame(
+    limits: BackendLimits,
+    arm_position: np.ndarray,
+    gripper_position: float,
+) -> JointFrame:
+    """无控制权空闲帧：零力矩、零刚度、零阻尼，允许操作员被动拖动。"""
+    return JointFrame(
+        mode=FrameMode.POS_VEL_TQE_KP_KD,
+        arm_position=np.clip(arm_position, limits.joint_lower, limits.joint_upper),
+        arm_velocity=np.zeros(6),
+        arm_torque=np.zeros(6),
+        arm_kp=np.zeros(6),
+        arm_kd=PASSIVE_IDLE_KD,
+        gripper_position=float(np.clip(gripper_position, limits.gripper_lower, limits.gripper_upper)),
+        gripper_velocity=0.0,
+        gripper_torque=0.0,
+        gripper_kp=0.0,
+        gripper_kd=0.0,
     )
 
 
@@ -282,10 +304,13 @@ class Backend(Protocol):
         """计算重力与摩擦补偿；只允许在 HardwareLoop 线程调用。"""
 
     def maintain_idle(self) -> None:
-        """空闲周期重发最后安全帧；无历史帧时建立零刚度阻尼帧。"""
+        """空闲周期重发最后安全帧；无历史帧时建立当前空闲策略帧。"""
 
     def enter_idle_damping(self) -> None:
         """丢弃刚性目标，使下一空闲周期进入零刚度阻尼模式。"""
+
+    def enter_passive_idle(self) -> None:
+        """丢弃刚性目标，使下一空闲周期进入零力矩被动模式。"""
 
     def stop(self) -> None:
         """急停。真机对应 `set_stop()`，其自带 flush（核实结论 §V3）。"""

@@ -25,6 +25,7 @@ from .base import (
     LimitViolationError,
     MotorSnapshot,
     idle_damping_frame,
+    passive_idle_frame,
 )
 
 EXPECTED_MOTOR_COUNT = 7
@@ -112,6 +113,7 @@ class RealBackend:
         self._clock = clock
         self._next_version_check_at = 0.0
         self._last_frame: JointFrame | None = None
+        self._idle_damping_enabled = False
         self.motor_timeout_ms = motor_timeout_ms
 
         if source_audit is None and run_source_audit:
@@ -279,8 +281,9 @@ class RealBackend:
         if len(states) != EXPECTED_MOTOR_COUNT or not all(state.valid for state in states):
             self.stop()
             return
+        frame_factory = idle_damping_frame if self._idle_damping_enabled else passive_idle_frame
         self.write_frame(
-            idle_damping_frame(
+            frame_factory(
                 self.limits,
                 np.array([state.position for state in states[:6]], dtype=np.float64),
                 states[6].position,
@@ -290,6 +293,12 @@ class RealBackend:
     def enter_idle_damping(self) -> None:
         self._require_open()
         self._last_frame = None
+        self._idle_damping_enabled = True
+
+    def enter_passive_idle(self) -> None:
+        self._require_open()
+        self._last_frame = None
+        self._idle_damping_enabled = False
 
     def stop(self) -> None:
         self._require_open()
