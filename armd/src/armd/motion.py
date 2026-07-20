@@ -169,11 +169,7 @@ class GripperPositionMotion:
             cancel_reason = self._cancel_reason
         arm_position = np.asarray([state.position for state in states[:6]], dtype=np.float64)
         arm_velocity = np.asarray([state.velocity for state in states[:6]], dtype=np.float64)
-        dt_s = (
-            0.0
-            if self._arm_filter_updated_at is None
-            else max(0.0, now - self._arm_filter_updated_at)
-        )
+        dt_s = 0.0 if self._arm_filter_updated_at is None else max(0.0, now - self._arm_filter_updated_at)
         self._arm_filtered_velocity = filter_idle_velocity(
             self._arm_filtered_velocity,
             arm_velocity,
