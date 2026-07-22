@@ -143,7 +143,7 @@
 - [x] **M-P1 ARM64 部署** ✅ Pi 5 使用系统 CPython 3.12.3 与 `uv sync --frozen`，从
   主仓库 vendor 安装 cp312 ARM64 SDK wheel，并从 vendored librealsense 2.58.1 构建
   RSUSB Python 绑定；armd/camerad 两项仿真自检通过，systemd 服务 enabled 但未自动启动
-- [ ] **M-P2 只读联通**：`/dev/ttyACM0..6`、D405 `260422273428`、USB 3.2 与
+- [x] **M-P2 只读联通** ✅ `/dev/ttyACM0..6`、D405 `260422273428`、USB 3.2 与
   `640x480@30` 深度/彩色流均确认；Windows→Pi `50051/50052` 可达，远程 gRPC 对 armd
   仿真和真实 camerad 探活成功。WPF 已切换 `Remote` 配置；armd 真机服务保持 inactive
 - [ ] 🔒 **M-P3 真机切换验收**：用户在场后按“读状态 → Enable → ≤5° 单关节 jog →
