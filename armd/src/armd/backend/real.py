@@ -56,8 +56,7 @@ def require_serial_ports(
     ports = tuple(sorted(globber(f"{serial_prefix}*")))
     if not ports:
         raise SdkAuditError(
-            f"未发现 Panthera 通信串口 {serial_prefix}*；"
-            "请确认机械臂通信板已供电、USB 已连接并完成系统枚举"
+            f"未发现 Panthera 通信串口 {serial_prefix}*；请确认机械臂通信板已供电、USB 已连接并完成系统枚举"
         )
     return ports
 
