@@ -4,7 +4,27 @@ All notable changes to Panthera-WAM are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.8] - 2026-07-22
+
 ### Added
+
+- Migrated the primary hardware-control host to Raspberry Pi 5 ARM64 while retaining the WSL2 compatibility path and direct WPF remote mode.
+- Added the WPF SSH deployment wizard, automatic Pi/WSL architecture and repository detection, existing-service startup, persistent dual gRPC port forwarding and safe application restart.
+- Added Raspberry Pi 5 `uv`/vendor-submodule deployment support for the ARM64 motor SDK and vendored RealSense RSUSB backend.
+
+### Fixed
+
+- Fixed J2/J3 positive jog commands using stale asymmetric joint-state data, which could produce a large first-step command under load.
+- Pinned the Raspberry Pi service environment to the repository-managed `uv` interpreter and validated the real-hardware handover path.
+- Aligned trajectory dispatch with the verified official SDK behavior and smoothed the built-in demonstration sequence.
+
+### Safety and validation
+
+- WPF Release build passes with zero warnings and zero errors, 33 unit tests and eight isolated FlaUI acceptance tests.
+- The SSH wizard never acquires control, enables motors or sends motion commands; it does not clone repositories or install remote dependencies.
+- Raspberry Pi real-hardware acceptance verified all seven motors, lease acquire/release, a bounded J1 jog, EStop latch/reset and zero-torque recovery.
+
+### Earlier v2 additions included in this release
 
 - Forked and pinned RealSense SDK 2.0 v2.58.1 as `vendor/librealsense`.
 - Added vendored librealsense RSUSB source build and an isolated WSL `camerad` that owns D405 acquisition without disturbing the arm control loop.
