@@ -137,12 +137,15 @@
 ## 阶段 5：Raspberry Pi 5 控制主机迁移
 
 - [x] **M-P0 架构与配置** ✅ armd/camerad 支持环境变量远程 bind；WPF `Remote` 模式按
-  Pi IP 直连并跳过 WSL bridge/usbipd，旧 `WslBridge` 模式保持兼容。Linux 85 项回归、
-  SDK 42 项审计、armd 仿真自检及 Windows WPF 19 项单测/Release 构建均通过
-- [ ] **M-P1 ARM64 部署**：Pi 使用 `uv sync --frozen`，从主仓库 vendor 安装匹配
-  CPython 的 ARM64 SDK wheel，并从 vendored librealsense 构建 RSUSB 绑定；仿真自检通过
-- [ ] **M-P2 只读联通**：确认 `/dev/ttyACM0..6`、D405、服务端口与 Windows→Pi gRPC
-  探活；不得使能或发送运动命令
+  Pi IP 直连并跳过 WSL bridge/usbipd，旧 `WslBridge` 模式保持兼容。最新主线 Linux
+  90 项回归、SDK 42 项审计、armd 仿真自检、Windows WPF 19 项单测/Release 构建及
+  WPF UI 验收均通过
+- [x] **M-P1 ARM64 部署** ✅ Pi 5 使用系统 CPython 3.12.3 与 `uv sync --frozen`，从
+  主仓库 vendor 安装 cp312 ARM64 SDK wheel，并从 vendored librealsense 2.58.1 构建
+  RSUSB Python 绑定；armd/camerad 两项仿真自检通过，systemd 服务 enabled 但未自动启动
+- [ ] **M-P2 只读联通**：`/dev/ttyACM0..6`、D405 `260422273428`、USB 3.2 与
+  `640x480@30` 深度/彩色流均确认；Windows→Pi `50051/50052` 可达，远程 gRPC 对 armd
+  仿真和真实 camerad 探活成功。WPF 已切换 `Remote` 配置；armd 真机服务保持 inactive
 - [ ] 🔒 **M-P3 真机切换验收**：用户在场后按“读状态 → Enable → ≤5° 单关节 jog →
   EStop 演练”顺序验收，再允许 WPF 真机控制
 
