@@ -4,6 +4,8 @@
 > **控制主机迁移（2026-07-22，覆盖下文旧 WSL 主路径）**：Panthera-HT 与 D405
 > 改为由 Raspberry Pi 5 ARM64 直接独占；`armd:50051`、`camerad:50052` 绑定 Pi 的
 > Tailscale/LAN IP，Windows WPF 以 `Remote` 模式直连。WSL bridge 只保留兼容回退。
+> WPF 同时提供显式触发的 `SshRemote` 向导：只针对已部署仓库，自动识别 Pi/WSL、
+> 工作目录与启动入口，并用 localhost SSH 双端口转发接入 armd/camerad；不安装依赖。
 > Pi Python 依赖必须由 `uv` 管理，SDK/librealsense 必须来自主仓库 `vendor/` fork submodule。
 > 本稿在 `CLI_PLAN.md` / WPF 三份视觉稿基础上，逐条回填了对抗审计提出的 16 项 load-bearing 缺陷（见文末「审计修订对照」），并将 CLI+armd 契约与 WPF 设计合并成一份。
 > 覆盖口径：SDK（`Panthera` 38 + `Recorder` 4 = 42 个公开方法/静态方法）每一项，落到 **(a) CLI 命令 + RPC** / **(b) 内部覆盖+理由** / **(c) 生命周期** 三种归宿之一；机器可执行结果见 `sdk-capability-audit.json`。
@@ -13,7 +15,7 @@
 ## 总览与架构回顾
 
 ```
-Windows: WPF 可视化终端 ── gRPC / Pi IP ──┬→ armd (:50051) → ArmService → vendor SDK → Panthera-HT
+Windows: WPF 可视化终端 ── gRPC / Pi IP 或 SSH tunnel ──┬→ armd (:50051) → ArmService → vendor SDK → Panthera-HT
 Raspberry Pi 5: panthera-cli ─────────────┴→ camerad (:50052) → CameraService → vendor librealsense → D405
 兼容回退: WSL2 + Windows 本地 bridge (:50050/:50049)
 ```
@@ -26,6 +28,8 @@ Raspberry Pi 5: panthera-cli ─────────────┴→ camer
 - **网络边界**：WPF 的 `Remote` 模式直接连接 Pi 的两个 gRPC 端口，不启动 WSL/usbipd/
   TCP bridge。当前契约未提供 TLS 或用户身份认证，控制权 lease 不是网络认证；因此服务
   应绑定精确的 Tailscale/受信 LAN IP，并由主机防火墙限制来源，禁止公网暴露。
+  `SshRemote` 模式则将两个服务保持在远端 loopback，通过 Windows OpenSSH 转发到本地
+  `50050/50049`；SSH 向导只在用户点击后运行，不保存密码、不克隆或安装远端内容。
 - **零修改\* 的边界**：官方 SDK 源码零修改，但 armd **不能**直接调用 SDK 的阻塞式方法（`iswait=True` 等待、`moveL()`、`Recorder.play()`）——这些方法会把唯一的硬件线程钉死数秒到整条轨迹，破坏可抢占安全层。armd 改为**用 SDK 的公开规划/控制原语（`compute_cartesian_path` / `septic_interpolation` / `Joint_Pos_Vel(iswait=False)` / `check_position_reached`）在自己的控制循环里逐周期步进**。M0-2 真机结果进一步否决了 SDK moveL 内部的 MIT 执行路径，详见 §V9。
 
 ### 三条贯穿全局的架构决策（审计核心矛盾的收敛结论）

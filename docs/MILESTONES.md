@@ -152,6 +152,10 @@
   正常；J1 以 `+0.08rad/s` 点动 1s，实测 `+0.08105rad=+4.64°`，终点速度为零且无
   限位命中；软件 EStop 成功切入 `mode=0` 并锁存，显式复位后 `estop=false`、watchdog
   自动释放超时 lease、六轴零力矩且机械臂物理状态稳定
+- [x] **M-P4 SSH 远程部署向导** ✅ WPF 顶栏新增 SSH 部署入口；输入主机/端口/用户/
+  可选私钥后，自动识别 Pi/WSL 架构、已部署 Panthera-WAM 目录与 systemd/仓库启动入口，
+  启动 armd/camerad 并保存 `SshRemote` 配置；重启后用 localhost 双端口 SSH 隧道连接，
+  全程不克隆仓库、不安装依赖、不获取控制权或发送运动命令
 
 ---
 

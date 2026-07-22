@@ -18,7 +18,12 @@ public sealed class JsonTerminalSettingsStoreTests : IDisposable
             Theme: "Dark",
             JogSpeed: 0.22,
             WslDistribution: "Ubuntu",
-            BackendMode: "Remote");
+            BackendMode: "SshRemote",
+            Ssh: new SshConnectionSettings(
+                Host: "pi5",
+                Port: 2222,
+                User: "winbeau",
+                IdentityFile: @"C:\Users\genev\.ssh\id_ed25519"));
 
         store.Save(expected);
         var actual = store.Load();
@@ -42,9 +47,20 @@ public sealed class JsonTerminalSettingsStoreTests : IDisposable
     [InlineData("WslBridge", true)]
     [InlineData("Remote", false)]
     [InlineData("remote", false)]
+    [InlineData("SshRemote", false)]
     public void UsesWslBridge_RecognizesRemoteMode(string mode, bool expected)
     {
         Assert.Equal(expected, new TerminalSettings(BackendMode: mode).UsesWslBridge);
+    }
+
+    [Theory]
+    [InlineData("SshRemote", true)]
+    [InlineData("sshremote", true)]
+    [InlineData("Remote", false)]
+    [InlineData("WslBridge", false)]
+    public void UsesSshTunnel_RecognizesSshMode(string mode, bool expected)
+    {
+        Assert.Equal(expected, new TerminalSettings(BackendMode: mode).UsesSshTunnel);
     }
 
     public void Dispose()

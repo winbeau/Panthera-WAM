@@ -169,9 +169,41 @@ public sealed record TerminalSettings(
     double JogSpeed = 0.15,
     double JogStep = 0.02,
     double UiScale = 1.0,
-    string BackendMode = "WslBridge")
+    string BackendMode = "WslBridge",
+    SshConnectionSettings? Ssh = null)
 {
-    public bool UsesWslBridge => !string.Equals(BackendMode, "Remote", StringComparison.OrdinalIgnoreCase);
+    public bool UsesWslBridge => string.Equals(BackendMode, "WslBridge", StringComparison.OrdinalIgnoreCase);
+
+    public bool UsesSshTunnel => string.Equals(BackendMode, "SshRemote", StringComparison.OrdinalIgnoreCase);
+
+    public SshConnectionSettings SshSettings => Ssh ?? new SshConnectionSettings();
+}
+
+/// <summary>
+/// OpenSSH connection details used by the WPF deployment wizard. Passwords are
+/// intentionally not part of this model; authentication uses the user's
+/// OpenSSH agent/default key or the optional identity file.
+/// </summary>
+public sealed record SshConnectionSettings(
+    string Host = "",
+    int Port = 22,
+    string User = "",
+    string IdentityFile = "",
+    bool AcceptNewHostKey = true)
+{
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(Host)
+        && Port is > 0 and <= 65535
+        && !string.IsNullOrWhiteSpace(User);
+}
+
+public sealed record RemoteDeploymentReport(
+    IReadOnlyList<EnvironmentGuideStep> Steps,
+    string TargetKind = "unknown",
+    string Architecture = "unknown",
+    string RepositoryPath = "",
+    string StartMethod = "")
+{
+    public bool Success => Steps.Count > 0 && Steps.All(step => step.Success);
 }
 
 public sealed record TerminalLogEntry(

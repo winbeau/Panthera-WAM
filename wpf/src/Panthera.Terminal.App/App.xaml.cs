@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Panthera.Terminal.Core;
@@ -19,6 +20,7 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs eventArgs)
     {
         base.OnStartup(eventArgs);
+        await WaitForPriorInstanceAsync(eventArgs.Args);
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
@@ -67,6 +69,7 @@ public partial class App : Application
                     ? new UiAcceptanceArmdClient()
                     : new ArmdClient(settings.Endpoint, settings.CameraEndpoint));
                 services.AddSingleton<IEnvironmentGuideService, WindowsEnvironmentGuideService>();
+                services.AddSingleton<IRemoteDeploymentService, OpenSshRemoteDeploymentService>();
                 services.AddSingleton<LatestStateSlot<RobotSnapshot>>();
                 services.AddSingleton<LatestCameraFrames>();
                 services.AddSingleton<MainWindowViewModel>();
@@ -74,6 +77,10 @@ public partial class App : Application
                 if (!uiAcceptanceMode && settings.UsesWslBridge)
                 {
                     services.AddHostedService<WslTcpBridgeHostedService>();
+                }
+                else if (!uiAcceptanceMode && settings.UsesSshTunnel)
+                {
+                    services.AddHostedService<SshTunnelHostedService>();
                 }
                 services.AddHostedService<StateStreamHostedService>();
                 services.AddHostedService<CameraStreamHostedService>();
@@ -180,5 +187,31 @@ public partial class App : Application
             SystemTheme.HC1 or SystemTheme.HC2 or SystemTheme.HCBlack or SystemTheme.HCWhite => ApplicationTheme.HighContrast,
             _ => ApplicationTheme.Light,
         };
+    }
+
+    private static async Task WaitForPriorInstanceAsync(IReadOnlyList<string> arguments)
+    {
+        var marker = Array.IndexOf(arguments.ToArray(), "--wait-for-pid");
+        if (marker < 0 || marker + 1 >= arguments.Count
+            || !int.TryParse(arguments[marker + 1], out var processId)
+            || processId == Environment.ProcessId)
+        {
+            return;
+        }
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (ArgumentException)
+        {
+            // The old process has already exited.
+        }
+        catch (OperationCanceledException)
+        {
+            // Continue to the normal single-instance check, which remains the
+            // final guard against overlapping control terminals.
+        }
     }
 }

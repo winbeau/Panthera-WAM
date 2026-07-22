@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -18,6 +19,8 @@ public partial class MainWindow : FluentWindow
     private readonly MainWindowViewModel _viewModel;
     private readonly LatestStateSlot<RobotSnapshot> _stateSlot;
     private readonly LatestCameraFrames _cameraFrames;
+    private readonly IRemoteDeploymentService _remoteDeployment;
+    private readonly ITerminalSettingsStore _settingsStore;
     private readonly DispatcherTimer _renderTimer;
     private long _renderedVersion;
     private long _renderedColorVersion;
@@ -27,12 +30,16 @@ public partial class MainWindow : FluentWindow
     public MainWindow(
         MainWindowViewModel viewModel,
         LatestStateSlot<RobotSnapshot> stateSlot,
-        LatestCameraFrames cameraFrames)
+        LatestCameraFrames cameraFrames,
+        IRemoteDeploymentService remoteDeployment,
+        ITerminalSettingsStore settingsStore)
     {
         InitializeComponent();
         _viewModel = viewModel;
         _stateSlot = stateSlot;
         _cameraFrames = cameraFrames;
+        _remoteDeployment = remoteDeployment;
+        _settingsStore = settingsStore;
         DataContext = viewModel;
         if (App.IsScreenshotMode)
         {
@@ -268,6 +275,86 @@ public partial class MainWindow : FluentWindow
         {
             _viewModel.RunEnvironmentGuideCommand.Execute(null);
         }
+    }
+
+    private async void OpenSshDeployment_Click(object sender, RoutedEventArgs eventArgs)
+    {
+        var dialog = new SshDeploymentDialog(_viewModel.Settings.SshSettings)
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() != true || dialog.Result is not { } sshSettings)
+        {
+            return;
+        }
+
+        SshDeploymentButton.IsEnabled = false;
+        try
+        {
+            var report = await _remoteDeployment.ConfigureAndStartAsync(sshSettings);
+            var summary = string.Join(
+                Environment.NewLine,
+                report.Steps.Select(step => $"{(step.Success ? "✓" : "✗")} {step.Name}：{step.Detail}"));
+            if (!report.Success)
+            {
+                MessageBox.Show(
+                    this,
+                    summary,
+                    "SSH 部署未完成",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var updated = _viewModel.Settings with
+            {
+                BackendMode = "SshRemote",
+                Endpoint = "http://127.0.0.1:50050",
+                CameraEndpoint = "http://127.0.0.1:50049",
+                Ssh = sshSettings,
+            };
+            _settingsStore.Save(updated);
+            MessageBox.Show(
+                this,
+                $"{summary}{Environment.NewLine}{Environment.NewLine}连接配置已保存。终端将安全释放当前控制权并自动重启，通过 SSH 隧道连接远程后端。",
+                "SSH 部署完成",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            RestartApplication();
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.Write("ssh-deployment", exception);
+            MessageBox.Show(
+                this,
+                exception.Message,
+                "SSH 部署失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            SshDeploymentButton.IsEnabled = true;
+        }
+    }
+
+    private void RestartApplication()
+    {
+        var executable = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executable))
+        {
+            MessageBox.Show(this, "无法确定当前程序路径，请手动重启终端。", "需要重启");
+            return;
+        }
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = true,
+        };
+        startInfo.ArgumentList.Add("--wait-for-pid");
+        startInfo.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Process.Start(startInfo);
+        Close();
     }
 
     internal void ApplyThemePreference(string theme)

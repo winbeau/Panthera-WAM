@@ -120,6 +120,13 @@ public interface IEnvironmentGuideService
     Task<EnvironmentGuideResult> RunAsync(TerminalSettings settings, CancellationToken cancellationToken);
 }
 
+public interface IRemoteDeploymentService
+{
+    Task<RemoteDeploymentReport> ConfigureAndStartAsync(
+        SshConnectionSettings settings,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed record EnvironmentGuideStep(string Name, bool Success, string Detail, string Command);
 
 public sealed record EnvironmentGuideResult(IReadOnlyList<EnvironmentGuideStep> Steps)
