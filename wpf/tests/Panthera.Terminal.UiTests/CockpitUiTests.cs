@@ -519,6 +519,53 @@ public sealed class CockpitUiTests
         Assert.True(File.Exists(screenshotPath), $"Screenshot was not written to {screenshotPath}");
     }
 
+    [Fact]
+    public async Task Ssh_deployment_button_opens_the_connection_dialog()
+    {
+        if (Environment.GetEnvironmentVariable("PANTHERA_RUN_UI_TESTS") != "1")
+        {
+            return;
+        }
+
+        var (application, automation, window, eventLog) = LaunchAcceptanceApp("ssh-dialog");
+        using (application)
+        using (automation)
+        {
+            Task? invokeTask = null;
+            try
+            {
+                var open = window.FindFirstDescendant(
+                    condition => condition.ByAutomationId("SshDeploymentButton"));
+                Assert.NotNull(open);
+                invokeTask = Task.Run(() => open.AsButton().Invoke());
+
+                var opened = Retry.WhileFalse(
+                    () => File.Exists(eventLog)
+                        && File.ReadAllText(eventLog).Contains("ssh-dialog-opened", StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(8),
+                    TimeSpan.FromMilliseconds(100)).Success;
+                if (!opened && invokeTask.IsFaulted)
+                {
+                    await invokeTask;
+                }
+                Assert.True(opened, "SSH deployment dialog did not reach its Loaded event");
+                Assert.True(Retry.WhileFalse(
+                    () => File.ReadAllText(eventLog).Contains("ssh-candidates-bound", StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(5),
+                    TimeSpan.FromMilliseconds(100)).Success,
+                    "SSH candidate lists were not bound to the editable selectors");
+            }
+            finally
+            {
+                CloseApplication(application);
+                if (invokeTask is not null)
+                {
+                    await Task.WhenAny(invokeTask, Task.Delay(TimeSpan.FromSeconds(5)));
+                }
+            }
+        }
+    }
+
     private static string PrepareArtifactDirectory(string testName)
     {
         var artifactDirectory = Environment.GetEnvironmentVariable("PANTHERA_UI_ARTIFACTS")

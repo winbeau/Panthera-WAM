@@ -127,6 +127,13 @@ public interface IRemoteDeploymentService
         CancellationToken cancellationToken = default);
 }
 
+public interface ISshConnectionDiscoveryService
+{
+    Task<IReadOnlyList<SshConnectionCandidate>> DiscoverAsync(
+        SshConnectionSettings previous,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed record EnvironmentGuideStep(string Name, bool Success, string Detail, string Command);
 
 public sealed record EnvironmentGuideResult(IReadOnlyList<EnvironmentGuideStep> Steps)

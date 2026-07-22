@@ -196,6 +196,18 @@ public sealed record SshConnectionSettings(
         && !string.IsNullOrWhiteSpace(User);
 }
 
+public sealed record SshConnectionCandidate(
+    string Host,
+    int Port,
+    string User,
+    string IdentityFile,
+    string Source)
+{
+    public string Description => string.IsNullOrWhiteSpace(Source)
+        ? $"{Host}:{Port}"
+        : $"{Source} · {Host}:{Port}";
+}
+
 public sealed record RemoteDeploymentReport(
     IReadOnlyList<EnvironmentGuideStep> Steps,
     string TargetKind = "unknown",

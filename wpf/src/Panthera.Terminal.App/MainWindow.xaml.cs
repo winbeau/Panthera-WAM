@@ -20,6 +20,7 @@ public partial class MainWindow : FluentWindow
     private readonly LatestStateSlot<RobotSnapshot> _stateSlot;
     private readonly LatestCameraFrames _cameraFrames;
     private readonly IRemoteDeploymentService _remoteDeployment;
+    private readonly ISshConnectionDiscoveryService _sshDiscovery;
     private readonly ITerminalSettingsStore _settingsStore;
     private readonly DispatcherTimer _renderTimer;
     private long _renderedVersion;
@@ -32,6 +33,7 @@ public partial class MainWindow : FluentWindow
         LatestStateSlot<RobotSnapshot> stateSlot,
         LatestCameraFrames cameraFrames,
         IRemoteDeploymentService remoteDeployment,
+        ISshConnectionDiscoveryService sshDiscovery,
         ITerminalSettingsStore settingsStore)
     {
         InitializeComponent();
@@ -39,6 +41,7 @@ public partial class MainWindow : FluentWindow
         _stateSlot = stateSlot;
         _cameraFrames = cameraFrames;
         _remoteDeployment = remoteDeployment;
+        _sshDiscovery = sshDiscovery;
         _settingsStore = settingsStore;
         DataContext = viewModel;
         if (App.IsScreenshotMode)
@@ -279,18 +282,18 @@ public partial class MainWindow : FluentWindow
 
     private async void OpenSshDeployment_Click(object sender, RoutedEventArgs eventArgs)
     {
-        var dialog = new SshDeploymentDialog(_viewModel.Settings.SshSettings)
-        {
-            Owner = this,
-        };
-        if (dialog.ShowDialog() != true || dialog.Result is not { } sshSettings)
-        {
-            return;
-        }
-
-        SshDeploymentButton.IsEnabled = false;
         try
         {
+            var dialog = new SshDeploymentDialog(_viewModel.Settings.SshSettings, _sshDiscovery)
+            {
+                Owner = this,
+            };
+            if (dialog.ShowDialog() != true || dialog.Result is not { } sshSettings)
+            {
+                return;
+            }
+
+            SshDeploymentButton.IsEnabled = false;
             var report = await _remoteDeployment.ConfigureAndStartAsync(sshSettings);
             var summary = string.Join(
                 Environment.NewLine,

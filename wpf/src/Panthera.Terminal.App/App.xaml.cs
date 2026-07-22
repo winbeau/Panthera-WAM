@@ -70,6 +70,7 @@ public partial class App : Application
                     : new ArmdClient(settings.Endpoint, settings.CameraEndpoint));
                 services.AddSingleton<IEnvironmentGuideService, WindowsEnvironmentGuideService>();
                 services.AddSingleton<IRemoteDeploymentService, OpenSshRemoteDeploymentService>();
+                services.AddSingleton<ISshConnectionDiscoveryService, WindowsSshConnectionDiscoveryService>();
                 services.AddSingleton<LatestStateSlot<RobotSnapshot>>();
                 services.AddSingleton<LatestCameraFrames>();
                 services.AddSingleton<MainWindowViewModel>();

@@ -7,6 +7,83 @@ namespace Panthera.Terminal.Tests;
 public sealed class OpenSshRemoteDeploymentServiceTests
 {
     [Fact]
+    public void SshDiscovery_ParsesEditableHostsAndEffectiveConfiguration()
+    {
+        var aliases = WindowsSshConnectionDiscoveryService.ParseOpenSshAliases("""
+            Host pi5 raspberry-lab
+              HostName 100.90.80.70
+            Host *.internal !blocked
+            """);
+
+        var candidate = WindowsSshConnectionDiscoveryService.ParseEffectiveSshConfig(
+            "pi5",
+            "hostname 100.90.80.70\nuser genev\nport 2222\nidentityfile ~/.ssh/id_missing\n");
+
+        Assert.Equal(["pi5", "raspberry-lab"], aliases);
+        Assert.NotNull(candidate);
+        Assert.Equal("pi5", candidate.Host);
+        Assert.Equal(2222, candidate.Port);
+        Assert.Equal("genev", candidate.User);
+        Assert.Contains("100.90.80.70", candidate.Source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SshDiscovery_ParsesWslUserAndIpv4Addresses()
+    {
+        var result = WindowsSshConnectionDiscoveryService.ParseWslProbeOutput(
+            "user=winbeau\nips=172.28.144.18 2001:db8::1\n");
+
+        Assert.Equal("winbeau", result.User);
+        Assert.Equal(["172.28.144.18"], result.Addresses);
+    }
+
+    [Fact]
+    public void SshDiscovery_FindsOnlineRaspberryPiTailscalePeerAndUsesHistoryUser()
+    {
+        const string json = """
+            {
+              "Peer": {
+                "node-key": {
+                  "HostName": "pi5",
+                  "DNSName": "pi5.example.ts.net.",
+                  "OS": "linux",
+                  "Online": true,
+                  "TailscaleIPs": ["100.90.80.70", "fd7a:115c:a1e0::1"]
+                },
+                "other": {
+                  "HostName": "desktop",
+                  "OS": "linux",
+                  "Online": true,
+                  "TailscaleIPs": ["100.64.0.2"]
+                }
+              }
+            }
+            """;
+
+        var candidates = WindowsSshConnectionDiscoveryService.ParseTailscaleStatus(
+            json,
+            new SshConnectionSettings(User: "genev", IdentityFile: @"C:\keys\id_ed25519"));
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal("100.90.80.70", candidate.Host);
+        Assert.Equal("genev", candidate.User);
+        Assert.Contains("pi5", candidate.Source, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SshDiscovery_MergeKeepsHistoryButFillsMissingUser()
+    {
+        var candidates = WindowsSshConnectionDiscoveryService.MergeCandidates(
+        [
+            new SshConnectionCandidate("pi5", 22, "", "", "上次使用"),
+            new SshConnectionCandidate("PI5", 22, "genev", "", "SSH config"),
+        ]);
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal("genev", candidate.User);
+    }
+
+    [Fact]
     public void ParseProbeOutput_DecodesMachineReadableValues()
     {
         var output = string.Join('\n',

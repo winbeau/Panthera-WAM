@@ -4,6 +4,23 @@ All notable changes to Panthera-WAM are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.9] - 2026-07-22
+
+### Added
+
+- Added editable host/IP and username selectors populated from the previous connection, OpenSSH configuration, WSL instances, and discoverable Raspberry Pi Tailscale/mDNS nodes.
+
+### Fixed
+
+- Fixed the SSH deployment button appearing unresponsive because the modal Fluent backdrop initialization threw before the window was shown.
+- Added a UI acceptance regression that invokes the button and requires the SSH dialog to reach its loaded state.
+
+### Changed
+
+- Replaced the SSH dialog's system title bar with a compact borderless panel and a chromeless top-right close button.
+- Removed the two explanatory paragraphs and the redundant bottom cancel button.
+- Removed the decorative icon from the main SSH deployment button.
+
 ## [2.2.8] - 2026-07-22
 
 ### Added
