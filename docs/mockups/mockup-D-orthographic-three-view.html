@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panthera-HT · CAD 三视图实时方案</title>
+<style>
+  :root {
+    color-scheme: light;
+    --font: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    --page: #e8edf0;
+    --shell: #f6f8f9;
+    --surface: rgba(255,255,255,.84);
+    --surface-solid: #fff;
+    --ink: #172129;
+    --muted: #687680;
+    --faint: #98a4ab;
+    --line: rgba(23,33,41,.13);
+    --line-strong: rgba(23,33,41,.28);
+    --grid: rgba(32,52,64,.055);
+    --accent: #0067c0;
+    --accent-soft: rgba(0,103,192,.10);
+    --danger: #c42b1c;
+    --shadow: 0 18px 50px rgba(20,34,43,.17), 0 2px 8px rgba(20,34,43,.08);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #11171b;
+    --shell: #1c2429;
+    --surface: rgba(32,42,48,.88);
+    --surface-solid: #222c32;
+    --ink: #edf4f7;
+    --muted: #a8b5bc;
+    --faint: #73818a;
+    --line: rgba(232,244,250,.11);
+    --line-strong: rgba(232,244,250,.24);
+    --grid: rgba(210,235,247,.05);
+    --accent: #56a8f5;
+    --accent-soft: rgba(86,168,245,.13);
+    --danger: #f2675d;
+    --shadow: 0 20px 60px rgba(0,0,0,.46), 0 2px 8px rgba(0,0,0,.26);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: var(--font);
+    background:
+      radial-gradient(circle at 50% -18%, var(--surface-solid), transparent 58%),
+      var(--page);
+    color: var(--ink);
+    padding: 18px;
+  }
+  button, input { font: inherit; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .app {
+    width: min(1480px, 100%);
+    margin: 0 auto;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--shell);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .topbar {
+    min-height: 58px;
+    padding: 9px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    backdrop-filter: blur(18px);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .mark {
+    width: 34px; height: 34px; border-radius: 8px;
+    display: grid; place-items: center;
+    color: #fff; background: var(--accent); font-family: var(--mono); font-weight: 700;
+  }
+  .brand-copy { min-width: 0; }
+  .brand-copy strong { display: block; font-size: 13px; font-weight: 650; }
+  .brand-copy span { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .spacer { flex: 1; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 30px; padding: 0 10px; border-radius: 6px;
+    background: var(--surface-solid); border: 1px solid var(--line); color: var(--muted);
+    white-space: nowrap; font-size: 11px;
+  }
+  .badge i { width: 7px; height: 7px; border-radius: 50%; background: #0f8a45; box-shadow: 0 0 0 3px rgba(15,138,69,.12); }
+  .toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .btn {
+    min-height: 30px; padding: 0 11px; border: 1px solid var(--line);
+    border-radius: 5px; background: var(--surface-solid); color: var(--ink); cursor: pointer;
+    font-size: 11px; font-weight: 600;
+  }
+  .btn:hover { border-color: var(--line-strong); background: var(--accent-soft); }
+  .btn[aria-pressed="true"], .btn.primary { color: #fff; background: var(--accent); border-color: transparent; }
+  .icon-btn { width: 30px; padding: 0; }
+  .stage-shell { padding: 10px 10px 0; }
+  .stage {
+    position: relative;
+    height: min(760px, 72vw);
+    min-height: 520px;
+    display: grid;
+    grid-template-columns: minmax(0, 2.35fr) minmax(250px, .88fr);
+    grid-template-rows: minmax(0, 1.28fr) minmax(0, .78fr);
+    grid-template-areas: "side front" "top facts";
+    gap: 9px;
+  }
+  #three-view-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+  .viewport, .facts {
+    position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 8px;
+    background-color: var(--surface-solid);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  .viewport::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 46%, transparent 38%, rgba(55,71,81,.035) 100%);
+  }
+  .side { grid-area: side; }
+  .front { grid-area: front; }
+  .top { grid-area: top; }
+  .facts { grid-area: facts; z-index: 3; padding: 14px; background-image: none; }
+  .view-head {
+    position: absolute; z-index: 4; left: 11px; top: 9px;
+    display: flex; align-items: baseline; gap: 8px; pointer-events: none;
+  }
+  .view-head strong { font-family: var(--mono); font-size: 12px; letter-spacing: .45px; }
+  .view-head span { color: var(--muted); font-size: 10px; }
+  .view-note {
+    position: absolute; z-index: 4; right: 10px; bottom: 8px; color: var(--faint);
+    font-family: var(--mono); font-size: 9px; pointer-events: none;
+  }
+  .scale {
+    position: absolute; z-index: 4; left: 12px; bottom: 11px; width: 74px;
+    border-top: 2px solid var(--line-strong); color: var(--muted); font-family: var(--mono);
+    font-size: 9px; text-align: center; padding-top: 3px; pointer-events: none;
+  }
+  .scale::before, .scale::after { content: ""; position: absolute; top: -5px; height: 8px; border-left: 2px solid var(--line-strong); }
+  .scale::before { left: 0; } .scale::after { right: 0; }
+  .facts h2 { margin: 0; font-size: 12px; font-weight: 650; }
+  .facts .meta { margin-top: 4px; color: var(--muted); font-size: 10px; }
+  .tcp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 14px; }
+  .tcp-cell { padding: 8px; border-radius: 5px; background: var(--accent-soft); }
+  .tcp-cell span { display: block; color: var(--muted); font-size: 9px; }
+  .tcp-cell b { display: block; margin-top: 3px; font: 650 12px var(--mono); }
+  .kinematic-chain { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 5px; }
+  .kinematic-chain li { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 7px; font-size: 10px; }
+  .kinematic-chain code { font: 600 9px var(--mono); color: var(--muted); }
+  .axis { height: 4px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .axis i { display: block; width: 50%; height: 100%; background: var(--accent); transition: width .12s linear; }
+  .api {
+    margin-top: 13px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px;
+  }
+  .api code { display: block; margin-top: 5px; color: var(--ink); font-family: var(--mono); overflow-wrap: anywhere; }
+  .controls {
+    margin: 9px 10px 10px; padding: 10px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  }
+  .control-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+  .control-head strong { font-size: 11px; }
+  .control-head span { color: var(--muted); font-size: 10px; }
+  .joint-grid { display: grid; grid-template-columns: repeat(6, minmax(130px, 1fr)); gap: 7px; }
+  .joint-control { padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-solid); }
+  .joint-label { display: flex; justify-content: space-between; align-items: baseline; gap: 5px; }
+  .joint-label strong { font: 650 11px var(--mono); }
+  .joint-label output { font: 600 10px var(--mono); color: var(--accent); }
+  .joint-name { margin-top: 2px; color: var(--muted); font-size: 9px; }
+  input[type="range"] { width: 100%; height: 18px; margin: 8px 0 0; accent-color: var(--accent); cursor: pointer; }
+  .limits { display: flex; justify-content: space-between; color: var(--faint); font: 8px var(--mono); }
+  .statusline {
+    min-height: 28px; padding: 6px 14px; border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; color: var(--muted); font: 9px var(--mono);
+  }
+  .statusline b { color: var(--ink); font-weight: 600; }
+  .statusline .error { color: var(--danger); }
+  @media (max-width: 1080px) {
+    .stage { height: auto; min-height: 0; grid-template-columns: 1fr 1fr; grid-template-rows: 430px 340px auto; grid-template-areas: "side side" "top front" "facts facts"; }
+    .facts { min-height: 220px; }
+    .joint-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 650px) {
+    body { padding: 0; }
+    .app { border-radius: 0; border-left: 0; border-right: 0; }
+    .topbar { align-items: flex-start; flex-wrap: wrap; }
+    .spacer { display: none; }
+    .stage { grid-template-columns: 1fr; grid-template-rows: 330px 260px 260px auto; grid-template-areas: "side" "front" "top" "facts"; }
+    .joint-grid { grid-template-columns: repeat(2, 1fr); }
+    .badge { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main class="app" id="panthera-three-view">
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">P</div>
+      <div class="brand-copy">
+        <strong>Panthera-HT · 正交三视图</strong>
+        <span>官方 URDF / CAD 外轮廓 · 简化面板草图 · 六轴实时投影</span>
+      </div>
+    </div>
+    <div class="badge"><i></i><span>轮廓模型已加载</span></div>
+    <div class="spacer"></div>
+    <div class="toolbar" aria-label="视图控制">
+      <button class="btn primary" type="button" data-preset="draft">草图基准</button>
+      <button class="btn" type="button" data-preset="work">作业位</button>
+      <button class="btn" type="button" data-preset="reach">展开位</button>
+      <button class="btn" type="button" id="demo-btn" aria-pressed="false">动态演示</button>
+      <button class="btn" type="button" id="edge-btn" aria-pressed="true">结构线</button>
+      <button class="btn icon-btn" type="button" id="theme-btn" aria-label="切换明暗主题">◐</button>
+    </div>
+  </header>
+
+  <section class="stage-shell">
+    <div class="stage" id="stage">
+      <canvas id="three-view-canvas" aria-label="Panthera-HT 侧视、主视和俯视三维正交投影"></canvas>
+      <section class="viewport side" data-view="side">
+        <div class="view-head"><strong>SIDE VIEW</strong><span>侧视图 · X / Z · 草图主基准</span></div>
+        <div class="scale">100 mm</div><div class="view-note">ORTHOGRAPHIC · LIVE LINK TRANSFORMS</div>
+      </section>
+      <section class="viewport front" data-view="front">
+        <div class="view-head"><strong>FRONT VIEW</strong><span>主视图 · Y / Z</span></div>
+        <div class="scale">100 mm</div><div class="view-note">LOOKING ALONG −X</div>
+      </section>
+      <section class="viewport top" data-view="top">
+        <div class="view-head"><strong>TOP VIEW</strong><span>俯视图 · X / Y</span></div>
+        <div class="scale">100 mm</div><div class="view-note">LOOKING ALONG −Z</div>
+      </section>
+      <aside class="facts">
+        <h2>同一运动学链</h2>
+        <div class="meta">三台正交相机共享同一套 link transform，不做二维近似。</div>
+        <div class="tcp-grid">
+          <div class="tcp-cell"><span>TCP · X</span><b id="tcp-x">+0.000 m</b></div>
+          <div class="tcp-cell"><span>TCP · Y</span><b id="tcp-y">+0.000 m</b></div>
+          <div class="tcp-cell"><span>TCP · Z</span><b id="tcp-z">+0.000 m</b></div>
+        </div>
+        <ol class="kinematic-chain" id="chain-list"></ol>
+        <div class="api">前端接线接口
+          <code>PantheraThreeView.setJoints([q1, q2, q3, q4, q5, q6])</code>
+          <code>window.dispatchEvent(new CustomEvent('panthera:joints', { detail: { positions } }))</code>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section class="controls" aria-label="六轴状态输入">
+    <div class="control-head"><strong>六轴状态输入</strong><span>单位 rad；滑块只更新浏览器仿真，不连接 armd / 真机。</span></div>
+    <div class="joint-grid" id="joint-grid"></div>
+  </section>
+  <footer class="statusline"><b id="render-status">正在解析官方 CAD 网格…</b><span id="mesh-status"></span></footer>
+</main>
+
+<script src="assets/three-r160.min.js"></script>
+<script src="assets/panthera-ht-meshes.min.js"></script>
+<script>
+(() => {
+  'use strict';
+  const root = document.getElementById('panthera-three-view');
+  const stage = document.getElementById('stage');
+  const canvas = document.getElementById('three-view-canvas');
+  const status = document.getElementById('render-status');
+  const meshStatus = document.getElementById('mesh-status');
+  const limits = [
+    [-2.4, 2.4], [-0.1, 3.2], [-0.1, 4.0],
+    [-1.6, 1.6], [-1.7, 1.7], [-2.5, 2.5]
+  ];
+  const jointNames = ['基座回转', '大臂俯仰', '小臂俯仰', '腕部俯仰', '腕部回转', '末端回转'];
+  const axes = [
+    new THREE.Vector3(0,0,1), new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1,0),
+    new THREE.Vector3(0,-1,0), new THREE.Vector3(0,0,-1), new THREE.Vector3(1,0,0)
+  ];
+  const origins = [
+    [0,0,.0584], [.018199,0,.053], [-.26,0,0],
+    [.23,0,.06], [.07,0,.036319], [.02345,0,-.039]
+  ];
+  const presets = {
+    draft: [0,0,0,0,0,0],
+    work: [.52,.72,1.18,-.34,.48,.42],
+    reach: [-.32,1.34,2.18,-.72,-.38,.84]
+  };
+  const state = { q: [...presets.draft], joints: [], detailObjects: [], demo: false, edges: true, raf: 0 };
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setClearColor(0x000000, 0);
+  const scene = new THREE.Scene();
+  const robotRoot = new THREE.Group();
+  scene.add(robotRoot);
+  // Unlit materials intentionally replace the former metallic preview. The
+  // supplied drawing reads as an industrial line sketch, not a studio render.
+
+  const cameras = {
+    side: new THREE.OrthographicCamera(-1,1,1,-1,.01,10),
+    front: new THREE.OrthographicCamera(-1,1,1,-1,.01,10),
+    top: new THREE.OrthographicCamera(-1,1,1,-1,.01,10)
+  };
+  // The draft shows the +Y flank of the official CAD. Mirror the projection
+  // horizontally so +X still reads left-to-right like the supplied drawing.
+  cameras.side.position.set(0,2.5,.13); cameras.side.up.set(0,0,1); cameras.side.lookAt(-.01,0,.13);
+  cameras.front.position.set(2.5,0,.13); cameras.front.up.set(0,0,1); cameras.front.lookAt(0,0,.13);
+  cameras.top.position.set(0,0,2.5); cameras.top.up.set(0,1,0); cameras.top.lookAt(-.01,0,0);
+  cameras.side.layers.enable(1);
+  const minimumViewHeights = { side: .31, front: .31, top: .20 };
+
+  let bodyColor = 0xf5f5f2, edgeColor = 0x29363d;
+  const bodyMaterials = [];
+  const panelMaterials = [];
+  const edgeMaterials = [];
+  const outlineMaterials = [];
+  const toolFrame = new THREE.Group();
+
+  function buildControls() {
+    const grid = document.getElementById('joint-grid');
+    const list = document.getElementById('chain-list');
+    limits.forEach(([min,max], i) => {
+      const card = document.createElement('label');
+      card.className = 'joint-control';
+      card.innerHTML = `<div class="joint-label"><strong>J${i+1}</strong><output id="q${i+1}-out">0.000</output></div>
+        <div class="joint-name">${jointNames[i]} · axis ${['Z','Y','−Y','−Y','−Z','X'][i]}</div>
+        <input id="q${i+1}" type="range" min="${min}" max="${max}" step="0.001" value="0" aria-label="J${i+1} ${jointNames[i]}">
+        <div class="limits"><span>${min.toFixed(1)}</span><span>${max.toFixed(1)}</span></div>`;
+      grid.appendChild(card);
+      card.querySelector('input').addEventListener('input', e => {
+        const q = [...state.q]; q[i] = Number(e.target.value); setJoints(q, true);
+      });
+      const row = document.createElement('li');
+      row.innerHTML = `<code>J${i+1}</code><div class="axis"><i id="axis-${i}"></i></div><code id="chain-${i}">0.000</code>`;
+      list.appendChild(row);
+    });
+  }
+
+  function capsuleShape(width, height) {
+    const radius = width / 2;
+    const shape = new THREE.Shape();
+    shape.moveTo(-radius, -height / 2 + radius);
+    shape.lineTo(-radius, height / 2 - radius);
+    shape.quadraticCurveTo(-radius, height / 2, 0, height / 2);
+    shape.quadraticCurveTo(radius, height / 2, radius, height / 2 - radius);
+    shape.lineTo(radius, -height / 2 + radius);
+    shape.quadraticCurveTo(radius, -height / 2, 0, -height / 2);
+    shape.quadraticCurveTo(-radius, -height / 2, -radius, -height / 2 + radius);
+    return shape;
+  }
+
+  function roundedRectShape(width, height, radius) {
+    const x = -width / 2, y = -height / 2;
+    const shape = new THREE.Shape();
+    shape.moveTo(x + radius, y);
+    shape.lineTo(x + width - radius, y);
+    shape.quadraticCurveTo(x + width, y, x + width, y + radius);
+    shape.lineTo(x + width, y + height - radius);
+    shape.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    shape.lineTo(x + radius, y + height);
+    shape.quadraticCurveTo(x, y + height, x, y + height - radius);
+    shape.lineTo(x, y + radius);
+    shape.quadraticCurveTo(x, y, x + radius, y);
+    return shape;
+  }
+
+  function roundedBoxGeometry(xLength, yThickness, zHeight, radius = .006) {
+    const geometry = new THREE.ExtrudeGeometry(roundedRectShape(xLength, zHeight, radius), {
+      depth: yThickness,
+      bevelEnabled: false,
+      curveSegments: 8,
+      steps: 1
+    });
+    geometry.center();
+    geometry.rotateX(Math.PI / 2);
+    return geometry;
+  }
+
+  function makePart(parent, geometry, options = {}) {
+    const group = new THREE.Group();
+    group.name = options.name || 'sketch-part';
+    if (options.position) group.position.set(...options.position);
+    if (options.quaternion) group.quaternion.copy(options.quaternion);
+    if (options.rotation) group.rotation.set(...options.rotation);
+    if (options.scale) group.scale.set(...options.scale);
+    const bodyMaterial = new THREE.MeshBasicMaterial({ color: options.panel ? 0xe9edef : bodyColor, side: THREE.DoubleSide });
+    const outlineMaterial = new THREE.MeshBasicMaterial({ color: edgeColor, side: THREE.BackSide, depthWrite: false });
+    const edgeMaterial = new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: options.edgeOpacity ?? .58 });
+    (options.panel ? panelMaterials : bodyMaterials).push(bodyMaterial);
+    outlineMaterials.push(outlineMaterial); edgeMaterials.push(edgeMaterial);
+    const outline = new THREE.Mesh(geometry, outlineMaterial);
+    outline.scale.setScalar(options.outlineScale ?? 1.012); outline.renderOrder = 1;
+    const solid = new THREE.Mesh(geometry, bodyMaterial); solid.renderOrder = 2;
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, options.edgeThreshold ?? 28), edgeMaterial);
+    edges.renderOrder = 3;
+    group.add(outline, solid, edges);
+    parent.add(group);
+    state.detailObjects.push(edges);
+    return group;
+  }
+
+  function cylinderGeometry(radius, length, axis = 'y') {
+    const geometry = new THREE.CylinderGeometry(radius, radius, length, 48, 1, false);
+    if (axis === 'z') geometry.rotateX(Math.PI / 2);
+    if (axis === 'x') geometry.rotateZ(-Math.PI / 2);
+    return geometry;
+  }
+
+  function makeBeam(parent, vectorArray, yThickness, zThickness, options = {}) {
+    const vector = new THREE.Vector3(...vectorArray);
+    const length = vector.length();
+    const beam = new THREE.Group();
+    beam.name = options.name || 'rectangular-beam';
+    if (options.position) beam.position.set(...options.position);
+    beam.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0), vector.clone().normalize());
+    parent.add(beam);
+    makePart(beam, roundedBoxGeometry(length, yThickness, zThickness, Math.min(.009, zThickness * .18)), {
+      position: [length / 2, 0, 0],
+      outlineScale: 1.012,
+      edgeThreshold: 20,
+      edgeOpacity: .62,
+      name: `${beam.name}-body`
+    });
+    if (options.slots) addBeamSlots(beam, length, yThickness, options.slotTilt ?? -.28);
+    return beam;
+  }
+
+  function addBeamSlots(parent, length, yThickness, tilt) {
+    const outerGeometry = new THREE.ShapeGeometry(capsuleShape(.0105, .027), 8);
+    const innerGeometry = new THREE.ShapeGeometry(capsuleShape(.0067, .0215), 8);
+    outerGeometry.rotateX(Math.PI / 2); outerGeometry.rotateY(tilt);
+    innerGeometry.rotateX(Math.PI / 2); innerGeometry.rotateY(tilt);
+    const outerMaterial = new THREE.MeshBasicMaterial({ color: edgeColor, side: THREE.DoubleSide });
+    const innerMaterial = new THREE.MeshBasicMaterial({ color: bodyColor, side: THREE.DoubleSide });
+    outlineMaterials.push(outerMaterial); bodyMaterials.push(innerMaterial);
+    [.27, .41, .55, .69].forEach(fraction => {
+      const outer = new THREE.Mesh(outerGeometry, outerMaterial);
+      const inner = new THREE.Mesh(innerGeometry, innerMaterial);
+      const x = length * fraction;
+      outer.position.set(x, yThickness / 2 + .0007, 0);
+      inner.position.set(x, yThickness / 2 + .0010, 0);
+      outer.renderOrder = 5; inner.renderOrder = 6;
+      parent.add(outer, inner);
+      state.detailObjects.push(outer, inner);
+    });
+  }
+
+  function buildProceduralRobot() {
+    // Build the exact URDF transform chain first; all visible geometry below is
+    // deliberately abstract and can be edited without touching kinematics.
+    let parent = robotRoot;
+    for (let i=0;i<6;i++) {
+      const joint = new THREE.Group();
+      joint.name = `joint${i+1}`;
+      joint.position.set(...origins[i]);
+      parent.add(joint);
+      state.joints.push(joint);
+      parent = joint;
+    }
+
+    const [j1,j2,j3,j4,j5,j6] = state.joints;
+
+    // Pedestal / J1: low, symmetrical, and visually quiet in all projections.
+    makePart(robotRoot, new THREE.BoxGeometry(.15,.12,.012), { position:[0,0,.006], outlineScale:1.012, name:'base-plate' });
+    makePart(robotRoot, cylinderGeometry(.041,.058,'z'), { position:[0,0,.040], outlineScale:1.015, edgeThreshold:22, name:'base-motor' });
+    makePart(j1, cylinderGeometry(.045,.020,'z'), { position:[0,0,.004], outlineScale:1.015, edgeThreshold:22, name:'j1-turntable' });
+    makeBeam(j1, origins[1], .064, .052, { name:'j1-shoulder-riser' });
+
+    // J2 is round; J2→J3 is one clean rectangular main arm.
+    makePart(j2, cylinderGeometry(.044,.066,'y'), { edgeThreshold:22, outlineScale:1.015, name:'j2-round-housing' });
+    makePart(j2, cylinderGeometry(.019,.070,'y'), { edgeThreshold:22, outlineScale:1.012, name:'j2-hub' });
+    makeBeam(j2, origins[2], .058, .047, { name:'j2-j3-main-arm', slots:true, slotTilt:-.30 });
+
+    // J3 is intentionally square, as a clear visual hinge between two beams.
+    makePart(j3, roundedBoxGeometry(.068,.066,.068,.007), { outlineScale:1.014, edgeThreshold:26, name:'j3-square-housing' });
+    makePart(j3, cylinderGeometry(.020,.070,'y'), { edgeThreshold:22, outlineScale:1.012, name:'j3-hub' });
+    // Visually keep the return arm parallel to the main arm. The actual J4
+    // transform remains at [0.23, 0, 0.06]; only the housing silhouette is
+    // simplified into a cleaner rectangle.
+    makeBeam(j3, [.23,0,0], .056, .045, {
+      name:'j3-j4-upper-arm',
+      position:[0,0,.060],
+      slots:true,
+      slotTilt:-.26
+    });
+
+    // Wrist: progressively smaller, alternating round / square axis cues.
+    makePart(j4, cylinderGeometry(.034,.060,'y'), { edgeThreshold:22, outlineScale:1.015, name:'j4-round-housing' });
+    makeBeam(j4, origins[4], .052, .043, { name:'j4-j5-wrist-link' });
+    makePart(j5, roundedBoxGeometry(.058,.062,.060,.006), { outlineScale:1.014, edgeThreshold:26, name:'j5-square-motor' });
+    makePart(j5, cylinderGeometry(.026,.040,'z'), { position:[0,0,.046], edgeThreshold:22, name:'j5-top-motor' });
+    makeBeam(j5, origins[5], .045, .039, { name:'j5-j6-offset' });
+
+    // One small sensor silhouette keeps the recognizable camera-above-wrist cue.
+    makePart(j5, roundedBoxGeometry(.012,.018,.052,.003), { position:[.012,0,.071], outlineScale:1.018, name:'camera-stem' });
+    makePart(j5, roundedBoxGeometry(.036,.030,.042,.005), { position:[.024,0,.108], rotation:[0,-.30,0], outlineScale:1.016, name:'camera-head' });
+
+    // J6 and gripper: square body, two clean parallel fingers, rounded tips.
+    makePart(j6, cylinderGeometry(.029,.046,'x'), { edgeThreshold:22, outlineScale:1.015, name:'j6-roll' });
+    makePart(j6, roundedBoxGeometry(.084,.055,.044,.006), { position:[.047,0,0], outlineScale:1.012, name:'gripper-body' });
+    makePart(j6, roundedBoxGeometry(.028,.074,.048,.005), { position:[.101,0,0], outlineScale:1.014, name:'gripper-carriage' });
+    [-.027,.027].forEach(y => {
+      makePart(j6, roundedBoxGeometry(.064,.012,.015,.005), { position:[.143,y,0], outlineScale:1.025, name:'gripper-finger' });
+      makePart(j6, new THREE.SphereGeometry(.009,24,12), { position:[.176,y,0], scale:[1.7,.68,.82], outlineScale:1.04, edgeOpacity:0, name:'gripper-tip' });
+    });
+
+    toolFrame.position.set(.165,0,0);
+    j6.add(toolFrame);
+    const tcpMaterial = new THREE.MeshBasicMaterial({ color: 0x0067c0, depthTest: false });
+    const tcp = new THREE.Mesh(new THREE.SphereGeometry(.0026,12,8), tcpMaterial);
+    tcp.renderOrder = 10; toolFrame.add(tcp);
+    setJoints(state.q, true);
+  }
+
+  function readAscii(bytes, offset, length) {
+    return new TextDecoder('ascii').decode(bytes.subarray(offset, offset + length));
+  }
+
+  async function inflateCadBundle(base64) {
+    if (!base64) throw new Error('缺少 CAD 网格资产');
+    if (!window.DecompressionStream) throw new Error('当前浏览器不支持 DecompressionStream');
+    const packed = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const stream = new Blob([packed]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  function parseCadBundle(bytes) {
+    if (readAscii(bytes, 0, 5) !== 'PHTV1') throw new Error('CAD 网格版本不匹配');
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let offset = 8;
+    const count = view.getUint16(offset, true); offset += 2;
+    const geometries = new Map();
+    for (let meshIndex = 0; meshIndex < count; meshIndex++) {
+      const nameLength = view.getUint8(offset++);
+      const name = readAscii(bytes, offset, nameLength); offset += nameLength;
+      const vertexCount = view.getUint32(offset, true); offset += 4;
+      const indexCount = view.getUint32(offset, true); offset += 4;
+      const min = [], extent = [];
+      for (let i=0;i<3;i++,offset+=4) min.push(view.getFloat32(offset,true));
+      for (let i=0;i<3;i++,offset+=4) extent.push(view.getFloat32(offset,true));
+      const positions = new Float32Array(vertexCount * 3);
+      for (let i=0;i<positions.length;i++,offset+=2) {
+        const axis = i % 3;
+        positions[i] = min[axis] + view.getUint16(offset,true) / 65535 * extent[axis];
+      }
+      const indices = new Uint16Array(indexCount);
+      for (let i=0;i<indexCount;i++,offset+=2) indices[i] = view.getUint16(offset,true);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions,3));
+      geometry.setIndex(new THREE.BufferAttribute(indices,1));
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      geometries.set(name, geometry);
+    }
+    return geometries;
+  }
+
+  function makeCadVisual(name, geometry) {
+    const group = new THREE.Group(); group.name = name;
+    const bodyMaterial = new THREE.MeshBasicMaterial({ color: bodyColor, side: THREE.DoubleSide });
+    const outlineMaterial = new THREE.MeshBasicMaterial({ color: edgeColor, side: THREE.BackSide, depthWrite: false });
+    const edgeMaterial = new THREE.LineBasicMaterial({
+      color: edgeColor,
+      transparent: true,
+      opacity: name === 'link2' || name === 'link3' ? .065 : .52
+    });
+    bodyMaterials.push(bodyMaterial); outlineMaterials.push(outlineMaterial); edgeMaterials.push(edgeMaterial);
+    const outline = new THREE.Mesh(geometry, outlineMaterial);
+    outline.scale.setScalar(1.0065); outline.renderOrder = 1;
+    const solid = new THREE.Mesh(geometry, bodyMaterial); solid.renderOrder = 2;
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, name === 'link2' || name === 'link3' ? 118 : 82), edgeMaterial);
+    edges.renderOrder = 3;
+    group.add(outline, solid, edges);
+    state.detailObjects.push(edges);
+    return group;
+  }
+
+  function capsuleLoopGeometry(width, height, tilt) {
+    const radius = width / 2;
+    const straight = height / 2 - radius;
+    const points = [];
+    for (let i=0;i<=12;i++) {
+      const angle = i / 12 * Math.PI;
+      points.push(new THREE.Vector3(radius * Math.cos(angle), 0, straight + radius * Math.sin(angle)));
+    }
+    for (let i=0;i<=12;i++) {
+      const angle = Math.PI + i / 12 * Math.PI;
+      points.push(new THREE.Vector3(radius * Math.cos(angle), 0, -straight + radius * Math.sin(angle)));
+    }
+    const c = Math.cos(tilt), s = Math.sin(tilt);
+    points.forEach(point => {
+      const x = point.x, z = point.z;
+      point.x = (x * c) + (z * s);
+      point.z = (-x * s) + (z * c);
+    });
+    return new THREE.BufferGeometry().setFromPoints(points);
+  }
+
+  function addPanelSlots(parent, xPositions, y, z, tilt) {
+    const material = new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: .82 });
+    edgeMaterials.push(material);
+    const geometry = capsuleLoopGeometry(.0095,.024,tilt);
+    xPositions.forEach(x => {
+      const slot = new THREE.LineLoop(geometry, material);
+      slot.position.set(x,y,z); slot.renderOrder = 8;
+      slot.layers.set(1);
+      parent.add(slot); state.detailObjects.push(slot);
+    });
+  }
+
+  function setLayerRecursive(object, layer) {
+    object.traverse(child => child.layers.set(layer));
+    return object;
+  }
+
+  function buildRobot(geometries) {
+    robotRoot.add(makeCadVisual('base_link', geometries.get('base_link')));
+    let parent = robotRoot;
+    for (let i=0;i<6;i++) {
+      const joint = new THREE.Group();
+      joint.name = `joint${i+1}`;
+      joint.position.set(...origins[i]);
+      parent.add(joint);
+      joint.add(makeCadVisual(`link${i+1}`, geometries.get(`link${i+1}`)));
+      state.joints.push(joint);
+      parent = joint;
+    }
+
+    const [,j2,j3,,,j6] = state.joints;
+    // Straight, shallow side panels cover noisy triangulation while preserving
+    // the real CAD silhouette around the elbow, shoulder, wrist, and gripper.
+    setLayerRecursive(makePart(j2, roundedBoxGeometry(.215,.006,.044,.005), {
+      position:[-.145,.040,-.012], outlineScale:1.006, edgeThreshold:30, edgeOpacity:.55, panel:true, name:'j2-j3-clean-panel'
+    }), 1);
+    setLayerRecursive(makePart(j3, roundedBoxGeometry(.195,.006,.043,.005), {
+      position:[.125,.042,.054], outlineScale:1.006, edgeThreshold:30, edgeOpacity:.55, panel:true, name:'j3-j4-clean-panel'
+    }), 1);
+    addPanelSlots(j2, [-.085,-.125,-.165,-.205], .044, -.012, -.34);
+    addPanelSlots(j3, [.065,.105,.145,.185], .046, .054, -.32);
+
+    // A restrained square J3 face gives the joint a clear UI identity without
+    // replacing the surrounding mechanical contour.
+    setLayerRecursive(makePart(j3, roundedBoxGeometry(.054,.008,.056,.006), {
+      position:[0,.045,.025], outlineScale:1.008, edgeThreshold:28, edgeOpacity:.62, panel:true, name:'j3-square-face'
+    }), 1);
+    setLayerRecursive(makePart(j3, cylinderGeometry(.015,.010,'y'), {
+      position:[0,.051,.025], outlineScale:1.01, edgeThreshold:26, edgeOpacity:.55, name:'j3-face-hub'
+    }), 1);
+
+    toolFrame.position.set(.165,0,0);
+    j6.add(toolFrame);
+    const tcpMaterial = new THREE.MeshBasicMaterial({ color: 0x0067c0, depthTest: false });
+    const tcp = new THREE.Mesh(new THREE.SphereGeometry(.0025,12,8), tcpMaterial);
+    tcp.renderOrder = 10; toolFrame.add(tcp);
+    setJoints(state.q, true);
+  }
+
+  function setJoints(values, syncInputs = false) {
+    if (!Array.isArray(values) || values.length !== 6 || values.some(v => !Number.isFinite(Number(v)))) return false;
+    state.q = values.map((v,i) => Math.max(limits[i][0], Math.min(limits[i][1], Number(v))));
+    state.joints.forEach((joint,i) => joint.quaternion.setFromAxisAngle(axes[i], state.q[i]));
+    if (syncInputs) {
+      state.q.forEach((q,i) => {
+        const input = document.getElementById(`q${i+1}`); if (input) input.value = q;
+        const output = document.getElementById(`q${i+1}-out`); if (output) output.value = q.toFixed(3);
+        const chain = document.getElementById(`chain-${i}`); if (chain) chain.textContent = q.toFixed(3);
+        const bar = document.getElementById(`axis-${i}`);
+        if (bar) bar.style.width = `${((q-limits[i][0])/(limits[i][1]-limits[i][0])*100).toFixed(1)}%`;
+      });
+    }
+    updateTcp();
+    requestRender();
+    return true;
+  }
+  function updateTcp() {
+    if (!toolFrame.parent) return;
+    scene.updateMatrixWorld(true);
+    const p = new THREE.Vector3(); toolFrame.getWorldPosition(p);
+    document.getElementById('tcp-x').textContent = `${p.x>=0?'+':''}${p.x.toFixed(3)} m`;
+    document.getElementById('tcp-y').textContent = `${p.y>=0?'+':''}${p.y.toFixed(3)} m`;
+    document.getElementById('tcp-z').textContent = `${p.z>=0?'+':''}${p.z.toFixed(3)} m`;
+  }
+
+  function resizeRenderer() {
+    const width = Math.max(1, Math.round(stage.clientWidth));
+    const height = Math.max(1, Math.round(stage.clientHeight));
+    const pixelRatio = renderer.getPixelRatio();
+    if (canvas.width !== Math.round(width*pixelRatio) || canvas.height !== Math.round(height*pixelRatio)) {
+      renderer.setSize(width,height,false);
+    }
+  }
+  function render() {
+    state.raf = 0;
+    resizeRenderer();
+    renderer.setScissorTest(true);
+    const stageRect = stage.getBoundingClientRect();
+    const bounds = new THREE.Box3().setFromObject(robotRoot);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    document.querySelectorAll('.viewport[data-view]').forEach(panel => {
+      const viewName = panel.dataset.view;
+      const rect = panel.getBoundingClientRect();
+      const left = rect.left - stageRect.left;
+      const bottom = stageRect.bottom - rect.bottom;
+      const width = rect.width, height = rect.height;
+      const camera = cameras[viewName];
+      const aspect = width / Math.max(height,1);
+      let horizontalSpan, verticalSpan;
+      if (viewName === 'side') {
+        horizontalSpan = size.x; verticalSpan = size.z;
+        camera.position.set(center.x, center.y + 2.5, center.z); camera.up.set(0,0,1); camera.lookAt(center);
+      } else if (viewName === 'front') {
+        horizontalSpan = size.y; verticalSpan = size.z;
+        camera.position.set(center.x + 2.5, center.y, center.z); camera.up.set(0,0,1); camera.lookAt(center);
+      } else {
+        horizontalSpan = size.x; verticalSpan = size.y;
+        camera.position.set(center.x, center.y, center.z + 2.5); camera.up.set(0,1,0); camera.lookAt(center);
+      }
+      const worldHeight = Math.max(
+        minimumViewHeights[viewName],
+        verticalSpan * 1.18,
+        horizontalSpan / Math.max(aspect,.1) * 1.12
+      );
+      const scaleBar = panel.querySelector('.scale');
+      if (scaleBar) scaleBar.style.width = `${Math.max(34, Math.min(120, .1 / (worldHeight * aspect) * width))}px`;
+      camera.left = -worldHeight*aspect/2; camera.right = worldHeight*aspect/2;
+      camera.top = worldHeight/2; camera.bottom = -worldHeight/2; camera.updateProjectionMatrix();
+      if (viewName === 'side') {
+        camera.projectionMatrix.elements[0] *= -1;
+        camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+      }
+      renderer.setViewport(left,bottom,width,height); renderer.setScissor(left,bottom,width,height);
+      renderer.setClearColor(0x000000,0); renderer.clear(true,true,true); renderer.render(scene,camera);
+    });
+    renderer.setScissorTest(false);
+  }
+  function requestRender() { if (!state.raf) state.raf = requestAnimationFrame(render); }
+
+  function setTheme(dark) {
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    bodyColor = dark ? 0x65737c : 0xf5f5f2;
+    edgeColor = dark ? 0xe4edf1 : 0x29363d;
+    bodyMaterials.forEach(m => m.color.setHex(bodyColor));
+    panelMaterials.forEach(m => m.color.setHex(dark ? 0x53616a : 0xe9edef));
+    edgeMaterials.forEach(m => m.color.setHex(edgeColor));
+    outlineMaterials.forEach(m => m.color.setHex(edgeColor));
+    requestRender();
+  }
+  document.getElementById('theme-btn').addEventListener('click', () => setTheme(document.documentElement.dataset.theme !== 'dark'));
+  document.getElementById('edge-btn').addEventListener('click', e => {
+    state.edges = !state.edges; e.currentTarget.setAttribute('aria-pressed', state.edges);
+    state.detailObjects.forEach(object => object.visible = state.edges); requestRender();
+  });
+  document.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
+    state.demo = false; document.getElementById('demo-btn').setAttribute('aria-pressed','false');
+    setJoints(presets[button.dataset.preset], true);
+  }));
+  document.getElementById('demo-btn').addEventListener('click', e => {
+    state.demo = !state.demo; e.currentTarget.setAttribute('aria-pressed',state.demo); if (state.demo) animate(performance.now());
+  });
+  function animate(now) {
+    if (!state.demo) return;
+    const t = now/1000;
+    setJoints([
+      .65*Math.sin(t*.38), .64+.43*Math.sin(t*.31), 1.22+.68*Math.sin(t*.27+.8),
+      .46*Math.sin(t*.47+1.2), .72*Math.sin(t*.42+.4), .92*Math.sin(t*.55)
+    ], true);
+    requestAnimationFrame(animate);
+  }
+
+  window.PantheraThreeView = { setJoints: values => setJoints(Array.from(values), true), getJoints: () => [...state.q], presets };
+  window.addEventListener('panthera:joints', event => {
+    const positions = event.detail && event.detail.positions;
+    if (positions) setJoints(Array.from(positions), true);
+  });
+  new ResizeObserver(requestRender).observe(stage);
+  window.addEventListener('resize', requestRender);
+
+  buildControls();
+  (async () => {
+    try {
+      if (!window.THREE) throw new Error('Three.js 未加载；请检查本地依赖');
+      const bytes = await inflateCadBundle(window.PANTHERA_HT_MESH_B64);
+      buildRobot(parseCadBundle(bytes));
+      const params = new URLSearchParams(location.search);
+      const queryJoints = (params.get('q') || '').split(',').map(Number);
+      if (queryJoints.length === 6 && queryJoints.every(Number.isFinite)) setJoints(queryJoints, true);
+      status.textContent = '就绪 · 真实轮廓 + 简化结构线 + URDF 关节链';
+      meshStatus.textContent = '长臂面板已拉直 · J3 方形识别面 · 腕部保留真实轮廓 · 双指夹爪';
+      if (params.get('demo') === '1') document.getElementById('demo-btn').click();
+      requestRender();
+    } catch (error) {
+      status.textContent = `加载失败：${error.message}`; status.className = 'error';
+      console.error(error);
+    }
+  })();
+})();
+</script>
+</body>
+</html>

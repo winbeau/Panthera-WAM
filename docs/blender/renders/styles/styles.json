@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "model": "../../exports/panthera-ht-exact-cad.glb",
+  "sharedGeometry": true,
+  "styles": [
+    { "id": "sketch", "label": "工程线稿", "preview": "sketch.png" },
+    { "id": "solid", "label": "实体模式", "preview": "solid.png" },
+    { "id": "material", "label": "材质预览", "preview": "material.png" },
+    { "id": "rendered", "label": "渲染质感", "preview": "rendered.png" },
+    { "id": "blueprint", "label": "蓝图模式", "preview": "blueprint.png" },
+    { "id": "xray", "label": "X-Ray", "preview": "xray.png" },
+    { "id": "wireframe", "label": "线框模式", "preview": "wireframe.png" }
+  ]
+}

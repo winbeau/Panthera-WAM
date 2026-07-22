@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+*.blend1
 .venv/
 *.egg-info/
 .pytest_cache/

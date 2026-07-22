@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>Panthera-HT · 六轴实时三视图</title>
+<style>
+  :root {
+    color-scheme: light;
+    --font: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    --page: #e8edf0;
+    --shell: #f6f8f9;
+    --surface: rgba(255,255,255,.84);
+    --solid: #fff;
+    --ink: #172129;
+    --muted: #687680;
+    --faint: #94a1a9;
+    --line: rgba(23,33,41,.13);
+    --line-strong: rgba(23,33,41,.28);
+    --grid: rgba(32,52,64,.055);
+    --accent: #0067c0;
+    --accent-soft: rgba(0,103,192,.10);
+    --good: #16834a;
+    --warn: #a86600;
+    --danger: #c42b1c;
+    --shadow: 0 18px 50px rgba(20,34,43,.17), 0 2px 8px rgba(20,34,43,.08);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #11171b;
+    --shell: #1c2429;
+    --surface: rgba(32,42,48,.88);
+    --solid: #222c32;
+    --ink: #edf4f7;
+    --muted: #a8b5bc;
+    --faint: #73818a;
+    --line: rgba(232,244,250,.11);
+    --line-strong: rgba(232,244,250,.24);
+    --grid: rgba(210,235,247,.05);
+    --accent: #56a8f5;
+    --accent-soft: rgba(86,168,245,.13);
+    --good: #54c986;
+    --warn: #f4b955;
+    --danger: #f2675d;
+    --shadow: 0 20px 60px rgba(0,0,0,.46), 0 2px 8px rgba(0,0,0,.26);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    padding: 18px;
+    color: var(--ink);
+    font-family: var(--font);
+    background: radial-gradient(circle at 50% -18%, var(--solid), transparent 58%), var(--page);
+  }
+  button, input { font: inherit; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .app {
+    width: min(1480px, 100%);
+    margin: 0 auto;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--shell);
+    box-shadow: var(--shadow);
+  }
+  .topbar {
+    min-height: 58px;
+    padding: 9px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    backdrop-filter: blur(18px);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .mark {
+    width: 34px; height: 34px; border-radius: 8px;
+    display: grid; place-items: center;
+    color: #fff; background: var(--accent); font: 700 15px var(--mono);
+  }
+  .brand-copy { min-width: 0; }
+  .brand-copy strong { display: block; font-size: 13px; font-weight: 650; }
+  .brand-copy span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+  .spacer { flex: 1; }
+  .badge {
+    height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px;
+    display: inline-flex; align-items: center; gap: 7px;
+    color: var(--muted); background: var(--solid); white-space: nowrap; font-size: 11px;
+  }
+  .badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
+  .badge.ready i { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 16%, transparent); }
+  .badge.error i { background: var(--danger); }
+  .toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .style-picker {
+    height: 30px; padding-left: 9px; border: 1px solid var(--line); border-radius: 5px;
+    display: inline-flex; align-items: center; gap: 5px; color: var(--muted); background: var(--solid); font-size: 10px;
+  }
+  .style-picker select { height: 28px; max-width: 112px; border: 0; color: var(--ink); background: transparent; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .btn {
+    min-height: 30px; padding: 0 11px; border: 1px solid var(--line); border-radius: 5px;
+    color: var(--ink); background: var(--solid); cursor: pointer; font-size: 11px; font-weight: 600;
+  }
+  .btn:hover { border-color: var(--line-strong); background: var(--accent-soft); }
+  .btn[aria-pressed="true"], .btn.primary { color: #fff; background: var(--accent); border-color: transparent; }
+  .icon-btn { width: 30px; padding: 0; }
+  .stage-shell { padding: 10px 10px 0; }
+  .stage {
+    position: relative;
+    height: min(760px, 72vw);
+    min-height: 520px;
+    display: grid;
+    grid-template-columns: minmax(0, 2.35fr) minmax(250px, .88fr);
+    grid-template-rows: minmax(0, 1.28fr) minmax(0, .78fr);
+    grid-template-areas: "side front" "top facts";
+    gap: 9px;
+  }
+  #three-view-canvas { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; pointer-events: none; }
+  .viewport, .facts {
+    position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 8px;
+    background-color: var(--solid);
+    background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  .viewport::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 46%, transparent 38%, rgba(55,71,81,.035)); }
+  .app[data-model-style="blueprint"] .viewport {
+    background-color: #071b2b;
+    background-image: linear-gradient(rgba(102,211,255,.085) 1px, transparent 1px), linear-gradient(90deg, rgba(102,211,255,.085) 1px, transparent 1px);
+  }
+  .app[data-model-style="blueprint"] .view-head, .app[data-model-style="blueprint"] .view-note, .app[data-model-style="blueprint"] .scale { color: #b8e8ff; }
+  .app[data-model-style="blueprint"] .scale { border-color: rgba(184,232,255,.52); }
+  .app[data-model-style="xray"] .viewport { background-color: color-mix(in srgb, var(--solid) 82%, #cdefff); }
+  .side { grid-area: side; }
+  .front { grid-area: front; }
+  .top { grid-area: top; }
+  .facts { grid-area: facts; z-index: 3; padding: 14px; background-image: none; }
+  .view-head { position: absolute; z-index: 4; left: 11px; top: 9px; display: flex; align-items: baseline; gap: 8px; pointer-events: none; }
+  .view-head strong { font: 600 12px var(--mono); letter-spacing: .45px; }
+  .view-head span { color: var(--muted); font-size: 10px; }
+  .view-note { position: absolute; z-index: 4; right: 10px; bottom: 8px; color: var(--faint); font: 9px var(--mono); pointer-events: none; }
+  .scale { position: absolute; z-index: 4; left: 12px; bottom: 11px; width: 74px; border-top: 2px solid var(--line-strong); color: var(--muted); font: 9px var(--mono); text-align: center; padding-top: 3px; pointer-events: none; }
+  .scale::before, .scale::after { content: ""; position: absolute; top: -5px; height: 8px; border-left: 2px solid var(--line-strong); }
+  .scale::before { left: 0; } .scale::after { right: 0; }
+  .facts h2 { margin: 0; font-size: 12px; font-weight: 650; }
+  .facts .meta { margin-top: 4px; color: var(--muted); font-size: 10px; }
+  .tcp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 14px; }
+  .tcp-cell { padding: 8px; border-radius: 5px; background: var(--accent-soft); }
+  .tcp-cell span { display: block; color: var(--muted); font-size: 9px; }
+  .tcp-cell b { display: block; margin-top: 3px; font: 650 12px var(--mono); }
+  .live-meta { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font: 9px var(--mono); }
+  .live-meta b { color: var(--ink); font-weight: 600; }
+  .kinematic-chain { margin: 13px 0 0; padding: 0; list-style: none; display: grid; gap: 5px; }
+  .kinematic-chain li { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 7px; font-size: 10px; }
+  .kinematic-chain code { font: 600 9px var(--mono); color: var(--muted); }
+  .axis { height: 4px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .axis i { display: block; width: 50%; height: 100%; background: var(--accent); transition: width .10s linear; }
+  .api { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; }
+  .api code { display: block; margin-top: 4px; color: var(--ink); font-family: var(--mono); overflow-wrap: anywhere; }
+  .controls { margin: 9px 10px 10px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  .control-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+  .control-head strong { font-size: 11px; }
+  .control-head span { color: var(--muted); font-size: 10px; }
+  .joint-grid { display: grid; grid-template-columns: repeat(7, minmax(118px, 1fr)); gap: 7px; }
+  .joint-control { padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--solid); }
+  .joint-label { display: flex; justify-content: space-between; align-items: baseline; gap: 5px; }
+  .joint-label strong { font: 650 11px var(--mono); }
+  .joint-label output { color: var(--accent); font: 600 10px var(--mono); }
+  .joint-name { margin-top: 2px; color: var(--muted); font-size: 9px; }
+  input[type="range"] { width: 100%; height: 18px; margin: 8px 0 0; accent-color: var(--accent); cursor: pointer; }
+  .limits { display: flex; justify-content: space-between; color: var(--faint); font: 8px var(--mono); }
+  .statusline { min-height: 29px; padding: 6px 14px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 10px; color: var(--muted); font: 9px var(--mono); }
+  .statusline b { color: var(--ink); font-weight: 600; }
+  .statusline .error { color: var(--danger); }
+  .progress { width: 90px; height: 3px; overflow: hidden; border-radius: 2px; background: var(--line); }
+  .progress i { display: block; width: 0; height: 100%; background: var(--accent); transition: width .15s linear; }
+  @media (max-width: 1080px) {
+    .stage { height: auto; min-height: 0; grid-template-columns: 1fr 1fr; grid-template-rows: 430px 340px auto; grid-template-areas: "side side" "top front" "facts facts"; }
+    .facts { min-height: 220px; }
+    .joint-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 650px) {
+    body { padding: 0; }
+    .app { border-radius: 0; border-left: 0; border-right: 0; }
+    .topbar { align-items: flex-start; flex-wrap: wrap; }
+    .spacer { display: none; }
+    .stage { grid-template-columns: 1fr; grid-template-rows: 330px 260px 260px auto; grid-template-areas: "side" "front" "top" "facts"; }
+    .joint-grid { grid-template-columns: repeat(2, 1fr); }
+    .badge { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main class="app" id="panthera-three-view">
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">P</div>
+      <div class="brand-copy">
+        <strong>Panthera-HT · 六轴实时三视图</strong>
+        <span>官方 CAD 实体 · 同一运动链 · 三台正交相机实时投影</span>
+      </div>
+    </div>
+    <div class="badge" id="model-badge"><i></i><span>正在加载精确 CAD</span></div>
+    <div class="spacer"></div>
+    <div class="toolbar" aria-label="姿态与显示控制">
+      <label class="style-picker"><span>风格</span><select id="style-select" aria-label="模型显示风格">
+        <option value="sketch">工程线稿</option>
+        <option value="solid">实体模式</option>
+        <option value="material">材质预览</option>
+        <option value="rendered">渲染质感</option>
+        <option value="blueprint">蓝图模式</option>
+        <option value="xray">X-Ray</option>
+        <option value="wireframe">线框模式</option>
+      </select></label>
+      <label class="style-picker"><span>镜头</span><select id="camera-mode-select" aria-label="三视图镜头模式">
+        <option value="follow">自动特写</option>
+        <option value="fixed-base">基座固定</option>
+      </select></label>
+      <button class="btn primary" type="button" data-preset="draft">草图基准</button>
+      <button class="btn" type="button" data-preset="work">作业位</button>
+      <button class="btn" type="button" data-preset="reach">展开位</button>
+      <button class="btn" type="button" id="demo-btn" aria-pressed="false">动态演示</button>
+      <button class="btn icon-btn" type="button" id="theme-btn" aria-label="切换明暗主题">◐</button>
+    </div>
+  </header>
+
+  <section class="stage-shell">
+    <div class="stage" id="stage">
+      <canvas id="three-view-canvas" aria-label="Panthera-HT 侧视、主视和俯视三维正交投影"></canvas>
+      <section class="viewport side" data-view="side">
+        <div class="view-head"><strong>SIDE VIEW</strong><span>侧视图 · X / Z · 草图主基准</span></div>
+        <div class="scale">100 mm</div><div class="view-note">ORTHOGRAPHIC · LIVE LINK TRANSFORMS</div>
+      </section>
+      <section class="viewport front" data-view="front">
+        <div class="view-head"><strong>FRONT VIEW</strong><span>主视图 · Y / Z</span></div>
+        <div class="scale">100 mm</div><div class="view-note">LOOKING ALONG −X</div>
+      </section>
+      <section class="viewport top" data-view="top">
+        <div class="view-head"><strong>TOP VIEW</strong><span>俯视图 · X / Y</span></div>
+        <div class="scale">100 mm</div><div class="view-note">LOOKING ALONG −Z</div>
+      </section>
+      <aside class="facts">
+        <h2>同一套六轴运动链</h2>
+        <div class="meta">关节变换只计算一次；三视图只更换正交相机，不做二维近似。</div>
+        <div class="tcp-grid">
+          <div class="tcp-cell"><span>TCP · X</span><b id="tcp-x">+0.000 m</b></div>
+          <div class="tcp-cell"><span>TCP · Y</span><b id="tcp-y">+0.000 m</b></div>
+          <div class="tcp-cell"><span>TCP · Z</span><b id="tcp-z">+0.000 m</b></div>
+        </div>
+        <div class="live-meta"><span>状态源 <b id="state-source">LOCAL</b></span><span>更新率 <b id="state-rate">0.0 Hz</b></span><span>模型 <b id="model-mode">LOADING</b></span><span>风格 <b id="style-name">工程线稿</b></span><span>镜头 <b id="camera-mode-name">自动特写</b></span></div>
+        <ol class="kinematic-chain" id="chain-list"></ol>
+        <div class="api">实时接线接口
+          <code>PantheraThreeView.setJoints([q1, q2, q3, q4, q5, q6])</code>
+          <code>PantheraThreeView.setState({ positions, source, timestamp })</code>
+          <code>dispatchEvent(new CustomEvent('panthera:joints', { detail }))</code>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section class="controls" aria-label="六轴状态输入">
+    <div class="control-head"><strong>六轴状态输入</strong><span>单位 rad；浏览器可视化层，不连接 armd / 真机。</span></div>
+    <div class="joint-grid" id="joint-grid"></div>
+  </section>
+  <footer class="statusline">
+    <b id="render-status">正在读取 panthera-ht-exact-cad.glb…</b>
+    <div class="progress" aria-hidden="true"><i id="load-progress"></i></div>
+    <span id="mesh-status"></span>
+  </footer>
+</main>
+
+<script src="assets/three-r160.min.js"></script>
+<script src="assets/panthera-ht-meshes.min.js"></script>
+<script>
+(() => {
+  'use strict';
+  const EXACT_GLB_URL = '../blender/exports/panthera-ht-exact-cad.glb';
+  const limits = [[-2.4,2.4],[-0.1,3.2],[-0.1,4.0],[-1.6,1.6],[-1.7,1.7],[-2.5,2.5]];
+  const jointNames = ['基座回转','大臂俯仰','小臂俯仰','腕部俯仰','腕部回转','末端回转'];
+  const axisLabels = ['Z','Y','−Y','−Y','−Z','X'];
+  const origins = [[0,0,.0584],[.018199,0,.053],[-.26,0,0],[.23,0,.06],[.07,0,.036319],[.02345,0,-.039]];
+  const fallbackAxes = [[0,0,1],[0,1,0],[0,-1,0],[0,-1,0],[0,0,-1],[1,0,0]];
+  const presets = { draft:[0,0,0,0,0,0], work:[.52,.72,1.18,-.34,.48,.42], reach:[-.32,1.34,2.18,-.72,-.38,.84] };
+  const gripperPresets = { draft:1, work:.52, reach:.82 };
+  const styleLabels = { sketch:'工程线稿', solid:'实体模式', material:'材质预览', rendered:'渲染质感', blueprint:'蓝图模式', xray:'X-Ray', wireframe:'线框模式' };
+  const cameraModeLabels = { follow:'自动特写', 'fixed-base':'基座固定' };
+
+  const root = document.getElementById('panthera-three-view');
+  const stage = document.getElementById('stage');
+  const canvas = document.getElementById('three-view-canvas');
+  const status = document.getElementById('render-status');
+  const meshStatus = document.getElementById('mesh-status');
+  const badge = document.getElementById('model-badge');
+  const progress = document.getElementById('load-progress');
+  const state = {
+    q:[...presets.draft], gripper:1, joints:[], jointAxes:[], restQuaternions:[], gripperNodes:[], gripperAxes:[], gripperRestPositions:[], solids:[], outlines:[], modelReady:false,
+    source:'LOCAL', sourceMode:'loading', style:'sketch', cameraMode:'follow', edges:true, raf:0, demo:false, lastDemo:0, updateTimes:[], triangles:0
+  };
+
+  if (!window.THREE) {
+    status.textContent = '加载失败：Three.js 本地依赖缺失';
+    status.className = 'error';
+    return;
+  }
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true, powerPreference:'high-performance' });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.65));
+  renderer.setClearColor(0x000000, 0);
+  const scene = new THREE.Scene();
+  const robotRoot = new THREE.Group();
+  robotRoot.name = 'PANTHERA_RENDER_ROOT';
+  scene.add(robotRoot);
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x77828a, 2.05));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2.4); keyLight.position.set(-1.5,2.2,3.2); scene.add(keyLight);
+  const fillLight = new THREE.DirectionalLight(0xbcd8ed, 1.0); fillLight.position.set(2.5,-1.4,1.7); scene.add(fillLight);
+
+  const styleMaterials = {
+    sketch:new THREE.MeshLambertMaterial({ color:0xd9dfe2, side:THREE.DoubleSide }),
+    solid:new THREE.MeshLambertMaterial({ color:0xaeb8be, side:THREE.DoubleSide }),
+    material:new THREE.MeshStandardMaterial({ color:0xaab7bf, roughness:.72, metalness:.20, side:THREE.DoubleSide }),
+    rendered:new THREE.MeshPhongMaterial({ color:0xbcc7cd, specular:0xffffff, shininess:72, side:THREE.DoubleSide }),
+    blueprint:new THREE.MeshBasicMaterial({ color:0x49b9e5, side:THREE.DoubleSide }),
+    xray:new THREE.MeshBasicMaterial({ color:0x55b9dc, transparent:true, opacity:.20, depthWrite:false, side:THREE.DoubleSide }),
+    wireframe:new THREE.MeshBasicMaterial({ color:0x30434e, wireframe:true, transparent:true, opacity:.74, side:THREE.DoubleSide })
+  };
+  const outlineMaterial = new THREE.ShaderMaterial({
+    uniforms:{ outlineColor:{ value:new THREE.Color(0x26343c) }, thickness:{ value:.00072 }, outlineOpacity:{ value:1 } },
+    vertexShader:'uniform float thickness; void main(){ vec3 p=position+normal*thickness; gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0); }',
+    fragmentShader:'uniform vec3 outlineColor; uniform float outlineOpacity; void main(){ gl_FragColor=vec4(outlineColor,outlineOpacity); }',
+    side:THREE.BackSide, depthWrite:false, transparent:true
+  });
+  const tcpMaterial = new THREE.MeshBasicMaterial({ color:0x0078d4, depthTest:false });
+  const toolFrame = new THREE.Group(); toolFrame.name = 'TCP_FRAME';
+
+  const cameras = {
+    side:new THREE.OrthographicCamera(-1,1,1,-1,.01,10),
+    front:new THREE.OrthographicCamera(-1,1,1,-1,.01,10),
+    top:new THREE.OrthographicCamera(-1,1,1,-1,.01,10)
+  };
+  const minimumViewHeights = { side:.33, front:.32, top:.22 };
+  const fixedFrames = {
+    side:{ center:new THREE.Vector3(-.08,0,.27), worldHeight:.64 },
+    front:{ center:new THREE.Vector3(0,0,.27), worldHeight:.64 },
+    top:{ center:new THREE.Vector3(-.08,0,0), worldHeight:.72 }
+  };
+
+  function buildControls() {
+    const grid = document.getElementById('joint-grid');
+    const list = document.getElementById('chain-list');
+    limits.forEach(([min,max], i) => {
+      const card = document.createElement('label');
+      card.className = 'joint-control';
+      card.innerHTML = `<div class="joint-label"><strong>J${i+1}</strong><output id="q${i+1}-out">0.000</output></div>
+        <div class="joint-name">${jointNames[i]} · axis ${axisLabels[i]}</div>
+        <input id="q${i+1}" type="range" min="${min}" max="${max}" step="0.001" value="0" aria-label="J${i+1} ${jointNames[i]}">
+        <div class="limits"><span>${min.toFixed(1)}</span><span>${max.toFixed(1)}</span></div>`;
+      grid.appendChild(card);
+      card.querySelector('input').addEventListener('input', event => {
+        const next = [...state.q]; next[i] = Number(event.target.value);
+        setJoints(next, { syncInputs:true, source:'LOCAL' });
+      });
+      const row = document.createElement('li');
+      row.innerHTML = `<code>J${i+1}</code><div class="axis"><i id="axis-${i}"></i></div><code id="chain-${i}">0.000</code>`;
+      list.appendChild(row);
+    });
+    const gripperCard = document.createElement('label');
+    gripperCard.className = 'joint-control';
+    gripperCard.innerHTML = `<div class="joint-label"><strong>GRIP</strong><output id="gripper-out">1.000</output></div>
+      <div class="joint-name">夹爪归一化开度 · 对称双指</div>
+      <input id="gripper" type="range" min="0" max="1" step="0.001" value="1" aria-label="夹爪开度">
+      <div class="limits"><span>0 · 闭合</span><span>1 · 张开</span></div>`;
+    grid.appendChild(gripperCard);
+    gripperCard.querySelector('input').addEventListener('input',event=>setGripper(Number(event.target.value),{syncInput:true,source:'LOCAL'}));
+  }
+
+  function accessorInfo(json, bin, accessorIndex) {
+    const accessor = json.accessors[accessorIndex];
+    const view = json.bufferViews[accessor.bufferView];
+    if (view.byteStride) throw new Error('当前精确模型包含交错 bufferView，轻量加载器暂不支持');
+    const components = { SCALAR:1, VEC2:2, VEC3:3, VEC4:4, MAT4:16 }[accessor.type];
+    const ArrayType = { 5120:Int8Array, 5121:Uint8Array, 5122:Int16Array, 5123:Uint16Array, 5125:Uint32Array, 5126:Float32Array }[accessor.componentType];
+    if (!components || !ArrayType) throw new Error(`不支持的 glTF accessor ${accessor.type}/${accessor.componentType}`);
+    const byteOffset = bin.byteOffset + (view.byteOffset || 0) + (accessor.byteOffset || 0);
+    const array = new ArrayType(bin.buffer, byteOffset, accessor.count * components);
+    return { accessor, array, components };
+  }
+
+  function technicalMesh(json, bin, meshIndex) {
+    const group = new THREE.Group();
+    group.name = json.meshes[meshIndex].name || `mesh-${meshIndex}`;
+    json.meshes[meshIndex].primitives.forEach((primitive, primitiveIndex) => {
+      const geometry = new THREE.BufferGeometry();
+      const position = accessorInfo(json, bin, primitive.attributes.POSITION);
+      geometry.setAttribute('position', new THREE.BufferAttribute(position.array, position.components, !!position.accessor.normalized));
+      if (primitive.attributes.NORMAL !== undefined) {
+        const normal = accessorInfo(json, bin, primitive.attributes.NORMAL);
+        geometry.setAttribute('normal', new THREE.BufferAttribute(normal.array, normal.components, !!normal.accessor.normalized));
+      } else {
+        geometry.computeVertexNormals();
+      }
+      if (primitive.indices !== undefined) {
+        const index = accessorInfo(json, bin, primitive.indices);
+        geometry.setIndex(new THREE.BufferAttribute(index.array, 1));
+        state.triangles += index.accessor.count / 3;
+      } else {
+        state.triangles += position.accessor.count / 3;
+      }
+      if (position.accessor.min && position.accessor.max) {
+        geometry.boundingBox = new THREE.Box3(new THREE.Vector3(...position.accessor.min), new THREE.Vector3(...position.accessor.max));
+        geometry.boundingSphere = new THREE.Sphere();
+        geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+      }
+      const outline = new THREE.Mesh(geometry, outlineMaterial); outline.name = `${group.name}-outline-${primitiveIndex}`; outline.renderOrder = 1;
+      const solid = new THREE.Mesh(geometry, styleMaterials.sketch); solid.name = `${group.name}-solid-${primitiveIndex}`; solid.renderOrder = 2;
+      group.add(outline, solid); state.outlines.push(outline); state.solids.push(solid);
+    });
+    return group;
+  }
+
+  function parseGlb(arrayBuffer) {
+    const view = new DataView(arrayBuffer);
+    if (view.getUint32(0,true) !== 0x46546c67 || view.getUint32(4,true) !== 2) throw new Error('不是有效的 glTF 2.0 GLB');
+    let offset = 12, json = null, bin = null;
+    while (offset < arrayBuffer.byteLength) {
+      const length = view.getUint32(offset,true); const type = view.getUint32(offset+4,true); offset += 8;
+      if (type === 0x4e4f534a) json = JSON.parse(new TextDecoder().decode(new Uint8Array(arrayBuffer,offset,length)));
+      if (type === 0x004e4942) bin = new Uint8Array(arrayBuffer,offset,length);
+      offset += length;
+    }
+    if (!json || !bin) throw new Error('GLB 缺少 JSON 或 BIN 数据块');
+    return { json, bin };
+  }
+
+  function applyNodeTransform(object, node) {
+    if (node.matrix) object.matrix.fromArray(node.matrix).decompose(object.position, object.quaternion, object.scale);
+    else {
+      if (node.translation) object.position.fromArray(node.translation);
+      if (node.rotation) object.quaternion.fromArray(node.rotation);
+      if (node.scale) object.scale.fromArray(node.scale);
+    }
+    object.userData = { ...(node.extras || {}) };
+  }
+
+  function buildExactScene(json, bin) {
+    const objects = json.nodes.map((node, index) => {
+      const object = new THREE.Group(); object.name = node.name || `node-${index}`;
+      applyNodeTransform(object, node);
+      if (node.mesh !== undefined) object.add(technicalMesh(json, bin, node.mesh));
+      return object;
+    });
+    json.nodes.forEach((node, index) => (node.children || []).forEach(child => objects[index].add(objects[child])));
+    const gltfRoot = new THREE.Group(); gltfRoot.name = 'GLTF_Z_UP_CONVERSION'; gltfRoot.rotation.x = Math.PI / 2;
+    const sceneDef = json.scenes[json.scene || 0]; (sceneDef.nodes || []).forEach(index => gltfRoot.add(objects[index]));
+    robotRoot.add(gltfRoot);
+
+    state.joints = Array.from({length:6}, (_,i) => objects.find(object => object.name === `J${i+1}_AXIS`));
+    if (state.joints.some(joint => !joint)) throw new Error('GLB 中缺少 J1_AXIS–J6_AXIS 六轴节点');
+    state.jointAxes = state.joints.map(joint => {
+      const mapped = { X:new THREE.Vector3(1,0,0), Y:new THREE.Vector3(0,0,-1), Z:new THREE.Vector3(0,1,0) }[joint.userData.axis];
+      return mapped.multiplyScalar(Number(joint.userData.axis_sign || 1));
+    });
+    state.restQuaternions = state.joints.map(joint => joint.quaternion.clone());
+    state.gripperNodes = ['GRIPPER_LEFT','GRIPPER_RIGHT'].map(name=>objects.find(object=>object.name===name));
+    if(state.gripperNodes.some(node=>!node)) throw new Error('GLB 中缺少 GRIPPER_LEFT / GRIPPER_RIGHT 节点');
+    state.gripperAxes = state.gripperNodes.map(node=>{
+      const mapped={X:new THREE.Vector3(1,0,0),Y:new THREE.Vector3(0,0,-1),Z:new THREE.Vector3(0,1,0)}[node.userData.travel_axis];
+      return mapped.multiplyScalar(Number(node.userData.close_direction||1)*Number(node.userData.travel_m||.042));
+    });
+    state.gripperRestPositions = state.gripperNodes.map(node=>node.position.clone());
+    state.sourceMode = 'exact';
+  }
+
+  async function fetchWithProgress(url) {
+    if (location.protocol === 'file:') throw new Error('file:// 模式不能读取外部 GLB');
+    const response = await fetch(url, { cache:'no-store' });
+    if (!response.ok) throw new Error(`GLB HTTP ${response.status}`);
+    const total = Number(response.headers.get('content-length')) || 0;
+    if (!response.body || !total) return response.arrayBuffer();
+    const reader = response.body.getReader(); const chunks = []; let received = 0;
+    while (true) {
+      const {done,value} = await reader.read(); if (done) break;
+      chunks.push(value); received += value.byteLength;
+      const percent = received / total * 100; progress.style.width = `${percent.toFixed(1)}%`;
+      status.textContent = `正在读取精确 CAD… ${percent.toFixed(0)}%`;
+    }
+    const bytes = new Uint8Array(received); let cursor = 0;
+    chunks.forEach(chunk => { bytes.set(chunk,cursor); cursor += chunk.byteLength; });
+    return bytes.buffer;
+  }
+
+  function readAscii(bytes, offset, length) { return new TextDecoder('ascii').decode(bytes.subarray(offset, offset + length)); }
+  async function inflateFallback(base64) {
+    if (!base64 || !window.DecompressionStream) throw new Error('浏览器不支持轻量 CAD 备用资产');
+    const packed = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+    const stream = new Blob([packed]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  function parseFallback(bytes) {
+    if (readAscii(bytes,0,5) !== 'PHTV1') throw new Error('轻量 CAD 资产版本不匹配');
+    const view = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength); let offset = 8;
+    const count = view.getUint16(offset,true); offset += 2; const geometries = new Map();
+    for (let meshIndex=0; meshIndex<count; meshIndex++) {
+      const nameLength = view.getUint8(offset++); const name = readAscii(bytes,offset,nameLength); offset += nameLength;
+      const vertexCount = view.getUint32(offset,true); offset += 4; const indexCount = view.getUint32(offset,true); offset += 4;
+      const min=[], extent=[]; for(let i=0;i<3;i++,offset+=4) min.push(view.getFloat32(offset,true)); for(let i=0;i<3;i++,offset+=4) extent.push(view.getFloat32(offset,true));
+      const positions = new Float32Array(vertexCount*3);
+      for(let i=0;i<positions.length;i++,offset+=2){ const axis=i%3; positions[i]=min[axis]+view.getUint16(offset,true)/65535*extent[axis]; }
+      const indices = new Uint16Array(indexCount); for(let i=0;i<indexCount;i++,offset+=2) indices[i]=view.getUint16(offset,true);
+      const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position',new THREE.BufferAttribute(positions,3)); geometry.setIndex(new THREE.BufferAttribute(indices,1)); geometry.computeVertexNormals(); geometry.computeBoundingBox(); geometry.boundingSphere = new THREE.Sphere(); geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+      state.triangles += indexCount/3; geometries.set(name,geometry);
+    }
+    return geometries;
+  }
+  function addTechnicalGeometry(parent, name, geometry) {
+    const outline = new THREE.Mesh(geometry,outlineMaterial); outline.name=`${name}-outline`; outline.renderOrder=1;
+    const solid = new THREE.Mesh(geometry,styleMaterials.sketch); solid.name=`${name}-solid`; solid.renderOrder=2;
+    parent.add(outline,solid); state.outlines.push(outline); state.solids.push(solid);
+  }
+  function buildFallbackScene(geometries) {
+    addTechnicalGeometry(robotRoot,'base_link',geometries.get('base_link'));
+    let parent = robotRoot;
+    for(let i=0;i<6;i++){
+      const joint = new THREE.Group(); joint.name=`J${i+1}_AXIS`; joint.position.set(...origins[i]); parent.add(joint);
+      const meshName=i===5?'link6_body':`link${i+1}`;
+      addTechnicalGeometry(joint,meshName,geometries.get(meshName)); state.joints.push(joint); parent=joint;
+    }
+    state.jointAxes = fallbackAxes.map(axis => new THREE.Vector3(...axis)); state.restQuaternions = state.joints.map(joint => joint.quaternion.clone()); state.sourceMode='lightweight';
+    const j6=state.joints[5];
+    const left=new THREE.Group(); left.name='GRIPPER_LEFT'; j6.add(left); addTechnicalGeometry(left,'gripper_left',geometries.get('gripper_left'));
+    const right=new THREE.Group(); right.name='GRIPPER_RIGHT'; j6.add(right); addTechnicalGeometry(right,'gripper_right',geometries.get('gripper_right'));
+    state.gripperNodes=[left,right]; state.gripperRestPositions=[left.position.clone(),right.position.clone()];
+    state.gripperAxes=[new THREE.Vector3(0,-.042,0),new THREE.Vector3(0,.042,0)];
+  }
+
+  function attachToolFrame() {
+    const j6 = state.joints[5]; toolFrame.position.set(.165,0,0); j6.add(toolFrame);
+    const marker = new THREE.Mesh(new THREE.SphereGeometry(.0027,14,9),tcpMaterial); marker.renderOrder=10; toolFrame.add(marker);
+  }
+
+  function normalizePositions(value) {
+    if (Array.isArray(value) || ArrayBuffer.isView(value)) return Array.from(value);
+    if (!value || typeof value !== 'object') return null;
+    if (value.positions) return Array.from(value.positions);
+    if (value.position) return Array.from(value.position);
+    if (value.joints) return Array.from(value.joints, joint => Number(joint.position ?? joint));
+    return null;
+  }
+
+  function setJoints(values, options={}) {
+    const positions = normalizePositions(values);
+    if (!positions || positions.length !== 6 || positions.some(value => !Number.isFinite(Number(value)))) return false;
+    state.q = positions.map((value,index) => Math.max(limits[index][0],Math.min(limits[index][1],Number(value))));
+    if (options.source) state.source = String(options.source).toUpperCase();
+    if (state.modelReady) {
+      state.joints.forEach((joint,index) => {
+        const rotation = new THREE.Quaternion().setFromAxisAngle(state.jointAxes[index],state.q[index]);
+        joint.quaternion.copy(state.restQuaternions[index]).multiply(rotation);
+      });
+      updateTcp(); requestRender();
+    }
+    if (options.syncInputs !== false) syncStateDisplay();
+    trackRate(options.timestamp);
+    return true;
+  }
+
+  function setGripper(value, options={}) {
+    const opening=Number(value);
+    if(!Number.isFinite(opening)) return false;
+    state.gripper=Math.max(0,Math.min(1,opening));
+    if(options.source) state.source=String(options.source).toUpperCase();
+    if(state.modelReady&&state.gripperNodes.length===2){
+      state.gripperNodes.forEach((node,index)=>node.position.copy(state.gripperRestPositions[index]).addScaledVector(state.gripperAxes[index],1-state.gripper));
+      requestRender();
+    }
+    if(options.syncInput!==false){
+      const input=document.getElementById('gripper'); if(input) input.value=state.gripper;
+      const output=document.getElementById('gripper-out'); if(output) output.value=state.gripper.toFixed(3);
+    }
+    window.dispatchEvent(new CustomEvent('panthera:gripper-updated',{detail:{opening:state.gripper,source:state.source}}));
+    return true;
+  }
+
+  function setState(snapshot) {
+    const positions = normalizePositions(snapshot);
+    const source=snapshot&&snapshot.source||'ARMD'; let changed=false;
+    if(positions) changed=setJoints(positions,{syncInputs:true,source,timestamp:snapshot&&snapshot.timestamp})||changed;
+    const opening=snapshot&&(snapshot.gripper??snapshot.gripperOpening??snapshot.gripper_opening);
+    if(opening!==undefined) changed=setGripper(opening,{syncInput:true,source})||changed;
+    return changed;
+  }
+
+  function syncStateDisplay() {
+    state.q.forEach((q,index) => {
+      const input=document.getElementById(`q${index+1}`); if(input) input.value=q;
+      const output=document.getElementById(`q${index+1}-out`); if(output) output.value=q.toFixed(3);
+      const chain=document.getElementById(`chain-${index}`); if(chain) chain.textContent=q.toFixed(3);
+      const bar=document.getElementById(`axis-${index}`); if(bar) bar.style.width=`${((q-limits[index][0])/(limits[index][1]-limits[index][0])*100).toFixed(1)}%`;
+    });
+    document.getElementById('state-source').textContent=state.source;
+  }
+
+  function trackRate(timestamp) {
+    const now = Number(timestamp) || performance.now(); state.updateTimes.push(now);
+    const cutoff = now - 1000; while(state.updateTimes.length && state.updateTimes[0] < cutoff) state.updateTimes.shift();
+    document.getElementById('state-rate').textContent=`${Math.max(0,state.updateTimes.length-1).toFixed(1)} Hz`;
+  }
+
+  function updateTcp() {
+    scene.updateMatrixWorld(true); const point = new THREE.Vector3(); toolFrame.getWorldPosition(point);
+    ['x','y','z'].forEach(axis => document.getElementById(`tcp-${axis}`).textContent=`${point[axis]>=0?'+':''}${point[axis].toFixed(3)} m`);
+    window.dispatchEvent(new CustomEvent('panthera:three-view-updated',{ detail:{ positions:[...state.q], tcp:{x:point.x,y:point.y,z:point.z}, source:state.source } }));
+  }
+
+  function resizeRenderer() {
+    const width=Math.max(1,Math.round(stage.clientWidth)), height=Math.max(1,Math.round(stage.clientHeight)), ratio=renderer.getPixelRatio();
+    if(canvas.width!==Math.round(width*ratio)||canvas.height!==Math.round(height*ratio)) renderer.setSize(width,height,false);
+  }
+
+  function render() {
+    state.raf=0; if(!state.modelReady) return; resizeRenderer(); renderer.setScissorTest(true);
+    const stageRect=stage.getBoundingClientRect(); const bounds=new THREE.Box3().setFromObject(robotRoot); const center=bounds.getCenter(new THREE.Vector3()); const size=bounds.getSize(new THREE.Vector3());
+    document.querySelectorAll('.viewport[data-view]').forEach(panel => {
+      const viewName=panel.dataset.view, rect=panel.getBoundingClientRect(), left=rect.left-stageRect.left, bottom=stageRect.bottom-rect.bottom, width=rect.width, height=rect.height;
+      const camera=cameras[viewName], aspect=width/Math.max(height,1); let horizontalSpan,verticalSpan,viewCenter,worldHeight;
+      if(state.cameraMode==='fixed-base') {
+        viewCenter=fixedFrames[viewName].center; worldHeight=fixedFrames[viewName].worldHeight;
+        if(viewName==='side'){ camera.position.set(viewCenter.x,viewCenter.y+2.5,viewCenter.z); camera.up.set(0,0,1); camera.lookAt(viewCenter); }
+        else if(viewName==='front'){ camera.position.set(viewCenter.x+2.5,viewCenter.y,viewCenter.z); camera.up.set(0,0,1); camera.lookAt(viewCenter); }
+        else { camera.position.set(viewCenter.x,viewCenter.y,viewCenter.z+2.5); camera.up.set(0,1,0); camera.lookAt(viewCenter); }
+      } else {
+        viewCenter=center;
+        if(viewName==='side'){ horizontalSpan=size.x; verticalSpan=size.z; camera.position.set(center.x,center.y+2.5,center.z); camera.up.set(0,0,1); camera.lookAt(center); }
+        else if(viewName==='front'){ horizontalSpan=size.y; verticalSpan=size.z; camera.position.set(center.x+2.5,center.y,center.z); camera.up.set(0,0,1); camera.lookAt(center); }
+        else { horizontalSpan=size.x; verticalSpan=size.y; camera.position.set(center.x,center.y,center.z+2.5); camera.up.set(0,1,0); camera.lookAt(center); }
+        worldHeight=Math.max(minimumViewHeights[viewName],verticalSpan*1.18,horizontalSpan/Math.max(aspect,.1)*1.12);
+      }
+      const scaleBar=panel.querySelector('.scale'); if(scaleBar) scaleBar.style.width=`${Math.max(34,Math.min(120,.1/(worldHeight*aspect)*width))}px`;
+      camera.left=-worldHeight*aspect/2; camera.right=worldHeight*aspect/2; camera.top=worldHeight/2; camera.bottom=-worldHeight/2; camera.updateProjectionMatrix();
+      if(viewName==='side'){ camera.projectionMatrix.elements[0]*=-1; camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert(); }
+      renderer.setViewport(left,bottom,width,height); renderer.setScissor(left,bottom,width,height); renderer.setClearColor(0x000000,0); renderer.clear(true,true,true); renderer.render(scene,camera);
+    });
+    renderer.setScissorTest(false);
+  }
+  function requestRender(){ if(!state.raf) state.raf=requestAnimationFrame(render); }
+
+  function setTheme(dark) {
+    document.documentElement.dataset.theme=dark?'dark':'light';
+    styleMaterials.sketch.color.setHex(dark?0x66747c:0xd9dfe2);
+    if(state.style==='wireframe') styleMaterials.wireframe.color.setHex(dark?0xdce9ee:0x30434e);
+    applyStyle(state.style);
+  }
+
+  function applyStyle(name) {
+    if(!styleMaterials[name]) return false;
+    state.style=name; root.dataset.modelStyle=name; document.getElementById('style-select').value=name; document.getElementById('style-name').textContent=styleLabels[name];
+    state.solids.forEach(solid=>{ solid.material=styleMaterials[name]; solid.renderOrder=name==='xray'?1:2; });
+    const dark=document.documentElement.dataset.theme==='dark';
+    const configs={
+      sketch:{outline:false,color:dark?0xe5eef2:0x26343c,thickness:.00072,opacity:1,tone:THREE.NoToneMapping,exposure:1},
+      solid:{outline:false,color:0x26343c,thickness:.00055,opacity:1,tone:THREE.NoToneMapping,exposure:1},
+      material:{outline:false,color:dark?0xdce8ed:0x33454f,thickness:.00046,opacity:.72,tone:THREE.ACESFilmicToneMapping,exposure:1.08},
+      rendered:{outline:false,color:0x182229,thickness:.00038,opacity:.58,tone:THREE.NoToneMapping,exposure:1.15},
+      blueprint:{outline:false,color:0x9de7ff,thickness:.00066,opacity:.94,tone:THREE.NoToneMapping,exposure:1},
+      xray:{outline:false,color:dark?0xa9e9ff:0x187aa5,thickness:.00066,opacity:.92,tone:THREE.NoToneMapping,exposure:1},
+      wireframe:{outline:false,color:0x30434e,thickness:.0004,opacity:0,tone:THREE.NoToneMapping,exposure:1}
+    };
+    const config=configs[name]; outlineMaterial.uniforms.outlineColor.value.setHex(config.color); outlineMaterial.uniforms.thickness.value=config.thickness; outlineMaterial.uniforms.outlineOpacity.value=config.opacity;
+    state.outlines.forEach(outline=>outline.visible=state.edges&&config.outline); renderer.toneMapping=config.tone; renderer.toneMappingExposure=config.exposure; requestRender(); return true;
+  }
+
+  function setCameraMode(mode) {
+    if(!cameraModeLabels[mode]) return false;
+    state.cameraMode=mode; document.getElementById('camera-mode-select').value=mode; document.getElementById('camera-mode-name').textContent=cameraModeLabels[mode];
+    const notes={
+      follow:{side:'ORTHOGRAPHIC · AUTO FIT',front:'AUTO FIT · LOOKING ALONG −X',top:'AUTO FIT · LOOKING ALONG −Z'},
+      'fixed-base':{side:'FIXED BASE · ORTHOGRAPHIC',front:'FIXED BASE · LOOKING ALONG −X',top:'FIXED BASE · LOOKING ALONG −Z'}
+    }[mode];
+    document.querySelectorAll('.viewport[data-view]').forEach(panel=>{ const note=panel.querySelector('.view-note'); if(note) note.textContent=notes[panel.dataset.view]; });
+    requestRender(); return true;
+  }
+
+  function setReady(mode, message) {
+    state.modelReady=true; state.sourceMode=mode; badge.className='badge ready'; badge.querySelector('span').textContent=mode==='exact'?'精确 CAD 已加载':'轻量 CAD 预览';
+    document.getElementById('model-mode').textContent=mode==='exact'?'EXACT GLB':'LIGHTWEIGHT'; progress.style.width='100%'; status.textContent=message;
+    meshStatus.textContent=`${Math.round(state.triangles).toLocaleString()} triangles · J1–J6 shared transforms · 3 orthographic cameras`;
+    attachToolFrame(); applyStyle(state.style); setJoints(state.q,{syncInputs:true,source:'LOCAL'}); setGripper(state.gripper,{syncInput:true,source:'LOCAL'}); requestRender();
+  }
+
+  document.getElementById('theme-btn').addEventListener('click',()=>setTheme(document.documentElement.dataset.theme!=='dark'));
+  document.getElementById('style-select').addEventListener('change',event=>applyStyle(event.target.value));
+  document.getElementById('camera-mode-select').addEventListener('change',event=>setCameraMode(event.target.value));
+  document.querySelectorAll('[data-preset]').forEach(button=>button.addEventListener('click',()=>{ const preset=button.dataset.preset; state.demo=false; document.getElementById('demo-btn').setAttribute('aria-pressed','false'); setJoints(presets[preset],{syncInputs:true,source:'LOCAL'}); setGripper(gripperPresets[preset],{syncInput:true,source:'LOCAL'}); }));
+  document.getElementById('demo-btn').addEventListener('click',event=>{ state.demo=!state.demo; event.currentTarget.setAttribute('aria-pressed',state.demo); if(state.demo) requestAnimationFrame(animate); });
+  function animate(now){ if(!state.demo)return; if(now-state.lastDemo>32){ state.lastDemo=now; const t=now/1000; setJoints([.65*Math.sin(t*.38),.64+.43*Math.sin(t*.31),1.22+.68*Math.sin(t*.27+.8),.46*Math.sin(t*.47+1.2),.72*Math.sin(t*.42+.4),.92*Math.sin(t*.55)],{syncInputs:true,source:'DEMO'}); setGripper(.5+.5*Math.sin(t*.72),{syncInput:true,source:'DEMO'}); } requestAnimationFrame(animate); }
+
+  window.PantheraThreeView = {
+    version:'1.0.0', limits:limits.map(pair=>[...pair]), presets,
+    setJoints:(values,options={})=>setJoints(values,{syncInputs:true,source:options.source||'API',timestamp:options.timestamp}),
+    setState,
+    setGripper:(opening,options={})=>setGripper(opening,{syncInput:true,source:options.source||'API'}),
+    setStyle:applyStyle,
+    getStyles:()=>Object.keys(styleLabels).map(id=>({id,label:styleLabels[id]})),
+    setCameraMode,
+    getCameraModes:()=>Object.keys(cameraModeLabels).map(id=>({id,label:cameraModeLabels[id]})),
+    getState:()=>({positions:[...state.q],gripper:state.gripper,source:state.source,model:state.sourceMode,style:state.style,cameraMode:state.cameraMode}),
+    render:requestRender
+  };
+  window.addEventListener('panthera:joints',event=>setState(event.detail||{}));
+  window.addEventListener('panthera:gripper',event=>setGripper(event.detail&&event.detail.opening!==undefined?event.detail.opening:event.detail,{syncInput:true,source:event.detail&&event.detail.source||'EVENT'}));
+  new ResizeObserver(requestRender).observe(stage); window.addEventListener('resize',requestRender);
+
+  buildControls(); syncStateDisplay();
+  (async()=>{
+    try {
+      const arrayBuffer=await fetchWithProgress(EXACT_GLB_URL); const {json,bin}=parseGlb(arrayBuffer); buildExactScene(json,bin);
+      setReady('exact','就绪 · 官方精确 CAD + 六轴实时运动链');
+    } catch(exactError) {
+      console.warn('精确 GLB 加载失败，切换轻量预览：',exactError);
+      try {
+        status.textContent='精确 GLB 需通过本地 HTTP 打开，正在加载轻量预览…'; progress.style.width='35%';
+        const bytes=await inflateFallback(window.PANTHERA_HT_MESH_B64); buildFallbackScene(parseFallback(bytes));
+        setReady('lightweight','就绪 · 轻量预览；运行 serve-panthera-three-view.ps1 可加载精确 GLB');
+      } catch(fallbackError) {
+        badge.className='badge error'; badge.querySelector('span').textContent='模型加载失败'; status.textContent=`加载失败：${fallbackError.message}`; status.className='error'; console.error(fallbackError);
+      }
+    }
+    const params=new URLSearchParams(location.search); const query=(params.get('q')||'').split(',').map(Number);
+    if(styleMaterials[params.get('style')]) applyStyle(params.get('style'));
+    if(cameraModeLabels[params.get('camera')]) setCameraMode(params.get('camera'));
+    if(Number.isFinite(Number(params.get('gripper')))) setGripper(Number(params.get('gripper')),{syncInput:true,source:'QUERY'});
+    if(query.length===6&&query.every(Number.isFinite)) setJoints(query,{syncInputs:true,source:'QUERY'});
+    if(params.get('demo')==='1') document.getElementById('demo-btn').click();
+  })();
+})();
+</script>
+</body>
+</html>
