@@ -33,6 +33,7 @@ from .real import (
     SdkAuditError,
     SdkAuditResult,
     audit_sdk_source,
+    require_serial_ports,
 )
 
 __all__ = [
@@ -66,4 +67,5 @@ __all__ = [
     "SdkAuditError",
     "SdkAuditResult",
     "audit_sdk_source",
+    "require_serial_ports",
 ]

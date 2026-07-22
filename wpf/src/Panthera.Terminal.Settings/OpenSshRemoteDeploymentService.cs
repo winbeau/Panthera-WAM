@@ -220,16 +220,58 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
     {
         var quotedRepository = QuotePosix(repository);
         return string.Equals(startMethod, "systemd-user", StringComparison.OrdinalIgnoreCase)
-            ? $"set -eu\ncd {quotedRepository}\nsystemctl --user start camerad.service armd.service\nsystemctl --user is-active camerad.service\nsystemctl --user is-active armd.service\n"
+            ? $$"""
+                set -eu
+                cd {{quotedRepository}}
+                set -- /dev/ttyACM*
+                if [ ! -e "$1" ]; then
+                  printf '%s\n' '未发现 Panthera 通信串口 /dev/ttyACM*；请检查机械臂供电和 USB 连接' >&2
+                  exit 23
+                fi
+                systemctl --user start camerad.service armd.service
+                """
             : $$"""
                 set -eu
                 export PANTHERA_REPO={{quotedRepository}}
                 cd {{quotedRepository}}
+                set -- /dev/ttyACM*
+                if [ ! -e "$1" ]; then
+                  printf '%s\n' '未发现 Panthera 通信串口 /dev/ttyACM*；请检查机械臂供电和 USB 连接' >&2
+                  exit 23
+                fi
                 zsh -lc 'source "$PANTHERA_REPO/deploy/panthera-up.zsh"; panthera-up'
                 """;
     }
 
-    internal static string BuildVerifyScript() => "set -eu\nss -ltn 2>/dev/null | grep -E ':(50051|50052)([[:space:]]|$)' || true\n";
+    internal static string BuildVerifyScript() => """
+        set -u
+        attempt=0
+        stable=0
+        ports=''
+        while [ "$attempt" -lt 15 ]; do
+          arm_state=$(systemctl --user is-active armd.service 2>/dev/null || true)
+          camera_state=$(systemctl --user is-active camerad.service 2>/dev/null || true)
+          ports=$(ss -ltn 2>/dev/null | grep -E ':(50051|50052)([[:space:]]|$)' || true)
+          if [ "$arm_state" = active ] && [ "$camera_state" = active ] \
+            && printf '%s\n' "$ports" | grep -q ':50051' \
+            && printf '%s\n' "$ports" | grep -q ':50052'; then
+            stable=$((stable + 1))
+            if [ "$stable" -ge 3 ]; then
+              printf '%s\n' "$ports"
+              exit 0
+            fi
+          else
+            stable=0
+          fi
+          attempt=$((attempt + 1))
+          sleep 1
+        done
+        printf '%s\n' '后端未能稳定运行 3 秒' >&2
+        systemctl --user status armd.service camerad.service --no-pager -l >&2 || true
+        journalctl --user -u armd.service -n 30 --no-pager >&2 || true
+        printf '%s\n' "$ports"
+        exit 24
+        """;
 
     internal static Dictionary<string, string> ParseProbeOutput(string output)
     {

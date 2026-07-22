@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import glob
 import importlib
+import os
 import re
 import sys
 import time
@@ -32,10 +34,32 @@ from .base import (
 EXPECTED_MOTOR_COUNT = 7
 MIN_SAFE_STATE_QUERY_FIRMWARE = (4, 2, 0)
 DEFAULT_MOTOR_TIMEOUT_MS = 150
+DEFAULT_SERIAL_PREFIX = "/dev/ttyACM"
 
 
 class SdkAuditError(BackendError):
     """SDK 源码或固件不满足已核实的安全前提。"""
+
+
+def require_serial_ports(
+    serial_prefix: str = DEFAULT_SERIAL_PREFIX,
+    *,
+    globber: Callable[[str], list[str]] = glob.glob,
+) -> tuple[str, ...]:
+    """在进入官方原生 SDK 前确认通信串口存在。
+
+    SDK v4.6.0 的 ``robot::init_ser()`` 会在串口列表为空时仍访问
+    ``str[serial_id - 1]``，从而直接段错误，Python 无法捕获。这里把缺失
+    硬件转换为可诊断的后端错误，避免 systemd 陷入退出码 139 的重启循环。
+    """
+
+    ports = tuple(sorted(globber(f"{serial_prefix}*")))
+    if not ports:
+        raise SdkAuditError(
+            f"未发现 Panthera 通信串口 {serial_prefix}*；"
+            "请确认机械臂通信板已供电、USB 已连接并完成系统枚举"
+        )
+    return ports
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +97,7 @@ def audit_sdk_source(sdk_root: str | Path) -> SdkAuditResult:
             line = raw_line.split("//", 1)[0].strip()
             if "detect_motor_limit" not in line:
                 continue
-            location = f"{path.relative_to(root)}:{line_number}"
+            location = f"{path.relative_to(root).as_posix()}:{line_number}"
             occurrences.append(location)
             if re.search(r"\bvoid\s+(?:robot::)?detect_motor_limit\s*\(", line):
                 continue
@@ -128,6 +152,8 @@ class RealBackend:
         self.estop_latch_hazard_present = False
 
         if robot_factory is None:
+            if sys.platform.startswith("linux"):
+                require_serial_ports(os.environ.get("PANTHERA_SERIAL_PREFIX", DEFAULT_SERIAL_PREFIX))
             panthera_class, sdk_module = _load_sdk(sdk_root)
 
             def create_robot(path: str | None) -> Any:

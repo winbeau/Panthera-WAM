@@ -16,6 +16,7 @@ from armd.backend import (
     RealBackend,
     SdkAuditError,
     audit_sdk_source,
+    require_serial_ports,
 )
 
 
@@ -195,6 +196,17 @@ def test_source_audit_detects_new_limit_call_site(tmp_path: Path) -> None:
     unsafe = audit_sdk_source(tmp_path)
     assert unsafe.estop_latch_hazard_present
     assert unsafe.detect_motor_limit_call_sites == ("panthera_cpp/motor_cpp/src/hardware/robot.cpp:2",)
+
+
+def test_require_serial_ports_rejects_missing_hardware_before_native_sdk() -> None:
+    with pytest.raises(SdkAuditError, match="未发现 Panthera 通信串口"):
+        require_serial_ports(globber=lambda _: [])
+
+
+def test_require_serial_ports_returns_sorted_matches() -> None:
+    ports = require_serial_ports(globber=lambda _: ["/dev/ttyACM2", "/dev/ttyACM0"])
+
+    assert ports == ("/dev/ttyACM0", "/dev/ttyACM2")
 
 
 def test_timeout_is_applied_once_during_init_without_redundant_flush() -> None:

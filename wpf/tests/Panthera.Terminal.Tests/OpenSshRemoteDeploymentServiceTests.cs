@@ -165,7 +165,22 @@ public sealed class OpenSshRemoteDeploymentServiceTests
 
         Assert.Contains("cd '/home/user/Panthera-WAM'", script, StringComparison.Ordinal);
         Assert.Contains("systemctl --user start camerad.service armd.service", script, StringComparison.Ordinal);
+        Assert.Contains("/dev/ttyACM*", script, StringComparison.Ordinal);
+        Assert.Contains("exit 23", script, StringComparison.Ordinal);
         Assert.DoesNotContain("install", script, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void VerifyScript_RequiresStableServicesAndBothPorts()
+    {
+        var script = OpenSshRemoteDeploymentService.BuildVerifyScript();
+
+        Assert.Contains("systemctl --user is-active armd.service", script, StringComparison.Ordinal);
+        Assert.Contains("systemctl --user is-active camerad.service", script, StringComparison.Ordinal);
+        Assert.Contains("stable=$((stable + 1))", script, StringComparison.Ordinal);
+        Assert.Contains("[ \"$stable\" -ge 3 ]", script, StringComparison.Ordinal);
+        Assert.Contains("journalctl --user -u armd.service", script, StringComparison.Ordinal);
+        Assert.Contains("exit 24", script, StringComparison.Ordinal);
     }
 
     [Theory]
