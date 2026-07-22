@@ -1,6 +1,9 @@
-# Third-Party Dependencies
+# Vendor Dependencies
 
-Third-party SDKs are tracked as git submodules rather than copied into this repository.
+External SDKs and project-owned reusable assets are tracked as git submodules rather than copied into this repository.
+
+Pinned revisions, fork-only deltas, main-repository adaptations, and update checks are audited in
+[`docs/VENDOR_MODIFICATIONS.md`](../docs/VENDOR_MODIFICATIONS.md).
 
 ## Panthera-HT SDK
 
