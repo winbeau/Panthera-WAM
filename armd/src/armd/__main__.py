@@ -48,11 +48,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="电机固件看门狗毫秒数（默认 150；0 表示禁用）",
     )
     parser.add_argument("--control-hz", type=float, default=200.0, help="控制循环频率（默认 200Hz）")
-    parser.add_argument("--bind", default="127.0.0.1:50051", help="gRPC 监听地址")
+    parser.add_argument(
+        "--bind",
+        default=os.environ.get("PANTHERA_ARM_BIND", "127.0.0.1:50051"),
+        help="gRPC 监听地址",
+    )
     parser.add_argument(
         "--local-bind",
         default=os.environ.get("PANTHERA_LOCAL_BIND", ""),
-        help="附加的 WSL 本地监听地址（部署时使用 IPv6 回环）",
+        help="附加的 Linux 本地监听地址",
     )
     parser.add_argument("--lease-timeout", type=float, default=2.0, help="控制权心跳超时秒数")
     parser.add_argument(
@@ -64,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--camera-endpoint",
         default=os.environ.get("PANTHERA_CAMERA_ENDPOINT", "127.0.0.1:50052"),
-        help="proxy 模式的 WSL 内部 camerad 端点",
+        help="proxy 模式的 Linux camerad 端点",
     )
     parser.add_argument(
         "--camera-serial",

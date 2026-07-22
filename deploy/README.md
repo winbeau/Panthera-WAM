@@ -39,7 +39,46 @@ winget install JRSoftware.InnoSetup
 GitHub 的 `CI` workflow 也会上传名为 `panthera-terminal-win-x64` 的自包含程序 artifact，
 不再只构建而不保留可下载执行程序。
 
-## WSL 部署
+## Raspberry Pi 5 部署（当前主路径）
+
+机械臂与 D405 直接插在 Pi 5 上。Python 依赖全部由 `uv` 管理；机械臂 SDK 与
+librealsense 必须来自主仓库的 `vendor/` submodule。推荐把服务只绑定到 Pi 的
+Tailscale IP，不要把明文 gRPC 端口暴露到公网。
+
+```bash
+git submodule update --init --recursive
+sudo apt-get update
+sudo apt-get install -y build-essential cmake libssl-dev libusb-1.0-0-dev pkg-config
+./deploy/install-pi5.sh --bind-address "$(tailscale ip -4)"
+```
+
+脚本会执行 `uv sync --frozen`，安装与当前 CPython 匹配的 vendored ARM64 SDK wheel，
+从 `vendor/librealsense` 构建 RSUSB Python 绑定，安装并 enable 两个 systemd user
+service，最后运行 armd/camerad 仿真自检。它不会启动真实服务，也不会向机械臂发命令。
+
+首次安装 udev 规则：
+
+```bash
+sudo install -m 0644 deploy/99-panthera-ht.rules /etc/udev/rules.d/
+sudo install -m 0644 vendor/librealsense/config/99-realsense-libusb.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Windows WPF 可临时用环境变量切到 Pi 直连模式：
+
+```powershell
+$env:PANTHERA_BACKEND_MODE = "Remote"
+$env:PANTHERA_ENDPOINT = "http://<PI_IP>:50051"
+$env:PANTHERA_CAMERA_ENDPOINT = "http://<PI_IP>:50052"
+Panthera.Terminal.App.exe
+```
+
+也可编辑 `%LOCALAPPDATA%\Panthera\terminal-settings.json`，设置 `BackendMode`、
+`Endpoint` 和 `CameraEndpoint`。`Remote` 模式不会启动 WSL bridge，也不会调用
+usbipd；环境引导只探测远程 armd/camerad。
+
+## WSL 部署（兼容回退）
 
 `armd` 与 `camerad` 以 systemd user service 运行。两者都在同一 Linux
 后端内，分别提供 `:50051` 机械臂服务和 `:50052` D405 服务。WPF 只作为

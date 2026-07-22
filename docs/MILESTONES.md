@@ -134,6 +134,20 @@
 
 ---
 
+## 阶段 5：Raspberry Pi 5 控制主机迁移
+
+- [x] **M-P0 架构与配置** ✅ armd/camerad 支持环境变量远程 bind；WPF `Remote` 模式按
+  Pi IP 直连并跳过 WSL bridge/usbipd，旧 `WslBridge` 模式保持兼容。Linux 85 项回归、
+  SDK 42 项审计、armd 仿真自检及 Windows WPF 19 项单测/Release 构建均通过
+- [ ] **M-P1 ARM64 部署**：Pi 使用 `uv sync --frozen`，从主仓库 vendor 安装匹配
+  CPython 的 ARM64 SDK wheel，并从 vendored librealsense 构建 RSUSB 绑定；仿真自检通过
+- [ ] **M-P2 只读联通**：确认 `/dev/ttyACM0..6`、D405、服务端口与 Windows→Pi gRPC
+  探活；不得使能或发送运动命令
+- [ ] 🔒 **M-P3 真机切换验收**：用户在场后按“读状态 → Enable → ≤5° 单关节 jog →
+  EStop 演练”顺序验收，再允许 WPF 真机控制
+
+---
+
 ## v1 发布状态
 
 M1–M4、M-W0–M-W3、真机尾项、Windows Release 与发布包均已完成。逐项命令、

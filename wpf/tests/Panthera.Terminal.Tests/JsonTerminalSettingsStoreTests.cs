@@ -12,7 +12,13 @@ public sealed class JsonTerminalSettingsStoreTests : IDisposable
     {
         var path = Path.Combine(_directory, "settings.json");
         var store = new JsonTerminalSettingsStore(path);
-        var expected = new TerminalSettings(Theme: "Dark", JogSpeed: 0.22, WslDistribution: "Ubuntu");
+        var expected = new TerminalSettings(
+            Endpoint: "http://100.78.118.74:50051",
+            CameraEndpoint: "http://100.78.118.74:50052",
+            Theme: "Dark",
+            JogSpeed: 0.22,
+            WslDistribution: "Ubuntu",
+            BackendMode: "Remote");
 
         store.Save(expected);
         var actual = store.Load();
@@ -30,6 +36,15 @@ public sealed class JsonTerminalSettingsStoreTests : IDisposable
         var actual = new JsonTerminalSettingsStore(path).Load();
 
         Assert.Equal(new TerminalSettings(), actual);
+    }
+
+    [Theory]
+    [InlineData("WslBridge", true)]
+    [InlineData("Remote", false)]
+    [InlineData("remote", false)]
+    public void UsesWslBridge_RecognizesRemoteMode(string mode, bool expected)
+    {
+        Assert.Equal(expected, new TerminalSettings(BackendMode: mode).UsesWslBridge);
     }
 
     public void Dispose()

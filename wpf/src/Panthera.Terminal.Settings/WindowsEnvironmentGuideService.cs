@@ -20,6 +20,11 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         TerminalSettings settings,
         CancellationToken cancellationToken)
     {
+        if (!settings.UsesWslBridge)
+        {
+            return await ProbeRemoteAsync(settings, cancellationToken);
+        }
+
         var steps = new List<EnvironmentGuideStep>();
         var usbipd = await RunAsync("usbipd", ["--version"], cancellationToken);
         steps.Add(Step("usbipd", usbipd.Success, usbipd.Success ? usbipd.Output.Trim() : usbipd.Error, usbipd.Command));
@@ -97,6 +102,11 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         TerminalSettings settings,
         CancellationToken cancellationToken)
     {
+        if (!settings.UsesWslBridge)
+        {
+            return await ProbeRemoteAsync(settings, cancellationToken);
+        }
+
         var steps = new List<EnvironmentGuideStep>();
         var usbipd = await RunAsync("usbipd", ["--version"], cancellationToken);
         steps.Add(Step("usbipd", usbipd.Success,
@@ -203,6 +213,52 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
             }
         }
         steps.Add(Step("armd 探活", false, lastError?.Message ?? "探活超时", $"gRPC {settings.Endpoint}"));
+        return new EnvironmentGuideResult(steps);
+    }
+
+    private async Task<EnvironmentGuideResult> ProbeRemoteAsync(
+        TerminalSettings settings,
+        CancellationToken cancellationToken)
+    {
+        var steps = new List<EnvironmentGuideStep>
+        {
+            Step(
+                "远程 Linux 后端",
+                true,
+                "WPF 直接连接远程 armd/camerad，不启动 WSL bridge，也不接管 Windows USB",
+                $"{settings.Endpoint} / {settings.CameraEndpoint}"),
+        };
+        try
+        {
+            var daemon = await _client.GetDaemonStatusAsync(cancellationToken);
+            var healthy = daemon.Simulation || daemon.HardwareConnected;
+            steps.Add(Step(
+                "armd 探活",
+                healthy,
+                healthy ? $"已联通，控制频率 {daemon.ControlHz:F0} Hz" : "armd 可连接但硬件尚未就绪",
+                $"gRPC {settings.Endpoint}"));
+        }
+        catch (Exception exception)
+        {
+            steps.Add(Step("armd 探活", false, exception.Message, $"gRPC {settings.Endpoint}"));
+        }
+        try
+        {
+            var status = await _client.GetCameraStatusAsync(cancellationToken);
+            var healthy = status.Enabled && status.Available && status.Streaming;
+            var detail = healthy
+                ? $"{status.Model} · {status.ActualFps:F1} fps · {status.LastFrameAgeMs} ms"
+                : status.Error;
+            steps.Add(Step("D405 / camerad", healthy, detail, $"CameraService {settings.CameraEndpoint}"));
+        }
+        catch (Exception exception)
+        {
+            steps.Add(Step(
+                "D405 / camerad",
+                false,
+                exception.Message,
+                $"CameraService {settings.CameraEndpoint}"));
+        }
         return new EnvironmentGuideResult(steps);
     }
 

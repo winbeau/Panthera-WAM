@@ -1,4 +1,4 @@
-"""WSL 内部 RealSense D405 采集服务。"""
+"""Linux RealSense D405 采集服务。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from .service import CameraService
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Panthera-WAM WSL D405 采集服务")
+    parser = argparse.ArgumentParser(description="Panthera-WAM Linux D405 采集服务")
     parser.add_argument(
         "--mode",
         choices=("auto", "sim"),
@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--local-bind",
         default=os.environ.get("PANTHERA_CAMERA_LOCAL_BIND", ""),
-        help="附加的 WSL 本地监听地址（部署时使用 IPv6 回环）",
+        help="附加的 Linux 本地监听地址",
     )
     parser.add_argument("--serial", default=os.environ.get("PANTHERA_CAMERA_SERIAL", ""))
     parser.add_argument(

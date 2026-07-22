@@ -54,6 +54,7 @@ public partial class App : Application
         {
             settings = settings with { UiScale = Math.Clamp(uiScaleOverride, 0.90, 1.40) };
         }
+        settings = ApplyConnectionOverrides(settings);
         ApplyTheme(settings.Theme);
         var uiAcceptanceMode = Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE") == "1";
 
@@ -70,7 +71,7 @@ public partial class App : Application
                 services.AddSingleton<LatestCameraFrames>();
                 services.AddSingleton<MainWindowViewModel>();
                 services.AddSingleton<MainWindow>();
-                if (!uiAcceptanceMode)
+                if (!uiAcceptanceMode && settings.UsesWslBridge)
                 {
                     services.AddHostedService<WslTcpBridgeHostedService>();
                 }
@@ -143,6 +144,21 @@ public partial class App : Application
     public static bool IsScreenshotMode =>
         !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("PANTHERA_SCREENSHOT_PATH"))
         || Environment.GetEnvironmentVariable("PANTHERA_UI_TEST") == "1";
+
+    private static TerminalSettings ApplyConnectionOverrides(TerminalSettings settings)
+    {
+        var backendMode = Environment.GetEnvironmentVariable("PANTHERA_BACKEND_MODE");
+        var endpoint = Environment.GetEnvironmentVariable("PANTHERA_ENDPOINT");
+        var cameraEndpoint = Environment.GetEnvironmentVariable("PANTHERA_CAMERA_ENDPOINT");
+        return settings with
+        {
+            BackendMode = string.IsNullOrWhiteSpace(backendMode) ? settings.BackendMode : backendMode,
+            Endpoint = string.IsNullOrWhiteSpace(endpoint) ? settings.Endpoint : endpoint,
+            CameraEndpoint = string.IsNullOrWhiteSpace(cameraEndpoint)
+                ? settings.CameraEndpoint
+                : cameraEndpoint,
+        };
+    }
 
     private static ApplicationTheme ResolveTheme(string theme)
     {

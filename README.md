@@ -22,15 +22,16 @@ D405 帧流、数据导出，以及 42 项 SDK 能力的机器可执行审计。
 ## 架构
 
 ```text
-Windows: WPF 可视化终端 ── arm bridge :50050 ───→ armd :50051 → Arm/DatasetService → 机械臂/数据
-                       └─ camera bridge :50049 → camerad :50052 → CameraService → D405
-Linux:   panthera-cli ───────────────────────────→ 同一 Linux 后端（WSL / 未来树莓派 5）
+Windows: WPF 可视化终端 ── gRPC / Pi IP ──┬→ armd :50051 → Arm/DatasetService → 机械臂/数据
+                                          └→ camerad :50052 → CameraService → D405
+Pi 5:    panthera-cli ─────────────────────→ 同一 ARM64 Linux 后端
+Legacy:  WSL bridge :50050/:50049 仍保留作兼容与开发回退
 ```
 
 - **armd**：200Hz 单硬件线程守护服务，提供 lease、watchdog、软限位和 EStop 安全层。
 - **panthera-cli**：50 条 v1/v2 命令，纯 gRPC 客户端，不直接访问硬件。
 - **WPF 终端**：.NET 9 Fluent 驾驶舱，只通过 gRPC 做状态/视频可视化与控制意图下发。
-- **D405 视频链路**：D405 与机械臂同时 attach 到同一 Linux；`camerad:50052`
+- **D405 视频链路**：D405 与机械臂直接连接 Raspberry Pi 5；`camerad:50052`
   隔离 librealsense 采集，WPF 以 RGB/深度 latest-frame 双画面显示。
 - **v2 控制与数据**：MIT/动力学、笛卡尔 jog、多点轨迹、拖动示教录制回放，
   以及独立 `dataset.proto` 的 LeRobotDataset v3 异步导出。
@@ -59,7 +60,20 @@ uv run --package panthera-armd armd --sim --check
 D405 与机械臂的统一 WSL/armd 工作流见
 [`docs/D405_WORKFLOW.md`](docs/D405_WORKFLOW.md)。
 
-## WSL 真机部署
+## Raspberry Pi 5 控制主机部署
+
+Pi 5 使用系统 ARM64 Python 3.12、`uv` 工作区、主仓库内的 SDK/librealsense
+vendor submodule。安装脚本会启用 systemd user service，但只运行仿真自检，不会访问真机：
+
+```bash
+git submodule update --init --recursive
+./deploy/install-pi5.sh --bind-address <PI_TAILSCALE_OR_LAN_IP>
+```
+
+WPF 设为 `BackendMode=Remote`，机械臂端点使用 `http://<PI_IP>:50051`，相机端点使用
+`http://<PI_IP>:50052`。建议绑定 Tailscale IP；当前链路是明文 gRPC，不应直接暴露到公网。
+
+## Legacy WSL 部署
 
 ```bash
 ./deploy/install-wsl.sh

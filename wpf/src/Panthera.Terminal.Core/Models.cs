@@ -168,7 +168,11 @@ public sealed record TerminalSettings(
     string UsbSerial = "",
     double JogSpeed = 0.15,
     double JogStep = 0.02,
-    double UiScale = 1.0);
+    double UiScale = 1.0,
+    string BackendMode = "WslBridge")
+{
+    public bool UsesWslBridge => !string.Equals(BackendMode, "Remote", StringComparison.OrdinalIgnoreCase);
+}
 
 public sealed record TerminalLogEntry(
     DateTimeOffset Timestamp,
