@@ -22,11 +22,14 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
 
     public async Task<RemoteDeploymentReport> ConfigureAndStartAsync(
         SshConnectionSettings settings,
+        IProgress<RemoteDeploymentProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        const string sshStep = "SSH 连接";
+        ReportRunning(progress, sshStep, "正在建立 SSH 连接并读取远程信息…");
         if (!settings.IsConfigured)
         {
-            return Failure("SSH 参数不完整：需要主机、端口和用户名", "SSH 连接");
+            return Failure("SSH 参数不完整：需要主机、端口和用户名", sshStep, progress);
         }
 
         ProcessResult probe;
@@ -36,36 +39,41 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
         }
         catch (Exception exception)
         {
-            return Failure($"SSH 探测失败：{exception.Message}", "SSH 连接");
+            return Failure($"SSH 探测失败：{exception.Message}", sshStep, progress);
         }
 
         if (!probe.Success)
         {
             return Failure(
                 string.IsNullOrWhiteSpace(probe.Error) ? "远程探测失败" : probe.Error.Trim(),
-                "SSH 连接");
+                sshStep,
+                progress);
         }
 
         var values = ParseProbeOutput(probe.Output);
         if (!string.Equals(Get(values, "marker", string.Empty), ProbeMarker, StringComparison.Ordinal))
         {
-            return Failure("远程输出缺少 Panthera 探测标记，未继续执行启动操作", "SSH 探测");
+            return Failure("远程输出缺少 Panthera 探测标记，未继续执行启动操作", sshStep, progress);
         }
         var steps = new List<EnvironmentGuideStep>
         {
             new("SSH 连接", true, $"已连接 {settings.User}@{settings.Host}:{settings.Port}", probe.Command),
         };
+        ReportCompleted(progress, steps[^1]);
 
         var architecture = Get(values, "arch", "unknown");
         var targetKind = Get(values, "target_kind", "unknown");
         var repository = Get(values, "repo", string.Empty);
         var startMethod = Get(values, "start_method", "none");
+        ReportRunning(progress, "远程系统识别", "正在识别系统、架构和发行版…");
         steps.Add(new EnvironmentGuideStep(
             "远程系统识别",
             architecture != "unknown",
             $"{targetKind} · {Get(values, "kernel", "unknown")} · {architecture} · {Get(values, "os", "unknown")}",
             "uname -s; uname -m; /etc/os-release"));
+        ReportCompleted(progress, steps[^1]);
 
+        ReportRunning(progress, "Panthera 工作目录", "正在定位已部署的 Panthera-WAM 工作区…");
         if (string.IsNullOrWhiteSpace(repository))
         {
             steps.Add(new EnvironmentGuideStep(
@@ -73,6 +81,7 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
                 false,
                 "未找到已部署的 Panthera-WAM 工作区；未创建或下载任何目录",
                 "探测 $HOME 下的 pyproject.toml / armd / deploy"));
+            ReportCompleted(progress, steps[^1]);
             return new RemoteDeploymentReport(steps, targetKind, architecture, string.Empty, startMethod);
         }
 
@@ -81,7 +90,9 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
             true,
             repository,
             $"探测到 {repository}"));
+        ReportCompleted(progress, steps[^1]);
 
+        ReportRunning(progress, "启动脚本识别", "正在识别已部署的启动方式…");
         if (!string.Equals(startMethod, "systemd-user", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(startMethod, "launcher", StringComparison.OrdinalIgnoreCase))
         {
@@ -90,6 +101,7 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
                 false,
                 "未找到可用的 systemd user service 或已部署启动脚本；未执行安装操作",
                 "systemctl --user cat armd.service camerad.service / deploy/panthera-up.zsh"));
+            ReportCompleted(progress, steps[^1]);
             return new RemoteDeploymentReport(steps, targetKind, architecture, repository, startMethod);
         }
 
@@ -100,7 +112,9 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
                 ? "使用已部署的 systemd user service"
                 : Get(values, "launcher", "deploy/panthera-up.zsh"),
             startMethod));
+        ReportCompleted(progress, steps[^1]);
 
+        ReportRunning(progress, "启动 Linux 后端", "正在检查机械臂串口并启动 armd / camerad…");
         ProcessResult start;
         try
         {
@@ -109,6 +123,7 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
         catch (Exception exception)
         {
             steps.Add(new EnvironmentGuideStep("启动 Linux 后端", false, exception.Message, startMethod));
+            ReportCompleted(progress, steps[^1]);
             return new RemoteDeploymentReport(steps, targetKind, architecture, repository, startMethod);
         }
 
@@ -117,11 +132,13 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
             start.Success,
             start.Success ? "armd 与 camerad 已请求启动" : FailureDetail(start, "远程启动命令失败"),
             start.Command));
+        ReportCompleted(progress, steps[^1]);
         if (!start.Success)
         {
             return new RemoteDeploymentReport(steps, targetKind, architecture, repository, startMethod);
         }
 
+        ReportRunning(progress, "后端端口探活", "正在确认服务与 50051 / 50052 连续稳定…");
         ProcessResult verification;
         try
         {
@@ -130,6 +147,7 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
         catch (Exception exception)
         {
             steps.Add(new EnvironmentGuideStep("后端端口探活", false, exception.Message, "ss -ltn"));
+            ReportCompleted(progress, steps[^1]);
             return new RemoteDeploymentReport(steps, targetKind, architecture, repository, startMethod);
         }
         steps.Add(new EnvironmentGuideStep(
@@ -139,6 +157,7 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
                 ? (HasListeningPorts(verification.Output) ? "已发现 50051/50052 监听" : verification.Output.Trim())
                 : FailureDetail(verification, "远程端口探活失败"),
             verification.Command));
+        ReportCompleted(progress, steps[^1]);
 
         return new RemoteDeploymentReport(steps, targetKind, architecture, repository, startMethod);
     }
@@ -397,8 +416,33 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
         }
     }
 
-    private static RemoteDeploymentReport Failure(string detail, string name) =>
-        new([new EnvironmentGuideStep(name, false, detail, "ssh")]);
+    private static RemoteDeploymentReport Failure(
+        string detail,
+        string name,
+        IProgress<RemoteDeploymentProgress>? progress)
+    {
+        var step = new EnvironmentGuideStep(name, false, detail, "ssh");
+        ReportCompleted(progress, step);
+        return new RemoteDeploymentReport([step]);
+    }
+
+    private static void ReportRunning(
+        IProgress<RemoteDeploymentProgress>? progress,
+        string name,
+        string detail) =>
+        progress?.Report(new RemoteDeploymentProgress(
+            name,
+            RemoteDeploymentProgressState.Running,
+            detail));
+
+    private static void ReportCompleted(
+        IProgress<RemoteDeploymentProgress>? progress,
+        EnvironmentGuideStep step) =>
+        progress?.Report(new RemoteDeploymentProgress(
+            step.Name,
+            step.Success ? RemoteDeploymentProgressState.Succeeded : RemoteDeploymentProgressState.Failed,
+            step.Detail,
+            step.Command));
 
     private static string Get(IReadOnlyDictionary<string, string> values, string key, string fallback) =>
         values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : fallback;

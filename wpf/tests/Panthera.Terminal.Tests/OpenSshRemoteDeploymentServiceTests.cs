@@ -7,6 +7,21 @@ namespace Panthera.Terminal.Tests;
 public sealed class OpenSshRemoteDeploymentServiceTests
 {
     [Fact]
+    public void DeploymentProgress_UsesTheVisibleExecutionOrder()
+    {
+        Assert.Equal(
+        [
+            "SSH 连接",
+            "远程系统识别",
+            "Panthera 工作目录",
+            "启动脚本识别",
+            "启动 Linux 后端",
+            "后端端口探活",
+        ],
+            RemoteDeploymentProgress.OrderedStepNames);
+    }
+
+    [Fact]
     public void SshDiscovery_ParsesEditableHostsAndEffectiveConfiguration()
     {
         var aliases = WindowsSshConnectionDiscoveryService.ParseOpenSshAliases("""

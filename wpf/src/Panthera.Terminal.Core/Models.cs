@@ -218,6 +218,31 @@ public sealed record RemoteDeploymentReport(
     public bool Success => Steps.Count > 0 && Steps.All(step => step.Success);
 }
 
+public enum RemoteDeploymentProgressState
+{
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+public sealed record RemoteDeploymentProgress(
+    string Name,
+    RemoteDeploymentProgressState State,
+    string Detail = "",
+    string Command = "")
+{
+    public static IReadOnlyList<string> OrderedStepNames { get; } =
+    [
+        "SSH 连接",
+        "远程系统识别",
+        "Panthera 工作目录",
+        "启动脚本识别",
+        "启动 Linux 后端",
+        "后端端口探活",
+    ];
+}
+
 public sealed record TerminalLogEntry(
     DateTimeOffset Timestamp,
     string Level,

@@ -280,7 +280,7 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private async void OpenSshDeployment_Click(object sender, RoutedEventArgs eventArgs)
+    private void OpenSshDeployment_Click(object sender, RoutedEventArgs eventArgs)
     {
         try
         {
@@ -294,18 +294,13 @@ public partial class MainWindow : FluentWindow
             }
 
             SshDeploymentButton.IsEnabled = false;
-            var report = await _remoteDeployment.ConfigureAndStartAsync(sshSettings);
-            var summary = string.Join(
-                Environment.NewLine,
-                report.Steps.Select(step => $"{(step.Success ? "✓" : "✗")} {step.Name}：{step.Detail}"));
-            if (!report.Success)
+            var progressDialog = new SshDeploymentProgressDialog(sshSettings, _remoteDeployment)
             {
-                MessageBox.Show(
-                    this,
-                    summary,
-                    "SSH 部署未完成",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                Owner = this,
+            };
+            if (progressDialog.ShowDialog() != true
+                || progressDialog.Report is not { Success: true })
+            {
                 return;
             }
 
@@ -317,12 +312,6 @@ public partial class MainWindow : FluentWindow
                 Ssh = sshSettings,
             };
             _settingsStore.Save(updated);
-            MessageBox.Show(
-                this,
-                $"{summary}{Environment.NewLine}{Environment.NewLine}连接配置已保存。终端将安全释放当前控制权并自动重启，通过 SSH 隧道连接远程后端。",
-                "SSH 部署完成",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
             RestartApplication();
         }
         catch (Exception exception)

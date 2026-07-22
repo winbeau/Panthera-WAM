@@ -124,6 +124,7 @@ public interface IRemoteDeploymentService
 {
     Task<RemoteDeploymentReport> ConfigureAndStartAsync(
         SshConnectionSettings settings,
+        IProgress<RemoteDeploymentProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }
 
