@@ -4,6 +4,29 @@ All notable changes to Panthera-WAM are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.12] - 2026-07-22
+
+### Added
+
+- Added a unified shadowed SSH deployment progress dialog that visualizes all six probe, detection, startup and health-check stages in real time.
+- Added per-stage waiting, running, success and failure states, plus in-dialog cancellation and final restart confirmation.
+
+### Fixed
+
+- Prevented the native Panthera SDK from entering a segmentation-fault restart loop when the communication board is powered off or `/dev/ttyACM*` is absent.
+- Changed remote startup verification from a single instantaneous `systemctl is-active` check to three consecutive healthy samples of both services and ports 50051/50052.
+- Added actionable service status and journal diagnostics when the remote backend cannot remain stable.
+
+### Changed
+
+- Replaced the system result message boxes with the same borderless, shadowed modal language used by the SSH connection dialog.
+
+### Safety and validation
+
+- Re-ran the complete Windows-to-SSH-to-Raspberry-Pi startup flow on the real Pi 5 without acquiring control, enabling motors or sending motion commands.
+- Verified all seven motors were detected, both services stayed active, ports 50051/50052 remained available and `armd` reported zero restarts.
+- Raspberry Pi passed all 91 `armd` tests; WPF Release build completed with zero warnings and all 41 unit tests passed.
+
 ## [2.2.11] - 2026-07-22
 
 ### Fixed
