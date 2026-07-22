@@ -4,6 +4,15 @@ All notable changes to Panthera-WAM are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.10] - 2026-07-22
+
+### Fixed
+
+- Prevented the SSH dialog from freezing when a third-party Windows mDNS namespace provider blocks synchronously during `.local` Raspberry Pi discovery.
+- Moved all SSH candidate discovery startup off the WPF dispatcher and added a ten-second overall timeout.
+- Replaced in-process mDNS resolution with a bounded, killable child-process probe.
+- Added a UI regression that simulates synchronous discovery startup and requires the dialog dispatcher to remain responsive.
+
 ## [2.2.9] - 2026-07-22
 
 ### Added

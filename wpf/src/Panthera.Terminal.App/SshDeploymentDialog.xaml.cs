@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using Panthera.Terminal.Core;
 
@@ -34,6 +35,9 @@ public partial class SshDeploymentDialog : Window
     private async void SshDeploymentDialog_Loaded(object sender, RoutedEventArgs eventArgs)
     {
         RecordAcceptanceEvent("ssh-dialog-opened");
+        _ = Dispatcher.BeginInvoke(
+            () => RecordAcceptanceEvent("ssh-dialog-responsive"),
+            DispatcherPriority.Background);
         await RefreshCandidatesAsync();
     }
 
@@ -48,7 +52,11 @@ public partial class SshDeploymentDialog : Window
         RefreshCandidatesButton.IsEnabled = false;
         try
         {
-            var candidates = await _discoveryService.DiscoverAsync(_previous, _discoveryCancellation.Token);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_discoveryCancellation.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            var candidates = await Task.Run(
+                () => _discoveryService.DiscoverAsync(_previous, timeout.Token),
+                timeout.Token);
             HostBox.ItemsSource = candidates;
             UserBox.ItemsSource = candidates.Select(candidate => candidate.User)
                 .Append(_previous.User)
@@ -65,8 +73,12 @@ public partial class SshDeploymentDialog : Window
             RecordAcceptanceEvent("ssh-candidates-bound");
             DiscoveryText.Text = candidates.Count == 0 ? "未发现" : $"发现 {candidates.Count} 个";
         }
+        catch (OperationCanceledException) when (_discoveryCancellation.IsCancellationRequested)
+        {
+        }
         catch (OperationCanceledException)
         {
+            DiscoveryText.Text = "探测超时";
         }
         catch
         {

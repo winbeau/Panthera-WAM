@@ -38,6 +38,15 @@ public sealed class OpenSshRemoteDeploymentServiceTests
     }
 
     [Fact]
+    public void SshDiscovery_ParsesResolvedIpv4FromLocalizedPingOutput()
+    {
+        var addresses = WindowsSshConnectionDiscoveryService.ParseIpv4Addresses(
+            "正在 Ping pi5.local [192.168.50.25] 具有 32 字节的数据:\n请求超时。\nfd7a:115c:a1e0::1");
+
+        Assert.Equal(["192.168.50.25"], addresses);
+    }
+
+    [Fact]
     public void SshDiscovery_FindsOnlineRaspberryPiTailscalePeerAndUsesHistoryUser()
     {
         const string json = """

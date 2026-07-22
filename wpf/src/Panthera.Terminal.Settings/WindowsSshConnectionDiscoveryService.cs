@@ -26,6 +26,10 @@ public sealed class WindowsSshConnectionDiscoveryService : ISshConnectionDiscove
 
         if (Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE") == "1")
         {
+            if (Environment.GetEnvironmentVariable("PANTHERA_UI_ACCEPTANCE_BLOCKING_DISCOVERY") == "1")
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(1500));
+            }
             return MergeCandidates(candidates);
         }
 
@@ -132,6 +136,15 @@ public sealed class WindowsSshConnectionDiscoveryService : ISshConnectionDiscove
         }
         return (user, addresses);
     }
+
+    internal static IReadOnlyList<string> ParseIpv4Addresses(string output) =>
+        System.Text.RegularExpressions.Regex.Matches(
+                output,
+                @"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+            .Select(match => match.Value)
+            .Where(IsUsableIpv4)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     internal static IReadOnlyList<SshConnectionCandidate> ParseTailscaleStatus(
         string json,
@@ -333,12 +346,22 @@ public sealed class WindowsSshConnectionDiscoveryService : ISshConnectionDiscove
         {
             try
             {
-                var addresses = await Dns.GetHostAddressesAsync(name, cancellationToken)
-                    .WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
-                return addresses.Where(address => address.AddressFamily == AddressFamily.InterNetwork)
+                // Windows can load third-party namespace providers for .local lookups.
+                // Some providers block synchronously before Dns.GetHostAddressesAsync
+                // returns, which would freeze WPF. Keep resolution in a killable child.
+                var result = await RunProcessAsync(
+                    "ping.exe",
+                    ["-4", "-n", "1", "-w", "800", name],
+                    TimeSpan.FromSeconds(2),
+                    cancellationToken);
+                if (result is null)
+                {
+                    return Array.Empty<SshConnectionCandidate>();
+                }
+                return ParseIpv4Addresses($"{result.Output}\n{result.Error}")
                     .Select(address => new SshConnectionCandidate(
-                        address.ToString(),
-                        MatchingPort(previous, address.ToString(), name),
+                        address,
+                        MatchingPort(previous, address, name),
                         previous.User,
                         previous.IdentityFile,
                         $"Raspberry Pi · mDNS · {name}"))

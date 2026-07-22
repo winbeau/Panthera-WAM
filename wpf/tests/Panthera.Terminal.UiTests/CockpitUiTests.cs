@@ -550,6 +550,11 @@ public sealed class CockpitUiTests
                 }
                 Assert.True(opened, "SSH deployment dialog did not reach its Loaded event");
                 Assert.True(Retry.WhileFalse(
+                    () => File.ReadAllText(eventLog).Contains("ssh-dialog-responsive", StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(1),
+                    TimeSpan.FromMilliseconds(50)).Success,
+                    "SSH dialog UI thread was blocked by synchronous discovery startup");
+                Assert.True(Retry.WhileFalse(
                     () => File.ReadAllText(eventLog).Contains("ssh-candidates-bound", StringComparison.Ordinal),
                     TimeSpan.FromSeconds(5),
                     TimeSpan.FromMilliseconds(100)).Success,
@@ -599,6 +604,10 @@ public sealed class CockpitUiTests
         startInfo.ArgumentList.Add(applicationAssembly);
         startInfo.Environment["PANTHERA_UI_TEST"] = "1";
         startInfo.Environment["PANTHERA_UI_ACCEPTANCE"] = "1";
+        if (testName == "ssh-dialog")
+        {
+            startInfo.Environment["PANTHERA_UI_ACCEPTANCE_BLOCKING_DISCOVERY"] = "1";
+        }
         startInfo.Environment["PANTHERA_UI_ACCEPTANCE_LOG"] = eventLog;
         startInfo.Environment["PANTHERA_FAILURE_LOG"] = Path.Combine(
             artifactDirectory,
