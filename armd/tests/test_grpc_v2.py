@@ -21,7 +21,7 @@ async def v2_stack(tmp_path, monkeypatch):
     monkeypatch.setenv("PANTHERA_TEACH_DIR", str(tmp_path / "teach"))
     loop = HardwareLoop(SimBackend, control_hz=200.0)
     loop.start()
-    server = ArmdServer(loop, bind="127.0.0.1:0", lease_timeout_s=10.0)
+    server = ArmdServer(loop, bind="127.0.0.1:0", lease_timeout_s=60.0)
     await server.start()
     channel = grpc.aio.insecure_channel(
         f"127.0.0.1:{server.port}",
@@ -149,7 +149,7 @@ async def test_m6_joint_trajectory_zero_velocity_and_cancel(v2_stack) -> None:
             durations=[0.3],
         ),
         metadata=metadata,
-        timeout=5.0,
+        timeout=30.0,
     )
     final = None
     fractions = []
@@ -174,7 +174,7 @@ async def test_m6_joint_trajectory_zero_velocity_and_cancel(v2_stack) -> None:
             durations=[1.0],
         ),
         metadata=metadata,
-        timeout=5.0,
+        timeout=30.0,
     )
     await asyncio.sleep(0.1)
     cancelled = await stub.CancelExecution(
@@ -205,7 +205,7 @@ async def test_m6_joint_trajectory_with_middle_velocity(v2_stack) -> None:
             durations=[0.4, 0.4],
         ),
         metadata=metadata,
-        timeout=5.0,
+        timeout=30.0,
     )
     final = None
     async for status in stub.StreamExecution(

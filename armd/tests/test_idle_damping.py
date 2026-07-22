@@ -36,6 +36,30 @@ def test_enter_idle_damping_replaces_previous_position_lock() -> None:
     assert backend._last_frame.arm_kd == pytest.approx([0.0] * 6)
 
 
+def test_plain_position_target_is_not_reissued_during_idle_cycles() -> None:
+    class CountingBackend(SimBackend):
+        writes = 0
+
+        def write_frame(self, frame) -> None:
+            self.writes += 1
+            super().write_frame(frame)
+
+    backend = CountingBackend()
+    backend.write_frame(
+        position_frame(
+            backend,
+            arm_position=np.full(6, 0.1),
+            arm_velocity=np.full(6, 0.1),
+            gripper_position=0.0,
+        )
+    )
+
+    backend.maintain_idle()
+    backend.maintain_idle()
+
+    assert backend.writes == 1
+
+
 def test_explicit_passive_idle_remains_zero_damping() -> None:
     backend = SimBackend()
 

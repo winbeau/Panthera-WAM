@@ -266,7 +266,7 @@ public sealed class ArmdClient : IArmdClient
         bool wait,
         CancellationToken cancellationToken = default)
     {
-        var request = new MoveJRequest { DurationS = durationSeconds, Wait = wait };
+        var request = new MoveJRequest { DurationS = durationSeconds, Wait = wait, Tolerance = 0.01 };
         request.Positions.AddRange(positions);
         var response = await InvokeAsync(async () => await _client.MoveJAsync(
             request,
@@ -348,6 +348,28 @@ public sealed class ArmdClient : IArmdClient
             },
             Headers(),
             deadline: DateTime.UtcNow.AddSeconds(15),
+            cancellationToken: cancellationToken));
+        return new ExecutionHandle(response.ExecutionId);
+    }
+
+    public async Task<ExecutionHandle> RunJointTrajectoryAsync(
+        IReadOnlyList<JointTrajectoryWaypoint> waypoints,
+        IReadOnlyList<double> durations,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new RunJointTrajectoryRequest();
+        foreach (var waypoint in waypoints)
+        {
+            var message = new WaypointSpec();
+            message.Positions.AddRange(waypoint.Positions);
+            message.Velocities.AddRange(waypoint.Velocities);
+            request.Waypoints.Add(message);
+        }
+        request.Durations.AddRange(durations);
+        var response = await InvokeAsync(async () => await _client.RunJointTrajectoryAsync(
+            request,
+            Headers(),
+            deadline: DateTime.UtcNow.AddSeconds(60),
             cancellationToken: cancellationToken));
         return new ExecutionHandle(response.ExecutionId);
     }

@@ -109,6 +109,10 @@ public sealed record JointMoveResult(
 
 public sealed record ExecutionHandle(string ExecutionId);
 
+public sealed record JointTrajectoryWaypoint(
+    IReadOnlyList<double> Positions,
+    IReadOnlyList<double> Velocities);
+
 public sealed record ExecutionProgress(
     string ExecutionId,
     ExecutionState State,

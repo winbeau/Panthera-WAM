@@ -628,6 +628,8 @@ C++ `motor_back_t`（`serial_struct.hpp:212-222`）+ pybind 暴露面（`binding
 - `teach start`（自由拖动）= `2_gravity_friction_compensation_control.py`：**`kp`/`kd` 全零**（纯力矩模式）+ `tqe = clip(get_Gravity() + get_friction_compensation(vel,Fc,Fv,vel_threshold), ±[15,30,30,15,5,5])`，循环 `sleep(0.005)`（≈200Hz）。参考系数 `Fc=[.20,.15,.15,.15,.04,.04]`、`Fv=[.06,.06,.06,.03,.02,.02]`、`vel_threshold=0.02` —— **正好用作 §5.7 #35 要求的 armd 配置兜底默认值**。
 - `trajectory run-waypoints` = `3_interpolation_control_zeroVel.py`：`control_rate=100Hz`，逐段 `septic_interpolation` → **`Joint_Pos_Vel`（非 MIT，与 moveL 不同）**，用绝对时间基 `segment_start + (step+1)*dt` 防累积漂移。
 
+**`Joint_Pos_Vel` / `moveJ` 下发与速度符号（2026-07-20 官网源码复核）**：官方 Python/C++ 实现均只调用一次 `pos_vel_MAXtqe(...) + motor_send_cmd()`；`iswait=True` 随后仅以 20ms 周期执行状态查询和误差判断，不重复发送位置目标。`moveJ` 的速度严格按 `(target-current)/duration` 计算并保留正负方向；底层 `vel_float2int` 也编码为有符号 `int16_t`。官方 `3_interpolation_control_*` 与正弦轨迹示例将插值得到的有符号速度原样逐点传入 `Joint_Pos_Vel`，只在新的绝对时间采样点发送一次，最终位置用零速度锁定。故 armd 必须遵守：①普通 `JointMove/MoveJ` 目标帧只发一次，后续周期只轮询；②轨迹不得对速度取绝对值；③HardwareLoop 频率高于轨迹采样率时不得重复发送同一个采样点；④普通刚性目标不得在空闲周期无限重发。此前违反这四点会反复重启固件位置段，表现为路径内顿挫与末点间歇追位。
+
 ## V6. 计划未覆盖的新发现（N1–N4 影响架构，须处置）
 
 **N1（安全隐患，当前不触发但必须盯住）**：`robot::motor_send_cmd()` 被限位标志门控——`if(!motor_position_limit_flag && !motor_torque_limit_flag)` 才真正下发（`robot.cpp:250-260`）。而 `set_stop()` 结尾正是 `motor_send_cmd()`，**理论上限位латch 一旦置位，连 EStop 都会静默失效**，且这两个标志 **未在 bindings 暴露、Python 既读不到也清不掉**。

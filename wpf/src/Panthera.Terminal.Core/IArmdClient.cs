@@ -54,6 +54,11 @@ public interface IArmdClient : IAsyncDisposable
         double durationSeconds,
         CancellationToken cancellationToken = default);
 
+    Task<ExecutionHandle> RunJointTrajectoryAsync(
+        IReadOnlyList<JointTrajectoryWaypoint> waypoints,
+        IReadOnlyList<double> durations,
+        CancellationToken cancellationToken = default);
+
     IAsyncEnumerable<ExecutionProgress> StreamExecutionAsync(
         string executionId,
         CancellationToken cancellationToken = default);

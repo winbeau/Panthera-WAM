@@ -280,8 +280,6 @@ class RealBackend:
         self._require_open()
         idle_mode = self._idle_mode
         if idle_mode is None:
-            if self._last_frame is not None:
-                self.write_frame(self._last_frame)
             return
         states = self.read_all()
         if len(states) != EXPECTED_MOTOR_COUNT or not all(state.valid for state in states):

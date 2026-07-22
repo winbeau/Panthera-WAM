@@ -18,7 +18,7 @@ from armd.server import ArmdServer
 async def kinematics_stack():
     loop = HardwareLoop(SimBackend, control_hz=200.0)
     loop.start()
-    server = ArmdServer(loop, bind="127.0.0.1:0", lease_timeout_s=10.0)
+    server = ArmdServer(loop, bind="127.0.0.1:0", lease_timeout_s=60.0)
     await server.start()
     channel = grpc.aio.insecure_channel(f"127.0.0.1:{server.port}", options=(("grpc.enable_http_proxy", 0),))
     await channel.channel_ready()

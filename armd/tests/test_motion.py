@@ -27,6 +27,16 @@ class FakeClock:
         self.now += seconds
 
 
+class RecordingSimBackend(SimBackend):
+    def __init__(self, *, clock: FakeClock) -> None:
+        super().__init__(clock=clock)
+        self.frames = []
+
+    def write_frame(self, frame) -> None:
+        self.frames.append(frame)
+        super().write_frame(frame)
+
+
 def test_gripper_position_frame_uses_requested_instantaneous_torque_budget() -> None:
     backend = SimBackend()
     frame = gripper_position_frame(
@@ -70,6 +80,27 @@ def test_position_motion_reaches_and_holds_target() -> None:
     assert result is MotionStepResult.DONE
     assert np.isclose(backend.read_all()[0].position, 0.1)
     assert motion.errors[0] <= 1e-3
+
+
+def test_position_motion_sends_sdk_target_once_while_polling() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = JointPositionMotion(
+        positions=np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        velocities=np.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        max_torque=backend.limits.joint_torque,
+        tolerance=1e-3,
+        deadline=clock.now + 2.0,
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert len(backend.frames) == 1
+    for _ in range(5):
+        clock.advance(0.01)
+        backend.refresh_state()
+        assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+
+    assert len(backend.frames) == 1
 
 
 def test_position_motion_timeout_holds_current_position() -> None:
@@ -175,3 +206,58 @@ def test_cartesian_small_target_is_not_done_inside_old_loose_tolerance() -> None
     clock.advance(1.0)
     assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
     assert motion.errors[0] == pytest.approx(0.002)
+
+
+def test_cartesian_trajectory_preserves_signed_velocity_and_does_not_repeat_samples() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = CartesianTrajectoryMotion(
+        positions=[
+            np.zeros(6),
+            np.array([-0.01, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            np.array([-0.02, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        ],
+        velocities=[
+            np.zeros(6),
+            np.array([-0.5, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            np.zeros(6),
+        ],
+        timestamps=[0.0, 0.01, 0.02],
+        max_torque=backend.limits.joint_torque,
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert len(backend.frames) == 1
+    assert backend.frames[0].arm_position[0] == pytest.approx(0.0)
+
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert len(backend.frames) == 1
+
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert len(backend.frames) == 2
+    assert backend.frames[-1].arm_position[0] == pytest.approx(-0.01)
+    assert backend.frames[-1].arm_velocity[0] == pytest.approx(-0.5)
+
+
+def test_cartesian_trajectory_finishes_with_zero_velocity_lock() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    target = np.array([0.02, 0.0, 0.0, 0.0, 0.0, 0.0])
+    motion = CartesianTrajectoryMotion(
+        positions=[np.zeros(6), target],
+        velocities=[np.zeros(6), np.zeros(6)],
+        timestamps=[0.0, 1.0],
+        max_torque=backend.limits.joint_torque,
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    backend._positions[:6] = target
+    clock.advance(1.0)
+
+    assert motion.step(backend, clock.now) is MotionStepResult.DONE
+    assert backend.frames[-1].arm_position == pytest.approx(target)
+    assert backend.frames[-1].arm_velocity == pytest.approx([0.0] * 6)

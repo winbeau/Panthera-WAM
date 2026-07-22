@@ -170,6 +170,30 @@ async def test_movej_wait_and_gripper_commands(motion_stack) -> None:
 
 
 @pytest.mark.asyncio
+async def test_movej_preserves_official_signed_velocity(motion_stack) -> None:
+    loop, stub, metadata = motion_stack
+    signed = await stub.MoveJ(
+        arm_pb2.MoveJRequest(
+            positions=[-0.2, 0.0, 0.0, 0.0, 0.0, 0.0],
+            duration_s=1.0,
+            wait=False,
+        ),
+        metadata=metadata,
+        timeout=2.0,
+    )
+    assert signed.accepted
+
+    signed_frame = None
+    for _ in range(20):
+        signed_frame = await asyncio.wrap_future(loop.submit(lambda backend: backend._last_frame))
+        if signed_frame is not None and signed_frame.arm_velocity[0] < 0.0:
+            break
+        await asyncio.sleep(0.005)
+    assert signed_frame is not None
+    assert signed_frame.arm_velocity[0] == pytest.approx(-0.2)
+
+
+@pytest.mark.asyncio
 async def test_estop_recovery_then_gripper_keeps_joint_firmware_kd_zero(motion_stack) -> None:
     loop, stub, metadata = motion_stack
     await stub.EStop(arm_pb2.EStopRequest(reason="gripper-regression"))

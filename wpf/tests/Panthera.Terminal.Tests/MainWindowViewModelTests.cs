@@ -200,7 +200,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task ResetArm_UsesSdkSafeHomePosition()
+    public async Task ResetArm_UsesOfficialSepticTrajectoryToSdkSafeHomePosition()
     {
         var client = new FailingJogClient(enableMotion: true);
         var viewModel = new MainWindowViewModel(
@@ -212,19 +212,27 @@ public sealed class MainWindowViewModelTests
             HasControl = true,
             ConnectionState = TerminalConnectionState.Connected,
         };
+        foreach (var joint in viewModel.Joints)
+        {
+            joint.Valid = true;
+        }
 
         await viewModel.ResetArmCommand.ExecuteAsync(null);
 
-        Assert.Equal(new[] { 0.0, 0.6, 0.6, 0.0, 0.0, 0.0 }, client.LastMoveJPositions);
-        Assert.Equal(3.0, client.LastMoveJDuration);
+        Assert.NotNull(client.LastTrajectoryWaypoints);
+        Assert.Equal(2, client.LastTrajectoryWaypoints.Count);
+        Assert.Equal(new[] { 0.0, 0.6, 0.6, 0.0, 0.0, 0.0 }, client.LastTrajectoryWaypoints[1].Positions);
+        Assert.All(client.LastTrajectoryWaypoints.SelectMany(waypoint => waypoint.Velocities),
+            velocity => Assert.Equal(0.0, velocity));
+        Assert.Equal(new[] { 3.0 }, client.LastTrajectoryDurations);
         Assert.Contains(viewModel.Logs, entry =>
             entry.Source == "Motion" && entry.Message.Contains("安全姿态", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task DemoSequence_CanBeStoppedAfterCurrentMoveJSegment()
+    public async Task DemoSequence_UsesContinuousTrajectoryAndCanBeSafelyCancelled()
     {
-        var client = new FailingJogClient(enableMotion: true, hangMoveJ: true);
+        var client = new FailingJogClient(enableMotion: true, hangTrajectory: true);
         var viewModel = new MainWindowViewModel(
             client,
             new StubEnvironmentGuideService(),
@@ -234,18 +242,25 @@ public sealed class MainWindowViewModelTests
             HasControl = true,
             ConnectionState = TerminalConnectionState.Connected,
         };
+        foreach (var joint in viewModel.Joints)
+        {
+            joint.Valid = true;
+        }
 
         var demoTask = viewModel.ToggleDemoSequenceCommand.ExecuteAsync(null);
-        await client.MoveJStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await client.TrajectoryStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
 
         Assert.True(viewModel.IsDemoRunning);
         Assert.Equal("停止展示", viewModel.DemoActionLabel);
-        Assert.Equal(new[] { 0.0, 0.6, 0.6, 0.0, 0.0, 0.0 }, client.LastMoveJPositions);
+        Assert.NotNull(client.LastTrajectoryWaypoints);
+        Assert.True(client.LastTrajectoryWaypoints.Count > 4);
+        Assert.Contains(client.LastTrajectoryWaypoints.Skip(1).Take(client.LastTrajectoryWaypoints.Count - 2),
+            waypoint => waypoint.Velocities.Any(velocity => Math.Abs(velocity) > 1e-6));
 
         await viewModel.ToggleDemoSequenceCommand.ExecuteAsync(null);
-        client.ReleaseHungMoveJ();
         await demoTask.WaitAsync(TimeSpan.FromSeconds(2));
 
+        Assert.Equal(1, client.CancelExecutionCount);
         Assert.False(viewModel.IsDemoRunning);
         Assert.Equal("展示动作", viewModel.DemoActionLabel);
     }
@@ -257,10 +272,12 @@ public sealed class MainWindowViewModelTests
         private readonly bool _failGripperWithLostLease;
         private readonly bool _hangJog;
         private readonly bool _hangMoveJ;
+        private readonly bool _hangTrajectory;
         private readonly List<TeachRecordingSnapshot> _recordings = [];
         private string _recordingPath = string.Empty;
         private readonly TaskCompletionSource _releaseHungJog = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _releaseHungMoveJ = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseHungTrajectory = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public FailingJogClient(
             bool enableTeachSession = false,
@@ -268,6 +285,7 @@ public sealed class MainWindowViewModelTests
             bool failGripperWithLostLease = false,
             bool hangJog = false,
             bool hangMoveJ = false,
+            bool hangTrajectory = false,
             bool hasActiveLease = true)
         {
             _enableTeachSession = enableTeachSession;
@@ -275,6 +293,7 @@ public sealed class MainWindowViewModelTests
             _failGripperWithLostLease = failGripperWithLostLease;
             _hangJog = hangJog;
             _hangMoveJ = hangMoveJ;
+            _hangTrajectory = hangTrajectory;
             HasActiveLease = hasActiveLease;
         }
 
@@ -284,11 +303,19 @@ public sealed class MainWindowViewModelTests
 
         public TaskCompletionSource MoveJStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public TaskCompletionSource TrajectoryStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public CartesianTarget? LastMoveLTarget { get; private set; }
 
         public IReadOnlyList<double>? LastMoveJPositions { get; private set; }
 
         public double LastMoveJDuration { get; private set; }
+
+        public IReadOnlyList<JointTrajectoryWaypoint>? LastTrajectoryWaypoints { get; private set; }
+
+        public IReadOnlyList<double>? LastTrajectoryDurations { get; private set; }
+
+        public int CancelExecutionCount { get; private set; }
 
         public TerminalConnectionState ConnectionState { get; private set; } = TerminalConnectionState.Connected;
 
@@ -421,18 +448,48 @@ public sealed class MainWindowViewModelTests
             return Task.FromResult(new ExecutionHandle("move-l-test"));
         }
 
+        public Task<ExecutionHandle> RunJointTrajectoryAsync(
+            IReadOnlyList<JointTrajectoryWaypoint> waypoints,
+            IReadOnlyList<double> durations,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_enableMotion)
+            {
+                throw new NotSupportedException();
+            }
+            LastTrajectoryWaypoints = waypoints
+                .Select(waypoint => new JointTrajectoryWaypoint(
+                    waypoint.Positions.ToArray(),
+                    waypoint.Velocities.ToArray()))
+                .ToArray();
+            LastTrajectoryDurations = durations.ToArray();
+            return Task.FromResult(new ExecutionHandle("joint-trajectory-test"));
+        }
+
         public async IAsyncEnumerable<ExecutionProgress> StreamExecutionAsync(
             string executionId,
             [EnumeratorCancellation]
             CancellationToken cancellationToken = default)
         {
-            await Task.CompletedTask;
-            yield break;
+            if (_hangTrajectory && executionId == "joint-trajectory-test")
+            {
+                TrajectoryStarted.TrySetResult();
+                await _releaseHungTrajectory.Task.WaitAsync(cancellationToken);
+                yield return new ExecutionProgress(executionId, ExecutionState.Cancelled, 0.5, "", null);
+                yield break;
+            }
+            await Task.Yield();
+            yield return new ExecutionProgress(executionId, ExecutionState.Done, 1.0, "", null);
         }
 
         public Task<bool> CancelExecutionAsync(
             string executionId,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            CancellationToken cancellationToken = default)
+        {
+            CancelExecutionCount++;
+            _releaseHungTrajectory.TrySetResult();
+            return Task.FromResult(true);
+        }
 
         public Task<IReadOnlyList<double>> ForwardKinematicsAsync(
             IReadOnlyList<double> joints,

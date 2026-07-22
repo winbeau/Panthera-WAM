@@ -10,6 +10,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static readonly double[] JointMinimum = [-2.4, -0.1, -0.1, -1.6, -1.7, -2.5];
     private static readonly double[] JointMaximum = [2.4, 3.2, 4.0, 1.6, 1.7, 2.5];
     private static readonly double[] HomeJointPosition = [0.0, 0.6, 0.6, 0.0, 0.0, 0.0];
+    private const int DemoBatchCycles = 12;
+    private const double DemoPassThroughVelocityLimit = 0.5;
     private static readonly DemoStep[] DemoSequence =
     [
         new("安全复位位", HomeJointPosition, 2.5),
@@ -534,14 +536,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         await RunBusyAsync("Home", async () =>
         {
+            var current = CurrentJointPositions();
+            var duration = SmoothMoveDuration(current, HomeJointPosition);
             SetJointTargets(HomeJointPosition);
-            var result = await _client.MoveJAsync(HomeJointPosition, 3.0, true);
-            AddLog(result.Accepted && result.Reached ? "Info" : "Warning", "Motion",
-                result.Accepted && result.Reached
+            var handle = await _client.RunJointTrajectoryAsync(
+                [
+                    new JointTrajectoryWaypoint(current, ZeroJointVelocity()),
+                    new JointTrajectoryWaypoint(HomeJointPosition, ZeroJointVelocity()),
+                ],
+                [duration]);
+            var result = await ObserveExecutionAsync(handle);
+            AddLog(result.State == ExecutionState.Done ? "Info" : "Warning", "Motion",
+                result.State == ExecutionState.Done
                     ? "已复位到安全姿态 J=[0.0, 0.6, 0.6, 0.0, 0.0, 0.0]"
-                    : string.IsNullOrWhiteSpace(result.RejectReason)
+                    : string.IsNullOrWhiteSpace(result.ErrorMessage)
                         ? "复位未到位"
-                        : result.RejectReason);
+                        : result.ErrorMessage);
         });
     }
 
@@ -550,7 +560,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (IsDemoRunning)
         {
+            var executionId = _activeExecutionId;
             RequestDemoStop(logRequest: true);
+            if (!string.IsNullOrWhiteSpace(executionId))
+            {
+                await _client.CancelExecutionAsync(executionId, CancellationToken.None);
+            }
             return;
         }
         if (!CanRunMotion())
@@ -563,32 +578,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IsDemoRunning = true;
         IsBusy = true;
         NotifyMotionCommands();
-        AddLog("Info", "Demo", "展示动作已启动；再次点击将在当前 MoveJ 段完成后停止");
+        AddLog("Info", "Demo", "展示动作已启动；按官方七次插值连续执行，再次点击将安全减速停止");
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                foreach (var step in DemoSequence)
+                var (waypoints, durations) = BuildDemoTrajectoryBatch();
+                SetJointTargets(HomeJointPosition);
+                ExecutionStatus = "展示 · 连续轨迹";
+                var handle = await _client.RunJointTrajectoryAsync(waypoints, durations, cancellationToken);
+                var result = await ObserveExecutionAsync(handle, cancellationToken);
+                if (result.State != ExecutionState.Done)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                    SetJointTargets(step.Positions);
-                    ExecutionStatus = $"展示 · {step.Name}";
-                    var result = await _client.MoveJAsync(step.Positions, step.DurationSeconds, true);
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                    if (!result.Accepted || !result.Reached)
-                    {
-                        throw new InvalidOperationException(
-                            string.IsNullOrWhiteSpace(result.RejectReason)
-                                ? $"{step.Name} 未到位"
-                                : result.RejectReason);
-                    }
-                    await Task.Delay(TimeSpan.FromMilliseconds(350), cancellationToken);
+                    throw new InvalidOperationException(
+                        string.IsNullOrWhiteSpace(result.ErrorMessage)
+                            ? $"展示轨迹{ExecutionStatus}"
+                            : result.ErrorMessage);
                 }
             }
         }
@@ -612,6 +617,99 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     private bool CanToggleDemoSequence() => IsDemoRunning || CanRunMotion();
+
+    private async Task<ExecutionProgress> ObserveExecutionAsync(
+        ExecutionHandle handle,
+        CancellationToken cancellationToken = default)
+    {
+        _activeExecutionId = handle.ExecutionId;
+        ExecutionStatus = "运行中";
+        ExecutionProgress? final = null;
+        try
+        {
+            await foreach (var progress in _client.StreamExecutionAsync(handle.ExecutionId, cancellationToken))
+            {
+                final = progress;
+                ExecutionFraction = progress.Fraction;
+                ExecutionStatus = progress.State switch
+                {
+                    ExecutionState.Done => "完成",
+                    ExecutionState.Cancelled => "已取消",
+                    ExecutionState.Failed => $"失败：{progress.ErrorMessage}",
+                    _ => "运行中",
+                };
+            }
+        }
+        finally
+        {
+            if (_activeExecutionId == handle.ExecutionId)
+            {
+                _activeExecutionId = string.Empty;
+            }
+        }
+        return final ?? throw new InvalidOperationException("轨迹执行流未返回状态");
+    }
+
+    private (IReadOnlyList<JointTrajectoryWaypoint> Waypoints, IReadOnlyList<double> Durations)
+        BuildDemoTrajectoryBatch()
+    {
+        var points = new List<IReadOnlyList<double>> { CurrentJointPositions() };
+        var durations = new List<double>();
+        if (MaximumDistance(points[0], HomeJointPosition) > 0.01)
+        {
+            durations.Add(SmoothMoveDuration(points[0], HomeJointPosition));
+            points.Add(HomeJointPosition);
+        }
+        for (var cycle = 0; cycle < DemoBatchCycles; cycle++)
+        {
+            foreach (var step in DemoSequence.Skip(1))
+            {
+                durations.Add(step.DurationSeconds);
+                points.Add(step.Positions);
+            }
+        }
+
+        var velocities = PassThroughVelocities(points, durations);
+        return (
+            points.Select((point, index) => new JointTrajectoryWaypoint(point, velocities[index])).ToArray(),
+            durations);
+    }
+
+    private static IReadOnlyList<IReadOnlyList<double>> PassThroughVelocities(
+        IReadOnlyList<IReadOnlyList<double>> points,
+        IReadOnlyList<double> durations)
+    {
+        var result = points.Select(_ => ZeroJointVelocity()).ToArray();
+        for (var pointIndex = 1; pointIndex < points.Count - 1; pointIndex++)
+        {
+            var span = durations[pointIndex - 1] + durations[pointIndex];
+            for (var jointIndex = 0; jointIndex < 6; jointIndex++)
+            {
+                result[pointIndex][jointIndex] = Math.Clamp(
+                    (points[pointIndex + 1][jointIndex] - points[pointIndex - 1][jointIndex]) / span,
+                    -DemoPassThroughVelocityLimit,
+                    DemoPassThroughVelocityLimit);
+            }
+        }
+        return result;
+    }
+
+    private double[] CurrentJointPositions()
+    {
+        if (Joints.Any(joint => !joint.Valid))
+        {
+            throw new InvalidOperationException("关节状态尚未完整刷新，不能规划平滑轨迹");
+        }
+        return Joints.Select(joint => joint.Position).ToArray();
+    }
+
+    private static double SmoothMoveDuration(IReadOnlyList<double> start, IReadOnlyList<double> target) =>
+        Math.Max(3.0, MaximumDistance(start, target) * 3.0);
+
+    private static double MaximumDistance(IReadOnlyList<double> first, IReadOnlyList<double> second) =>
+        first.Zip(second, (left, right) => Math.Abs(left - right)).Max();
+
+    private static double[] ZeroJointVelocity() => new double[6];
 
     [RelayCommand(CanExecute = nameof(CanRunMotion))]
     private async Task MoveLAsync()
@@ -1367,7 +1465,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         lifetime.Cancel();
         if (logRequest)
         {
-            AddLog("Info", "Demo", "已请求停止，当前 MoveJ 段完成后退出循环");
+            AddLog("Info", "Demo", "已请求停止，服务端正在执行 12 周期安全减速");
         }
     }
 

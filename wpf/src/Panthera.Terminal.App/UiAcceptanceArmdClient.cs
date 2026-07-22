@@ -156,6 +156,12 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
         CancellationToken cancellationToken = default) =>
         Task.FromResult(new ExecutionHandle("ui-acceptance-execution"));
 
+    public Task<ExecutionHandle> RunJointTrajectoryAsync(
+        IReadOnlyList<JointTrajectoryWaypoint> waypoints,
+        IReadOnlyList<double> durations,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ExecutionHandle("ui-acceptance-joint-trajectory"));
+
     public async IAsyncEnumerable<ExecutionProgress> StreamExecutionAsync(
         string executionId,
         [EnumeratorCancellation]

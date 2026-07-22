@@ -157,8 +157,6 @@ class SimBackend:
         self._require_open()
         idle_mode = self._idle_mode
         if idle_mode is None:
-            if self._last_frame is not None:
-                self.write_frame(self._last_frame)
             return
 
         if idle_mode == "damping":

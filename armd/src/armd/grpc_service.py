@@ -461,8 +461,6 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             velocities = finite_vector(request.velocities, name="velocities")
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
-        if np.any(velocities < 0):
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "JointMove.velocities 不得为负数")
         tolerance = optional_double(request, "tolerance", 0.1)
         timeout_s = optional_double(request, "timeout_s", 15.0)
         if tolerance < 0 or timeout_s < 0:
@@ -520,7 +518,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         if cached is None or not all(state.valid for state in cached.motors[:6]):
             return arm_pb2.MoveJResponse(accepted=False, reject_reason="关节状态无效或连接不完整")
         current = np.array([state.position for state in cached.motors[:6]], dtype=np.float64)
-        velocities = np.abs(positions - current) / request.duration_s
+        velocities = (positions - current) / request.duration_s
         reject_reason = reject_reason or arm_magnitude_reject_reason(
             velocities, limits.joint_velocity, label="计算速度"
         )

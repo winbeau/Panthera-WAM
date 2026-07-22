@@ -213,7 +213,7 @@ class GripperPositionMotion:
 
 
 class JointPositionMotion:
-    """逐周期重发 POS-VEL 目标，并在到达/超时/取消时安全收尾。"""
+    """按 SDK 语义只下发一次 POS-VEL 目标，随后逐周期轮询到位。"""
 
     def __init__(
         self,
@@ -231,6 +231,7 @@ class JointPositionMotion:
         self.deadline = deadline
         self.errors = np.full(6, np.inf, dtype=np.float64)
         self.reject_reason = ""
+        self._command_sent = False
         self._cancel_reason: CancelReason | None = None
         self._lock = threading.Lock()
 
@@ -253,12 +254,26 @@ class JointPositionMotion:
             hold_current_position(backend)
             self.reject_reason = f"运动已取消: {cancel_reason.value}"
             return MotionStepResult.CANCELLED
+        if not self._command_sent:
+            backend.write_frame(
+                position_frame(
+                    backend,
+                    arm_position=self.positions,
+                    arm_velocity=self.velocities,
+                    arm_max_torque=self.max_torque,
+                    gripper_position=states[6].position,
+                )
+            )
+            self._command_sent = True
+            if np.all(self.errors <= self.tolerance):
+                return MotionStepResult.DONE
+            return MotionStepResult.RUNNING
         if np.all(self.errors <= self.tolerance):
             backend.write_frame(
                 position_frame(
                     backend,
                     arm_position=self.positions,
-                    arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                    arm_velocity=np.zeros(6),
                     arm_max_torque=self.max_torque,
                     gripper_position=states[6].position,
                 )
@@ -269,15 +284,6 @@ class JointPositionMotion:
             self.reject_reason = "等待关节到位超时"
             return MotionStepResult.FAILED
 
-        backend.write_frame(
-            position_frame(
-                backend,
-                arm_position=self.positions,
-                arm_velocity=self.velocities,
-                arm_max_torque=self.max_torque,
-                gripper_position=states[6].position,
-            )
-        )
         return MotionStepResult.RUNNING
 
 
@@ -462,7 +468,8 @@ class CartesianTrajectoryMotion:
         self._cancel_reason: CancelReason | None = None
         self._deceleration_step: int | None = None
         self._deceleration_velocity = np.zeros(6, dtype=np.float64)
-        self._last_index = 0
+        self._last_index = -1
+        self._settle_command_sent = False
         self._lock = threading.Lock()
 
     @property
@@ -490,21 +497,27 @@ class CartesianTrajectoryMotion:
             return self._step_cancel(backend, states[6].position, current, cancel_reason)
 
         elapsed = now - self._started_at
-        index = min(int(np.searchsorted(self.timestamps, elapsed, side="right")), len(self.positions) - 1)
-        self._last_index = index
+        index = min(
+            max(0, int(np.searchsorted(self.timestamps, elapsed, side="right")) - 1),
+            len(self.positions) - 1,
+        )
         if elapsed < self.timestamps[-1]:
-            speed = np.maximum(np.abs(self.velocities[index]), 1e-3)
-            backend.write_frame(
-                position_frame(
-                    backend,
-                    arm_position=self.positions[index],
-                    arm_velocity=speed,
-                    arm_max_torque=self.max_torque,
-                    gripper_position=states[6].position,
+            if index != self._last_index:
+                backend.write_frame(
+                    position_frame(
+                        backend,
+                        arm_position=self.positions[index],
+                        arm_velocity=self.velocities[index],
+                        arm_max_torque=self.max_torque,
+                        gripper_position=states[6].position,
+                    )
                 )
-            )
+                self._last_index = index
             with self._lock:
-                self._fraction = max(self._fraction, (index + 1) / len(self.positions))
+                self._fraction = max(
+                    self._fraction,
+                    min(1.0, elapsed / max(self.timestamps[-1], np.finfo(np.float64).eps)),
+                )
             return MotionStepResult.RUNNING
 
         target = self.positions[-1]
@@ -514,7 +527,7 @@ class CartesianTrajectoryMotion:
                 position_frame(
                     backend,
                     arm_position=target,
-                    arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                    arm_velocity=np.zeros(6),
                     arm_max_torque=self.max_torque,
                     gripper_position=states[6].position,
                 )
@@ -526,15 +539,17 @@ class CartesianTrajectoryMotion:
             hold_current_position(backend)
             self.reject_reason = f"{self.operation_name} 末点收敛超时"
             return MotionStepResult.FAILED
-        backend.write_frame(
-            position_frame(
-                backend,
-                arm_position=target,
-                arm_velocity=np.full(6, POSITION_HOLD_SPEED),
-                arm_max_torque=self.max_torque,
-                gripper_position=states[6].position,
+        if not self._settle_command_sent:
+            backend.write_frame(
+                position_frame(
+                    backend,
+                    arm_position=target,
+                    arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                    arm_max_torque=self.max_torque,
+                    gripper_position=states[6].position,
+                )
             )
-        )
+            self._settle_command_sent = True
         return MotionStepResult.RUNNING
 
     def _step_cancel(

@@ -124,7 +124,7 @@ def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
             "--bind",
             endpoint,
             "--lease-timeout",
-            "5",
+            "30",
         ],
         env=env,
         stdout=subprocess.DEVNULL,

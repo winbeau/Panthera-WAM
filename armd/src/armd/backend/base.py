@@ -181,8 +181,8 @@ class JointFrame:
         if self.mode is FrameMode.POS_VEL_TQE:
             if self.arm_max_torque is None:
                 raise ValueError("POS_VEL_TQE 模式必须提供 arm_max_torque")
-            if np.any(self.arm_velocity < 0) or self.gripper_velocity < 0:
-                raise ValueError("POS_VEL_TQE 模式的速度参数必须为非负数")
+            if self.gripper_velocity < 0:
+                raise ValueError("POS_VEL_TQE 模式的夹爪速度参数必须为非负数")
             if np.any(self.arm_max_torque <= 0) or self.gripper_max_torque <= 0:
                 raise ValueError("POS_VEL_TQE 模式的最大力矩必须为正数")
         if self.mode is FrameMode.POS_VEL_TQE_KP_KD:
@@ -354,7 +354,7 @@ class Backend(Protocol):
         """计算重力与摩擦补偿；只允许在 HardwareLoop 线程调用。"""
 
     def maintain_idle(self) -> None:
-        """空闲周期重发最后安全帧；无历史帧时建立当前空闲策略帧。"""
+        """仅维护显式空闲策略；普通位置目标由固件自行保持，不重复下发。"""
 
     def enter_idle_damping(self) -> None:
         """丢弃刚性目标，使下一空闲周期进入零刚度阻尼模式。"""
