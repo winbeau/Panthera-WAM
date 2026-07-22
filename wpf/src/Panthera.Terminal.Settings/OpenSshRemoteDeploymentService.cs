@@ -265,13 +265,16 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
         CancellationToken cancellationToken)
     {
         ValidateSettings(settings);
-        var encodedScript = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
+        var encodedScript = Convert.ToBase64String(Encoding.UTF8.GetBytes(NormalizeRemoteScript(script)));
         var remoteCommand = $"printf %s {QuotePosix(encodedScript)} | base64 -d | sh";
         var args = BaseSshArguments(settings);
         args.Add(Target(settings));
         args.Add(remoteCommand);
         return await RunProcessAsync("ssh.exe", args, cancellationToken);
     }
+
+    internal static string NormalizeRemoteScript(string script) =>
+        script.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 
     private async Task<ProcessResult> RunProcessAsync(
         string fileName,

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         Title="SSH 连接"
-        Width="520" Height="400" MinWidth="520" MinHeight="400"
+        Width="548" Height="428" MinWidth="548" MinHeight="428"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         WindowStyle="None" AllowsTransparency="True" ShowInTaskbar="False"
         FontFamily="Segoe UI Variable Text, Microsoft YaHei UI, Segoe UI"
@@ -28,9 +28,14 @@
             </Setter>
         </Style>
     </Window.Resources>
-    <Border Background="{DynamicResource ApplicationBackgroundBrush}"
+    <Border Margin="14"
+            Background="{DynamicResource ApplicationBackgroundBrush}"
             BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
             BorderThickness="1" CornerRadius="10">
+        <Border.Effect>
+            <DropShadowEffect Color="#000000" BlurRadius="22" ShadowDepth="4"
+                              Direction="270" Opacity="0.42" RenderingBias="Quality" />
+        </Border.Effect>
         <Grid Margin="22,12,22,18">
             <Grid.RowDefinitions>
                 <RowDefinition Height="42" />

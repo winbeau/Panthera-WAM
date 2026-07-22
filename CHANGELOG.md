@@ -4,6 +4,17 @@ All notable changes to Panthera-WAM are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.11] - 2026-07-22
+
+### Fixed
+
+- Normalized remotely executed shell scripts to LF before Base64 encoding so Raspberry Pi `/bin/sh` (`dash`) no longer rejects Windows CRLF as `set: Illegal option -`.
+- Added a cross-platform line-ending regression covering the SSH probe script.
+
+### Changed
+
+- Added a soft outer shadow and transparent spacing around the SSH deployment dialog so it reads as a floating modal instead of embedded content.
+
 ## [2.2.10] - 2026-07-22
 
 ### Fixed

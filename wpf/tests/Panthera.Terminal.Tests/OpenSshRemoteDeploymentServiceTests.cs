@@ -145,6 +145,18 @@ public sealed class OpenSshRemoteDeploymentServiceTests
     }
 
     [Fact]
+    public void RemoteScripts_AreNormalizedToUnixLineEndingsBeforeEncoding()
+    {
+        var normalized = OpenSshRemoteDeploymentService.NormalizeRemoteScript(
+            "set -eu\r\nprintf ok\r\nlast\rline\n");
+
+        Assert.Equal("set -eu\nprintf ok\nlast\nline\n", normalized);
+        Assert.DoesNotContain('\r', normalized);
+        Assert.DoesNotContain('\r', OpenSshRemoteDeploymentService.NormalizeRemoteScript(
+            OpenSshRemoteDeploymentService.BuildProbeScript()));
+    }
+
+    [Fact]
     public void StartScript_UsesDetectedRepositoryAndExistingServices()
     {
         var script = OpenSshRemoteDeploymentService.BuildStartScript(
