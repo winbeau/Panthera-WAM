@@ -75,6 +75,8 @@ fi
 uv sync --frozen --all-packages --all-extras --python "$python"
 uv pip install --python "$repo_root/.venv/bin/python" --no-deps "$sdk_wheel"
 PANTHERA_PYTHON="$repo_root/.venv/bin/python" "$repo_root/deploy/build-realsense-linux.sh"
+export UV_PROJECT_ENVIRONMENT="$repo_root/.venv"
+export UV_PYTHON="$repo_root/.venv/bin/python"
 
 mkdir -p "$config_dir" "$systemd_dir"
 rendered_env=$(mktemp)
