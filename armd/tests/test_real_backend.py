@@ -101,6 +101,7 @@ class FakeRobot:
         }
         self.gripper_limits = {"lower": 0.0, "upper": 2.0}
         self.velocity_limits = np.ones(6)
+        self.acceleration_limits = np.full(6, 2.0)
         self.max_torque = np.array([21.0, 36.0, 36.0, 21.0, 10.0, 10.0])
 
     def get_motors(self):

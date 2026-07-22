@@ -456,6 +456,7 @@ def _limits_from_robot(robot: Any) -> BackendLimits:
             joint_lower=np.asarray(joint_limits["lower"], dtype=np.float64),
             joint_upper=np.asarray(joint_limits["upper"], dtype=np.float64),
             joint_velocity=np.asarray(robot.velocity_limits, dtype=np.float64),
+            joint_acceleration=np.asarray(robot.acceleration_limits, dtype=np.float64),
             joint_torque=np.asarray(robot.max_torque, dtype=np.float64),
             gripper_lower=float(gripper_limits["lower"]),
             gripper_upper=float(gripper_limits["upper"]),

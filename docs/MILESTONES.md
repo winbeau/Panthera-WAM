@@ -89,6 +89,7 @@
 - [x] 🧪 实现 ✅ `joint jog/move/movej`、`gripper open/close/move` 均已接入；位置运动使用 HardwareLoop 非阻塞状态机，CLI `--wait` 自动维持 heartbeat
 - [x] 🧪 验收 ✅ 越限 `joint move` 被拒且包含关节名、方向和限位值；速度/力矩也在入队前检查
 - [x] 🧪 验收 ✅ `joint jog` 关流立即归零，250ms 无新指令自动归零；近软限位 0.02rad 时屏蔽朝外速度并返回 `limit_hit`
+- [x] 🧪 **J2/J3 点动安全修复** ✅ WPF 轴映射核对无误；服务端不再把承重关节送入裸 `MODE_VELOCITY`，改用短前瞻 `POS_VEL_TQE` + SDK `acceleration_limits` 斜坡，过期/松键先减速再进入软件阻尼；仿真覆盖 J2/J3 正向起步、取消和限位
 - [x] 🔒 验收 ✅ J1 小幅 `movej --wait` 往返完成，前向误差 0.004798rad、回程误差 0.004414rad；等待期间 heartbeat 正常，取消/看门狗路径由仿真测试覆盖
 - [x] 🔒 **桌面点动断线回归** ✅ J1 以 `0.02rad/s` 正向 5s、反向 5s（单程约 5.7°），控制链路全程持锁且 watchdog 正常；回位误差约 0.00063rad（0.036°），结束后 7/7 电机恢复模式 21 柔顺阻尼
 - [x] 🔒 验收 ✅ `open --pos 2.01 --vel 0.0` 与 `close --pos -0.01 --vel 0.0` 均在入队前以退出码 2 拒绝，分别报告上限 2 与下限 0；操作员确认夹爪未动，拒绝前后 7 轴均无故障

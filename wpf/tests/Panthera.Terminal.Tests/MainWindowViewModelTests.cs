@@ -44,6 +44,37 @@ public sealed class MainWindowViewModelTests
             entry.Source == "Jog" && entry.Message.Contains("已安全停止", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("1:1", 1)]
+    [InlineData("2:1", 2)]
+    public async Task PositiveLoadedJointJog_MapsToOnlyTheRequestedAxis(string parameter, int jointIndex)
+    {
+        var client = new FailingJogClient();
+        var viewModel = new MainWindowViewModel(
+            client,
+            new StubEnvironmentGuideService(),
+            new StubSettingsStore(),
+            new TerminalSettings())
+        {
+            HasControl = true,
+            ConnectionState = TerminalConnectionState.Connected,
+            JogSpeed = 0.15,
+        };
+
+        await viewModel.StartJogCommand.ExecuteAsync(parameter);
+        var deadline = DateTime.UtcNow.AddSeconds(1);
+        while (client.LastJogCommand is null && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.NotNull(client.LastJogCommand);
+        Assert.Equal(6, client.LastJogCommand.Count);
+        Assert.Equal(0.15, client.LastJogCommand[jointIndex], precision: 10);
+        Assert.All(client.LastJogCommand.Where((_, index) => index != jointIndex),
+            value => Assert.Equal(0.0, value, precision: 10));
+    }
+
     [Fact]
     public async Task ClearEStopFailure_IsContainedAndKeepsEStopLatched()
     {
@@ -309,6 +340,8 @@ public sealed class MainWindowViewModelTests
 
         public IReadOnlyList<double>? LastMoveJPositions { get; private set; }
 
+        public IReadOnlyList<double>? LastJogCommand { get; private set; }
+
         public double LastMoveJDuration { get; private set; }
 
         public IReadOnlyList<JointTrajectoryWaypoint>? LastTrajectoryWaypoints { get; private set; }
@@ -329,8 +362,9 @@ public sealed class MainWindowViewModelTests
             IAsyncEnumerable<IReadOnlyList<double>> commands,
             CancellationToken cancellationToken = default)
         {
-            await foreach (var _ in commands.WithCancellation(cancellationToken))
+            await foreach (var command in commands.WithCancellation(cancellationToken))
             {
+                LastJogCommand = command.ToArray();
                 if (_hangJog)
                 {
                     JogStarted.TrySetResult();

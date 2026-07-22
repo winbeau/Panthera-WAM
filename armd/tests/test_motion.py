@@ -5,11 +5,12 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from armd.backend import FrameMode, IDLE_DAMPING_KD, SimBackend
+from armd.backend import FrameMode, SimBackend
 from armd.hardware_loop import CancelReason, MotionStepResult
 from armd.motion import (
     CartesianTrajectoryMotion,
     JOG_FRESHNESS_S,
+    JOG_TARGET_LOOKAHEAD_S,
     JointJogMotion,
     JointPositionMotion,
     gripper_position_frame,
@@ -134,6 +135,12 @@ def test_jog_stale_window_zeroes_velocity_and_cancel_finishes() -> None:
     assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
     clock.advance(0.1)
     backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    clock.advance(0.1)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    clock.advance(0.1)
+    backend.refresh_state()
     moving_position = backend.read_all()[0].position
     assert moving_position > 0.0
 
@@ -152,7 +159,59 @@ def test_jog_stale_window_zeroes_velocity_and_cancel_finishes() -> None:
     assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
     assert frame.arm_torque == pytest.approx([0.0] * 6)
     assert frame.arm_kp == pytest.approx([0.0] * 6)
-    assert frame.arm_kd == pytest.approx(IDLE_DAMPING_KD)
+    assert frame.arm_kd == pytest.approx([0.0] * 6)
+
+
+def test_jog_loaded_joint_uses_acceleration_limited_position_frame() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = JointJogMotion(clock=clock)
+    motion.update(np.array([0.0, 0.15, 0.0, 0.0, 0.0, 0.0]))
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    first = backend.frames[-1]
+    assert first.mode is FrameMode.POS_VEL_TQE
+    assert first.arm_position == pytest.approx([0.0] * 6)
+
+    clock.advance(0.005)
+    backend.refresh_state()
+    current = np.array([state.position for state in backend.read_all()[:6]])
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    second = backend.frames[-1]
+
+    applied_velocity = (second.arm_position[1] - current[1]) / JOG_TARGET_LOOKAHEAD_S
+    assert applied_velocity == pytest.approx(0.01)
+    assert second.arm_velocity[1] == pytest.approx(0.01)
+    assert second.arm_velocity[[0, 2, 3, 4, 5]] == pytest.approx([0.1] * 5)
+    assert second.arm_position[1] > current[1]
+    assert second.arm_position[[0, 2, 3, 4, 5]] == pytest.approx(current[[0, 2, 3, 4, 5]])
+    assert all(frame.mode is not FrameMode.VELOCITY for frame in backend.frames)
+
+
+def test_jog_cancel_decelerates_before_entering_idle() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = JointJogMotion(clock=clock)
+    motion.update(np.array([0.0, 0.2, 0.0, 0.0, 0.0, 0.0]))
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    clock.advance(0.1)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+
+    motion.request_cancel(CancelReason.CLIENT)
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    decelerating = backend.frames[-1]
+    current = np.array([state.position for state in backend.read_all()[:6]])
+    applied_velocity = (decelerating.arm_position[1] - current[1]) / JOG_TARGET_LOOKAHEAD_S
+    assert applied_velocity == pytest.approx(0.16)
+
+    clock.advance(0.02)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.CANCELLED
+    assert backend.frames[-1].mode is FrameMode.POS_VEL_TQE_KP_KD
 
 
 def test_jog_blocks_velocity_toward_nearby_soft_limit() -> None:

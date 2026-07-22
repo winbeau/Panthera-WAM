@@ -75,6 +75,7 @@ class BackendLimits:
     joint_lower: np.ndarray
     joint_upper: np.ndarray
     joint_velocity: np.ndarray
+    joint_acceleration: np.ndarray
     joint_torque: np.ndarray
     gripper_lower: float = 0.0
     gripper_upper: float = 2.0
@@ -86,11 +87,14 @@ class BackendLimits:
         lower = _vector(self.joint_lower, name="joint_lower", length=n_joints)
         upper = _vector(self.joint_upper, name="joint_upper", length=n_joints)
         velocity = _vector(self.joint_velocity, name="joint_velocity", length=n_joints)
+        acceleration = _vector(self.joint_acceleration, name="joint_acceleration", length=n_joints)
         torque = _vector(self.joint_torque, name="joint_torque", length=n_joints)
         if np.any(lower >= upper):
             raise ValueError("joint_lower 必须逐项小于 joint_upper")
         if np.any(velocity <= 0) or np.any(torque <= 0):
             raise ValueError("关节速度/力矩限位必须为正数")
+        if np.any(acceleration <= 0):
+            raise ValueError("关节加速度限位必须为正数")
         if not self.gripper_lower < self.gripper_upper:
             raise ValueError("gripper_lower 必须小于 gripper_upper")
         if self.gripper_velocity <= 0 or self.gripper_torque <= 0:
@@ -98,6 +102,7 @@ class BackendLimits:
         object.__setattr__(self, "joint_lower", lower)
         object.__setattr__(self, "joint_upper", upper)
         object.__setattr__(self, "joint_velocity", velocity)
+        object.__setattr__(self, "joint_acceleration", acceleration)
         object.__setattr__(self, "joint_torque", torque)
 
 
@@ -105,6 +110,7 @@ DEFAULT_LIMITS = BackendLimits(
     joint_lower=np.array([-2.4, -0.1, -0.1, -1.6, -1.7, -2.5]),
     joint_upper=np.array([2.4, 3.2, 4.0, 1.6, 1.7, 2.5]),
     joint_velocity=np.ones(6),
+    joint_acceleration=np.full(6, 2.0),
     joint_torque=np.array([21.0, 36.0, 36.0, 21.0, 10.0, 10.0]),
 )
 

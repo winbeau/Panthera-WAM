@@ -117,8 +117,8 @@ EStop 之所以能「<100ms 生效」，正是因为 §1.1 保证了 HardwareLoo
 | 触发源 \ 当前模式 | 位置模式（`Joint_Pos_Vel`/`moveJ` 在飞） | 速度/MIT 模式（jog/阻抗） | moveL / teach play / 多点轨迹在飞 |
 |---|---|---|---|
 | **EStop** | `set_stop()`；接受负载关节因重力回落 | `set_stop()` + 前馈/速度归零 | `set_stop()` + 标记 execution=CANCELLED；停止后不再验收轨迹精度 |
-| **Watchdog 超时 / lease 释放** | 活动运动先执行安全取消；结束后切入零刚度软件柔顺阻尼 | 活动运动先归零/取消；结束后切入同一柔顺阻尼 | 触发 `CancelExecution` 的安全减速收尾，完成后进入柔顺阻尼 |
-| **Mode C 新鲜度窗口超时** | —（位置模式不走 C） | 速度/力矩前馈归零 | — |
+| **Watchdog 超时 / lease 释放** | 活动运动先执行安全取消；结束后切入零刚度软件柔顺阻尼 | 点动先按加速度限幅减速到零，再切入同一柔顺阻尼；MIT 前馈归零 | 触发 `CancelExecution` 的安全减速收尾，完成后进入柔顺阻尼 |
+| **Mode C 新鲜度窗口超时** | —（位置模式不走 C） | 点动目标速度按加速度限幅回到零；MIT 力矩前馈归零 | — |
 | **CancelExecution** | — | — | 沿剩余轨迹减速到停（非硬切、非原地悬停在危险位姿） |
 | **固件看门狗 150ms** | armd/USB 指令流整体中断后进入电机阻尼模式 | 同左 | 同左；这是软件栈以下的最后一道兜底 |
 
@@ -161,7 +161,7 @@ EStop 之所以能「<100ms 生效」，正是因为 §1.1 保证了 HardwareLoo
 | # | SDK 方法 | 阶段 | CLI | rpc | 模式 | 备注 |
 |---|---|---|---|---|---|---|
 | 9 | `Joint_Pos_Vel` | v1 | `joint move` | `JointMove` | A（`--wait`）/立即返回 | 越限位返回结构化拒绝（关节名+方向+限位值），非裸 bool。`--wait` 走 §1.2 非阻塞步进 |
-| 10 | `Joint_Vel` | v1 | `joint jog` | `JointJog` | C | 全关节共用速度数组；CLI 把「点动单关节」翻成整向量。停止靠新鲜度窗口 |
+| 10 | `Joint_Vel` | v1 | `joint jog` | `JointJog` | C（安全 POS-VEL 封装） | SDK 裸 `Joint_Vel` 仍保留在 RealBackend 的底层能力覆盖，但不再直接用于 WPF/CLI 点动；`JointJogMotion` 将整向量转换为短前瞻 `POS_VEL_TQE`，按 `acceleration_limits` 限制起步/减速，避免承重关节丢失位置保持 |
 | 11 | `moveJ` | v1 | `joint movej` | `MoveJ` | A/立即返回 | 内部即 `Joint_Pos_Vel`；`--wait` 同 §1.2 |
 | 12 | `pos_vel_tqe_kp_kd` | v2 | `joint mit` | `JointMIT` | C | MIT/阻抗原语，供教学模式复用 |
 

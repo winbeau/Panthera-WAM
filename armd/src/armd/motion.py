@@ -23,6 +23,14 @@ from .teach import PlaybackFrame
 POSITION_HOLD_SPEED = 0.1
 JOG_FRESHNESS_S = 0.25
 JOG_LIMIT_MARGIN = 0.02
+# Jog is deliberately implemented as a short position/velocity target rather
+# than raw MODE_VELOCITY.  The latter removes position hold from the other
+# gravity-loaded joints on this shared CAN frame and makes a button press an
+# instantaneous velocity step.  Keep the target close enough that feedback
+# remains authoritative, while still above the encoder quantisation noise.
+JOG_TARGET_LOOKAHEAD_S = 0.08
+JOG_DECELERATION_FACTOR = 4.0
+JOG_ZERO_EPSILON = 1e-4
 MIT_FRESHNESS_S = 0.12
 TEACH_VEL_THRESHOLD_S = 0.02
 TEACH_TAU_LIMIT = np.array([15.0, 30.0, 30.0, 15.0, 5.0, 5.0], dtype=np.float64)
@@ -288,7 +296,14 @@ class JointPositionMotion:
 
 
 class JointJogMotion:
-    """流式关节速度控制；超过 250ms 无新指令即整帧速度归零。"""
+    """受加速度限制的短前瞻位置点动。
+
+    Panthera-HT 的七个电机共享一帧 CAN 指令。裸 ``MODE_VELOCITY`` 会让
+    未点动的承重关节只收到零速度，没有位置保持；同时按钮按下会把速度
+    从 0 瞬时跳到目标值。J2/J3 因此可能出现明显冲击。这里改为每周期
+    下发 ``POS_VEL_TQE``：目标只向当前速度前瞻一小段，并按 SDK 配置的
+    加速度限幅；过期/停止时受控减速到零，再进入空闲阻尼。
+    """
 
     def __init__(
         self,
@@ -299,7 +314,9 @@ class JointJogMotion:
         self.freshness_s = freshness_s
         self._clock = clock
         self._velocities = np.zeros(6, dtype=np.float64)
+        self._applied_velocities = np.zeros(6, dtype=np.float64)
         self._last_command_at = float("-inf")
+        self._last_step_at: float | None = None
         self._cancel_reason: CancelReason | None = None
         self._limit_hit = np.zeros(6, dtype=np.bool_)
         self._lock = threading.Lock()
@@ -329,34 +346,69 @@ class JointJogMotion:
 
         with self._lock:
             cancel_reason = self._cancel_reason
-            velocities = self._velocities.copy()
+            requested_velocities = self._velocities.copy()
             stale = now - self._last_command_at > self.freshness_s
         if cancel_reason is not None:
-            positions = np.array([state.position for state in states[:6]], dtype=np.float64)
-            backend.write_frame(idle_damping_frame(backend.limits, positions, states[6].position))
-            return MotionStepResult.CANCELLED
+            requested_velocities.fill(0.0)
         elif stale:
-            velocities.fill(0.0)
+            requested_velocities.fill(0.0)
+
+        if self._last_step_at is None:
+            dt_s = 0.0
+        else:
+            dt_s = max(0.0, now - self._last_step_at)
+        self._last_step_at = now
+
+        acceleration = np.asarray(backend.limits.joint_acceleration, dtype=np.float64)
+        delta_limit = acceleration * dt_s
+        if cancel_reason is not None or stale:
+            delta_limit *= JOG_DECELERATION_FACTOR
+        delta = requested_velocities - self._applied_velocities
+        self._applied_velocities += np.clip(delta, -delta_limit, delta_limit)
+        velocities = self._applied_velocities.copy()
 
         positions = np.array([state.position for state in states[:6]], dtype=np.float64)
         at_upper = positions >= backend.limits.joint_upper - JOG_LIMIT_MARGIN
         at_lower = positions <= backend.limits.joint_lower + JOG_LIMIT_MARGIN
-        limit_hit = (at_upper & (velocities > 0)) | (at_lower & (velocities < 0))
+        limit_hit = (at_upper & (requested_velocities > 0)) | (at_lower & (requested_velocities < 0))
+        # Never let a deceleration ramp carry a joint through the soft-limit
+        # margin after the command has already been blocked.
+        limit_hit |= (at_upper & (velocities > 0)) | (at_lower & (velocities < 0))
         velocities[limit_hit] = 0.0
+        self._applied_velocities[limit_hit] = 0.0
         if np.any(np.abs(velocities) > backend.limits.joint_velocity):
             raise BackendError("JointJog 速度超过软限位")
 
         with self._lock:
             self._limit_hit = limit_hit
+        target_positions = np.clip(
+            positions + velocities * JOG_TARGET_LOOKAHEAD_S,
+            backend.limits.joint_lower,
+            backend.limits.joint_upper,
+        )
+        # POS-VEL's velocity field is a non-negative speed bound; direction
+        # comes from target_position.  Keep a small hold speed for stationary
+        # gravity-loaded joints so they do not silently lose position hold.
+        absolute_velocity = np.abs(velocities)
+        speed = np.where(
+            absolute_velocity > JOG_ZERO_EPSILON,
+            absolute_velocity,
+            POSITION_HOLD_SPEED,
+        )
         backend.write_frame(
-            JointFrame(
-                mode=FrameMode.VELOCITY,
-                arm_position=positions,
-                arm_velocity=velocities,
+            position_frame(
+                backend,
+                arm_position=target_positions,
+                arm_velocity=speed,
+                arm_max_torque=backend.limits.joint_torque,
                 gripper_position=states[6].position,
-                gripper_velocity=0.0,
+                gripper_velocity=POSITION_HOLD_SPEED,
             )
         )
+        if cancel_reason is not None and np.all(np.abs(self._applied_velocities) <= JOG_ZERO_EPSILON):
+            backend.enter_idle_damping()
+            backend.maintain_idle()
+            return MotionStepResult.CANCELLED
         return MotionStepResult.RUNNING
 
 
