@@ -4,6 +4,26 @@ All notable changes to Panthera-WAM are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.13] - 2026-07-23
+
+### Added
+
+- Added an independent Raspberry Pi 5 C920e overhead-camera service on port 50053 using the stable `/home/winbeau/camera-devices/c920e` alias and native V4L2 MJPEG capture.
+- Extended the camera contract with wrist/overhead roles, JPEG frames and monotonic capture timestamps, with matching Python and WPF clients.
+- Added a top-level C920e status indicator and a live overhead preview to the WPF terminal.
+
+### Changed
+
+- Extended SSH deployment and persistent forwarding with `127.0.0.1:50048 → remote:50053`, while retaining the existing armd and D405 endpoints.
+- Reworked the control page into a linked square camera column: CAD top view, C920e overhead view and D405 wrist view resize together through the native WPF `GridSplitter`.
+- Isolated wrist color/depth and overhead color into independent latest-frame pumps so one camera stream can reconnect without stopping the others.
+
+### Safety and validation
+
+- Verified the real C920e on Raspberry Pi 5 at 1920×1080 MJPEG and approximately 30 fps, including a valid snapshot and 300 consecutive frames.
+- Verified WPF through a real SSH tunnel against the Pi C920e while armd remained in simulation; no control lease, motor enable or motion command was issued.
+- WPF Release build completed with zero warnings; all 44 unit tests and 9 UI tests passed.
+
 ## [2.2.12] - 2026-07-22
 
 ### Added

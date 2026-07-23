@@ -152,6 +152,8 @@ public sealed class OpenSshRemoteDeploymentServiceTests
         Assert.Contains("uname -m", script, StringComparison.Ordinal);
         Assert.Contains("Panthera-WAM", script, StringComparison.Ordinal);
         Assert.Contains("systemctl --user cat armd.service", script, StringComparison.Ordinal);
+        Assert.Contains("systemctl --user cat overhead-camera.service", script, StringComparison.Ordinal);
+        Assert.Contains("RaspberryPi/Linux ARM64", script, StringComparison.Ordinal);
         Assert.Contains("[ \"$target_kind\" = 'WSL' ]", script, StringComparison.Ordinal);
         Assert.Contains("import hightorque_robot", script, StringComparison.Ordinal);
         Assert.Contains("rs.__version__ == \"2.58.1\"", script, StringComparison.Ordinal);

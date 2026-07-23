@@ -114,7 +114,10 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
             startMethod));
         ReportCompleted(progress, steps[^1]);
 
-        ReportRunning(progress, "启动 Linux 后端", "正在检查机械臂串口并启动 armd / camerad…");
+        ReportRunning(
+            progress,
+            "启动 Linux 后端",
+            "正在检查机械臂串口并启动 armd / D405 camerad / C920e overhead-camera…");
         ProcessResult start;
         try
         {
@@ -130,7 +133,9 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
         steps.Add(new EnvironmentGuideStep(
             "启动 Linux 后端",
             start.Success,
-            start.Success ? "armd 与 camerad 已请求启动" : FailureDetail(start, "远程启动命令失败"),
+            start.Success
+                ? "armd、D405 camerad 与 C920e overhead-camera 已请求启动"
+                : FailureDetail(start, "远程启动命令失败"),
             start.Command));
         ReportCompleted(progress, steps[^1]);
         if (!start.Success)
@@ -155,7 +160,9 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
             verification.Success && HasListeningPorts(verification.Output),
             verification.Success
                 ? (HasListeningPorts(verification.Output)
-                    ? "机械臂/D405 已监听；已部署 C920e 时同时确认 50053"
+                    ? (verification.Output.Contains(":50053", StringComparison.Ordinal)
+                        ? "50051 / 50052 / 50053 已连续稳定监听"
+                        : "50051 / 50052 已连续稳定监听；当前目标未部署 C920e")
                     : verification.Output.Trim())
                 : FailureDetail(verification, "远程端口探活失败"),
             verification.Command));
@@ -226,7 +233,10 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
         fi
         emit repo "$repo"
         start_method='none'
-        if systemctl --user cat armd.service >/dev/null 2>&1 && systemctl --user cat camerad.service >/dev/null 2>&1; then
+        if systemctl --user cat armd.service >/dev/null 2>&1 \
+          && systemctl --user cat camerad.service >/dev/null 2>&1 \
+          && { [ "$target_kind" != 'RaspberryPi/Linux ARM64' ] \
+            || systemctl --user cat overhead-camera.service >/dev/null 2>&1; }; then
           start_method='systemd-user'
         elif [ "$target_kind" = 'WSL' ] && [ -n "$repo" ] \
           && [ -f "$repo/deploy/panthera-up.zsh" ] && command -v zsh >/dev/null 2>&1 \
