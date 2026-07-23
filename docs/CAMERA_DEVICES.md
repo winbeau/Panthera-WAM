@@ -16,7 +16,8 @@
 | RealSense D405 彩色 | `/home/winbeau/camera-devices/realsense-color` | YUYV 彩色流 |
 | RealSense D405 彩色 metadata | `/home/winbeau/camera-devices/realsense-color-metadata` | 彩色 metadata |
 
-当前 D405 序列号为 `251323070051`。
+当前 D405 的 USB/UVC 序列号为 `251323070051`，librealsense SDK 序列号为
+`260422273428`。两者来自同一设备，但用途不同。
 
 ## 服务角色与端口
 
@@ -25,7 +26,7 @@
 
 | 相机角色 | Pi 端服务 | Pi 端口 | SshRemote 本地端口 | 生产设备选择 |
 |---|---|---:|---:|---|
-| 腕部 `WRIST` | `camerad` | `50052` | `50049` | D405 序列号 `251323070051` |
+| 腕部 `WRIST` | `camerad` | `50052` | `50049` | D405 librealsense SDK 序列号 `260422273428` |
 | 俯视 `OVERHEAD` | `overhead-camera` | `50053` | `50048` | `/home/winbeau/camera-devices/c920e` |
 
 客户端连接后必须校验服务上报的相机角色。角色与目标画面不一致时应明确报错，
@@ -40,7 +41,7 @@
 3. 使用 `pyrealsense2` 时按序列号选择 D405：
 
    ```python
-   config.enable_device("251323070051")
+   config.enable_device("260422273428")
    ```
 
 4. D405 的同步深度/红外/彩色采集优先使用 `pyrealsense2`/vendored
@@ -72,7 +73,7 @@ camera.set(cv2.CAP_PROP_FPS, 30)
 - RealSense 深度节点：Z16 采集成功。
 - RealSense 红外节点：GREY 采集成功。
 - RealSense 彩色节点：YUYV 采集成功。
-- D405 序列号：`251323070051`。
+- D405 USB/UVC 序列号：`251323070051`；librealsense SDK 序列号：`260422273428`。
 - 所有别名均指向 udev 生成的稳定路径，重启后不依赖 `/dev/videoN` 编号。
 
 ## 快速诊断

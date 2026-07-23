@@ -1,7 +1,7 @@
 # RealSense D405 统一后端工作流
 
-> **当前 Pi 5 部署（2026-07-23）**：D405 已迁移到 Raspberry Pi 5，当前序列号为
-> `251323070051`。深度、红外和彩色 V4L2 节点分别使用
+> **当前 Pi 5 部署（2026-07-23）**：D405 已迁移到 Raspberry Pi 5，USB/UVC 序列号为
+> `251323070051`，librealsense SDK 序列号为 `260422273428`。深度、红外和彩色 V4L2 节点分别使用
 > `/home/winbeau/camera-devices/realsense-depth`、`realsense-infrared`、
 > `realsense-color`，不得固定 `/dev/videoN`；完整别名和 C920e 约定见
 > `docs/CAMERA_DEVICES.md`。下文 WSL/usbipd 内容保留为兼容回退与历史验收记录。
@@ -148,8 +148,8 @@ uv run panthera camera status --json
 
 ## 2026-07-23 Pi 5 设备节点验收
 
-- 当前 D405 序列号：`251323070051`；`pyrealsense2` 使用
-  `config.enable_device("251323070051")` 固定设备。
+- 当前 D405 USB/UVC 序列号为 `251323070051`；`pyrealsense2` 必须使用
+  librealsense SDK 序列号 `config.enable_device("260422273428")` 固定同一设备。
 - 稳定别名已覆盖 depth、infrared、color 及各自 metadata 节点，重启后不依赖
   `/dev/videoN` 编号。
 - 深度 Z16、红外 GREY、彩色 YUYV 均已实际采集成功。

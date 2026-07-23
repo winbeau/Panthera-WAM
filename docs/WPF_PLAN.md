@@ -12,7 +12,7 @@
 > 本文后续 WSL 引导内容保留为 `WslBridge` 兼容模式的历史设计。
 
 > **双相机设备约定（2026-07-23）**：固定俯视画面来自 Logitech C920e，腕部
-> RGB/深度来自 D405（序列号 `251323070051`）。Pi 5 上 V4L2/OpenCV 只能使用
+> RGB/深度来自 D405（USB/UVC `251323070051`，librealsense SDK `260422273428`）。Pi 5 上 V4L2/OpenCV 只能使用
 > `/home/winbeau/camera-devices/` 的 udev 稳定别名，`pyrealsense2` 按序列号选取
 > D405；禁止把 `/dev/videoN` 写入 WPF 配置或远程启动脚本。详见
 > `docs/CAMERA_DEVICES.md`。

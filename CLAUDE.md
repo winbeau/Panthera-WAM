@@ -25,7 +25,7 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 |---|---|
 | 机械臂 | Panthera-HT，USB 复合设备 `VID_CAF1:FFFF`，7×虚拟串口；具体序列号通过本地设置提供，不提交到仓库 |
 | Windows 侧 busid | 仅用于 WSL 兼容回退；当前主路径不经 usbipd，busid 不得写入长期配置 |
-| 相机 | 俯视 Logitech C920e；腕部 Intel RealSense D405，当前序列号 `251323070051` |
+| 相机 | 俯视 Logitech C920e；腕部 Intel RealSense D405（USB/UVC `251323070051`，librealsense SDK `260422273428`） |
 | Pi 5 相机别名 | `/home/winbeau/camera-devices/c920e` 与 `/home/winbeau/camera-devices/realsense-{depth,infrared,color}`；完整表见 `docs/CAMERA_DEVICES.md` |
 | WSL2 主机 | Ubuntu 22.04 + systemd；远程地址与账号保存在操作者本地配置，不提交到仓库 |
 | Windows 主机 | usbipd、.NET build 与 WPF 运行在原生 Windows；远程地址与账号不入库 |
@@ -39,7 +39,8 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 
 相机代码与服务配置禁止固定 `/dev/videoN`。C920e/V4L2 使用
 `/home/winbeau/camera-devices/` 下的稳定别名；`pyrealsense2` 必须用
-`config.enable_device("251323070051")` 固定当前 D405。metadata 别名不得作为普通图像源。
+`config.enable_device("260422273428")` 使用 librealsense SDK 序列号固定当前 D405；
+USB/UVC 稳定别名中的 `251323070051` 不得传给 `enable_device`。metadata 别名不得作为普通图像源。
 
 ## 安全红线（机械臂会动，会伤人）
 

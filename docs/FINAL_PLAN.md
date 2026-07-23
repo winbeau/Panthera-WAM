@@ -24,7 +24,8 @@ Raspberry Pi 5: panthera-cli ─────────────┼→ camer
 
 - **硬件**：Panthera-HT 六轴机械臂（高擎，7×USB 串口）、腕部 Intel RealSense D405
   与俯视 Logitech C920e 直接连接 Raspberry Pi 5，由 ARM64 Linux 独占；D405 使用
-  vendored librealsense RSUSB/libusb 后端。当前 D405 序列号为 `251323070051`；V4L2
+  vendored librealsense RSUSB/libusb 后端。当前 D405 的 USB/UVC 序列号为
+  `251323070051`，librealsense SDK 序列号为 `260422273428`；V4L2
   节点必须使用 `/home/winbeau/camera-devices/` 下的 udev 稳定别名，完整契约见
   `docs/CAMERA_DEVICES.md`，禁止持久化 `/dev/videoN`。
 - **armd/camerad**：三项进程同属同一 Linux 后端，由统一启动流程管理。`armd:50051`
@@ -541,7 +542,7 @@ panthera dataset export-lerobot TRAJECTORY_PATH [--out-dir DIR] [--repo-id OWNER
    消费两路相机与机械臂状态，WPF 只负责状态、预览、开始/停止与质量提示。
 6. **依赖和设备路径约束**：Python 依赖全部进入 uv workspace/lock；生产配置只接受
    `docs/CAMERA_DEVICES.md` 的稳定别名，拒绝 `/dev/videoN` 和 metadata 节点。D405
-   继续由 vendored librealsense 与序列号 `251323070051` 固定，不因 C920e 改造而回退。
+   继续由 vendored librealsense 与 SDK 序列号 `260422273428` 固定，不因 C920e 改造而回退。
 
 ## 13. 服务与端口映射
 

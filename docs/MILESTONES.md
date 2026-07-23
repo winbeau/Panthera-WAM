@@ -162,7 +162,8 @@
 - [x] **M-P5 双相机稳定设备标识** ✅ Pi 5 已用 udev 为 C920e 和 D405
   depth/infrared/color 及 metadata 节点生成 `/home/winbeau/camera-devices/` 稳定别名，
   不再依赖 `/dev/videoN`；C920e 1080p MJPEG 30fps、D405 Z16/GREY/YUYV 均采集
-  成功，当前 D405 序列号 `251323070051`，`pyrealsense2` 按序列号固定设备
+  成功；当前 D405 的 USB/UVC 序列号为 `251323070051`，librealsense SDK 序列号为
+  `260422273428`，`pyrealsense2` 按 SDK 序列号固定设备
 
 ---
 

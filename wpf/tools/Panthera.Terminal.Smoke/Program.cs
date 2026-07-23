@@ -1,5 +1,44 @@
 using System.Text.Json;
+using Panthera.Terminal.Core;
 using Panthera.Terminal.Grpc;
+using Panthera.Terminal.Settings;
+
+var sshDeploy = args.Contains("--ssh-deploy", StringComparer.Ordinal);
+if (sshDeploy)
+{
+    var host = ArgumentValue("--ssh-host=") ?? "pi5";
+    var user = ArgumentValue("--ssh-user=") ?? "winbeau";
+    var identity = ArgumentValue("--ssh-identity=") ?? string.Empty;
+    var port = int.TryParse(ArgumentValue("--ssh-port="), out var parsedPort) ? parsedPort : 22;
+    var deployment = new OpenSshRemoteDeploymentService(TimeSpan.FromSeconds(120));
+    var progressEvents = new List<RemoteDeploymentProgress>();
+    var progress = new InlineProgress<RemoteDeploymentProgress>(item =>
+    {
+        progressEvents.Add(item);
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            type = "progress",
+            item.Name,
+            State = item.State.ToString(),
+            item.Detail,
+        }));
+    });
+    var report = await deployment.ConfigureAndStartAsync(
+        new SshConnectionSettings(host, port, user, identity),
+        progress);
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        type = "result",
+        report.Success,
+        report.TargetKind,
+        report.Architecture,
+        report.RepositoryPath,
+        report.StartMethod,
+        ProgressEvents = progressEvents.Count,
+        Steps = report.Steps.Select(step => new { step.Name, step.Success, step.Detail }),
+    }));
+    return;
+}
 
 var endpoint = args.FirstOrDefault(argument => !argument.StartsWith("--", StringComparison.Ordinal))
     ?? "http://127.0.0.1:50051";
@@ -169,4 +208,13 @@ static async IAsyncEnumerable<IReadOnlyList<double>> JogCommands(double seconds,
         yield return new[] { velocity, 0.0, 0.0, 0.0, 0.0, 0.0 };
         await Task.Delay(50);
     }
+}
+
+string? ArgumentValue(string prefix) => args
+    .FirstOrDefault(argument => argument.StartsWith(prefix, StringComparison.Ordinal))?
+    [prefix.Length..];
+
+sealed class InlineProgress<T>(Action<T> callback) : IProgress<T>
+{
+    public void Report(T value) => callback(value);
 }

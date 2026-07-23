@@ -15,7 +15,7 @@ All notable changes to Panthera-WAM are documented in this file.
 ### Changed
 
 - Extended SSH deployment and persistent forwarding with `127.0.0.1:50048 → remote:50053`, while retaining the existing armd and D405 endpoints.
-- Fixed the Pi deployment environment to the current D405 serial `251323070051` and added the C920e bind/device variables during configuration migration.
+- Fixed the Pi deployment environment to use the D405 librealsense SDK serial `260422273428` while retaining USB/UVC serial `251323070051` for stable device aliases, and added the C920e bind/device variables during configuration migration.
 - Reworked the control page into a linked square camera column: CAD top view, C920e overhead view and D405 wrist view resize together through the native WPF `GridSplitter`.
 - Isolated wrist color/depth and overhead color into independent latest-frame pumps so one camera stream can reconnect without stopping the others.
 
