@@ -1,7 +1,7 @@
 # Panthera-WAM 总计划（敲定稿）
 
 > 状态：v2 已按本计划实现；实时进度与待真机验收项以 `MILESTONES.md` 为准。
-> **控制主机迁移（2026-07-22，覆盖下文旧 WSL 主路径）**：Panthera-HT 与 D405
+> **控制主机迁移（2026-07-22，覆盖下文旧 WSL 主路径）**：Panthera-HT、D405 与 C920e
 > 改为由 Raspberry Pi 5 ARM64 直接独占；`armd:50051`、`camerad:50052` 绑定 Pi 的
 > Tailscale/LAN IP，Windows WPF 以 `Remote` 模式直连。WSL bridge 只保留兼容回退。
 > WPF 同时提供显式触发的 `SshRemote` 向导：只针对已部署仓库，自动识别 Pi/WSL、
@@ -20,9 +20,11 @@ Raspberry Pi 5: panthera-cli ─────────────┴→ camer
 兼容回退: WSL2 + Windows 本地 bridge (:50050/:50049)
 ```
 
-- **硬件**：Panthera-HT 六轴机械臂（高擎，7×USB 串口）与 Intel RealSense D405
-  直接连接 Raspberry Pi 5，由 ARM64 Linux 独占；D405 使用 vendored librealsense
-  RSUSB/libusb 后端。
+- **硬件**：Panthera-HT 六轴机械臂（高擎，7×USB 串口）、腕部 Intel RealSense D405
+  与俯视 Logitech C920e 直接连接 Raspberry Pi 5，由 ARM64 Linux 独占；D405 使用
+  vendored librealsense RSUSB/libusb 后端。当前 D405 序列号为 `251323070051`；V4L2
+  节点必须使用 `/home/winbeau/camera-devices/` 下的 udev 稳定别名，完整契约见
+  `docs/CAMERA_DEVICES.md`，禁止持久化 `/dev/videoN`。
 - **armd/camerad**：两者同属同一 Linux 后端，由统一启动流程管理。`armd:50051` 独占机械臂，`camerad:50052` 独占 D405；客户端分别连接两个端口。安全层 = 控制权互斥 / watchdog 心跳 / 软限位预检 / EStop。
 - **客户端**：`panthera-cli`（Python typer）+ WPF 可视化终端（.NET 9，Fluent，系统/浅色/深色三主题）。两者都是纯 gRPC 客户端，不直接打开机械臂或相机 SDK。
 - **网络边界**：WPF 的 `Remote` 模式直接连接 Pi 的两个 gRPC 端口，不启动 WSL/usbipd/

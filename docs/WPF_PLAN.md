@@ -10,6 +10,12 @@
 > Pi/WSL 架构、已部署仓库和启动入口，并通过 localhost SSH 隧道连接两个 gRPC 服务。
 > 本文后续 WSL 引导内容保留为 `WslBridge` 兼容模式的历史设计。
 
+> **双相机设备约定（2026-07-23）**：固定俯视画面来自 Logitech C920e，腕部
+> RGB/深度来自 D405（序列号 `251323070051`）。Pi 5 上 V4L2/OpenCV 只能使用
+> `/home/winbeau/camera-devices/` 的 udev 稳定别名，`pyrealsense2` 按序列号选取
+> D405；禁止把 `/dev/videoN` 写入 WPF 配置或远程启动脚本。详见
+> `docs/CAMERA_DEVICES.md`。
+
 > 范围声明：本文档只覆盖 **客户端**（Windows WPF 可视化终端）一侧的设计。当前主路径是
 > 六轴 Panthera-HT 与 D405 由同一 Raspberry Pi 5 后端控制，`armd:50051` 与
 > `camerad:50052` 分进程独占硬件，WPF 分别连接两个 gRPC 端点。

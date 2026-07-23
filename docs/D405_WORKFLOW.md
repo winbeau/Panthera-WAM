@@ -1,5 +1,11 @@
 # RealSense D405 统一后端工作流
 
+> **当前 Pi 5 部署（2026-07-23）**：D405 已迁移到 Raspberry Pi 5，当前序列号为
+> `251323070051`。深度、红外和彩色 V4L2 节点分别使用
+> `/home/winbeau/camera-devices/realsense-depth`、`realsense-infrared`、
+> `realsense-color`，不得固定 `/dev/videoN`；完整别名和 C920e 约定见
+> `docs/CAMERA_DEVICES.md`。下文 WSL/usbipd 内容保留为兼容回退与历史验收记录。
+
 ## 架构边界
 
 ```text
@@ -110,11 +116,12 @@ export PANTHERA_ENDPOINT='[::1]:50051'
 export PANTHERA_CAMERA_ENDPOINT='[::1]:50052'
 ```
 
-Windows WPF 使用对应的 `localhost:50051` 和 `localhost:50052`；未来树莓派 5
-部署时改为 Linux 主机的内网地址。深度帧为 Z16 PGM，像素值乘 JSON 中的
+Windows WPF 使用对应的 `localhost:50051` 和 `localhost:50052`；当前主路径部署在
+树莓派 5，Remote 模式改用 Linux 主机的内网地址，SshRemote 模式使用本地隧道端口。
+深度帧为 Z16 PGM，像素值乘 JSON 中的
 `depth_scale` 得到米；彩色帧为 RGB8 PPM。
 
-树莓派 5 落地时，将两个 service 的 `--bind` 从 `127.0.0.1` 改为树莓派内网
+树莓派 5 部署将两个 service 的 `--bind` 从 `127.0.0.1` 改为树莓派内网
 地址或 `0.0.0.0`，客户端分别连接 `<pi-ip>:50051` 与 `<pi-ip>:50052`。机械臂
 控制端口在加入内网监听前必须配防火墙/访问控制，不能直接暴露到公网。
 
@@ -139,10 +146,21 @@ uv run panthera camera status --json
   color RGB8 双流在普通 detach/attach 冷重连后连续 300 帧通过，0 次超时。
 - 验证表明源码 RSUSB 后端不需要在每次 `camerad` 启动时主动硬复位 D405。
 
+## 2026-07-23 Pi 5 设备节点验收
+
+- 当前 D405 序列号：`251323070051`；`pyrealsense2` 使用
+  `config.enable_device("251323070051")` 固定设备。
+- 稳定别名已覆盖 depth、infrared、color 及各自 metadata 节点，重启后不依赖
+  `/dev/videoN` 编号。
+- 深度 Z16、红外 GREY、彩色 YUYV 均已实际采集成功。
+- 同机 C920e 已通过 1080p MJPEG 30 fps 采集，用作固定俯视 RGB 画面。
+
 ## 故障定位
 
 - WSL 找不到 D405：检查 `usbipd list` 是否为 `Attached`，以及
   `lsusb -d 8086:0b5b`。
+- Pi 5 上 V4L2 节点异常：先检查 `ls -l /home/winbeau/camera-devices/` 与
+  `readlink -f`，不得用临时 `/dev/videoN` 覆盖稳定配置。
 - `pyrealsense2` 缺失或加载了 PyPI wheel：重跑
   `./deploy/build-realsense-wsl.sh`，然后检查 `python -c "import pyrealsense2 as rs; print(rs.__file__)"`。
 - 权限错误：重新安装 `vendor/librealsense/config/99-realsense-libusb.rules`，再 reload

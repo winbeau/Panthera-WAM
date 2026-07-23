@@ -125,7 +125,7 @@
   - [x] 独立 `camera.proto`、WSL `camerad:50052`、gRPC 状态/快照/帧流，以及 `camera status/snapshot/stream` CLI 已接入；与 `armd:50051` 同属统一 Linux 后端
   - [x] WSL 默认/PyPI 采集路径曾出现 5s 帧超时；改用 `vendor/librealsense` v2.58.1 源码构建 `FORCE_RSUSB_BACKEND=ON` 后，libusb 持续双流通过
   - [x] WPF 环境引导按 `VID_8086&PID_0B5B` 发现 D405，并与机械臂一起 attach 到 WSL；WPF 分别通过 `armd:50051` 与 `camerad:50052` 查看状态
-  - [x] WSL 统一后端真机验收：D405 序列号 `260422273428`、固件 `5.13.0.55`、USB 3.2；普通 detach/attach 冷重连后 `640x480@30` depth Z16 + color RGB8 连续 300 帧，0 次超时
+  - [x] WSL 统一后端历史真机验收（当时设备）：D405 序列号 `260422273428`、固件 `5.13.0.55`、USB 3.2；普通 detach/attach 冷重连后 `640x480@30` depth Z16 + color RGB8 连续 300 帧，0 次超时
   - [x] WPF 使用独立 `CameraEndpoint` 与第二条 WSL TCP bridge，显示 RGB8/Z16 双画面；相机不再误走机械臂端口
   - [x] 独立 `dataset.proto`、异步作业、取消/观察、字段映射与官方 LeRobotDataset v3 隔离 worker 已落地
 - [x] **M9 无损审计收尾** ✅ `tools/audit_sdk_contract.py` 对 42 项方法逐条验证 SDK 源码、RPC 实现、CLI 与内部覆盖；结果 35 direct + 6 internal + 1 lifecycle，0 遗漏、0 无理由
@@ -144,7 +144,8 @@
 - [x] **M-P1 ARM64 部署** ✅ Pi 5 使用系统 CPython 3.12.3 与 `uv sync --frozen`，从
   主仓库 vendor 安装 cp312 ARM64 SDK wheel，并从 vendored librealsense 2.58.1 构建
   RSUSB Python 绑定；armd/camerad 两项仿真自检通过，systemd 服务 enabled 但未自动启动
-- [x] **M-P2 只读联通** ✅ `/dev/ttyACM0..6`、D405 `260422273428`、USB 3.2 与
+- [x] **M-P2 只读联通** ✅ 初次迁移验收时确认 `/dev/ttyACM0..6`、当时 D405
+  `260422273428`、USB 3.2 与
   `640x480@30` 深度/彩色流均确认；Windows→Pi `50051/50052` 可达，远程 gRPC 对 armd
   仿真和真实 camerad 探活成功。WPF 已切换 `Remote` 配置；armd 真机服务保持 inactive
 - [x] 🔒 **M-P3 真机切换验收** ✅ 用户在场、离开运动范围且急停就绪后完成：真实
@@ -156,6 +157,10 @@
   可选私钥后，自动识别 Pi/WSL 架构、已部署 Panthera-WAM 目录与 systemd/仓库启动入口，
   启动 armd/camerad 并保存 `SshRemote` 配置；重启后用 localhost 双端口 SSH 隧道连接，
   全程不克隆仓库、不安装依赖、不获取控制权或发送运动命令
+- [x] **M-P5 双相机稳定设备标识** ✅ Pi 5 已用 udev 为 C920e 和 D405
+  depth/infrared/color 及 metadata 节点生成 `/home/winbeau/camera-devices/` 稳定别名，
+  不再依赖 `/dev/videoN`；C920e 1080p MJPEG 30fps、D405 Z16/GREY/YUYV 均采集
+  成功，当前 D405 序列号 `251323070051`，`pyrealsense2` 按序列号固定设备
 
 ---
 
