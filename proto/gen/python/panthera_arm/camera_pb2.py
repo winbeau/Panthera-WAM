@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0c\x63\x61mera.proto\x12\x12panthera.camera.v1\"\x15\n\x13\x43\x61meraStatusRequest\"\xae\x01\n\rCameraProfile\x12\x34\n\x06stream\x18\x01 \x01(\x0e\x32$.panthera.camera.v1.CameraStreamType\x12;\n\x0cpixel_format\x18\x02 \x01(\x0e\x32%.panthera.camera.v1.CameraPixelFormat\x12\r\n\x05width\x18\x03 \x01(\x05\x12\x0e\n\x06height\x18\x04 \x01(\x05\x12\x0b\n\x03\x66ps\x18\x05 \x01(\x05\"\x90\x02\n\x0c\x43\x61meraStatus\x12\x0f\n\x07\x65nabled\x18\x01 \x01(\x08\x12\x11\n\tavailable\x18\x02 \x01(\x08\x12\x11\n\tstreaming\x18\x03 \x01(\x08\x12\r\n\x05model\x18\x04 \x01(\t\x12\x0e\n\x06serial\x18\x05 \x01(\t\x12\x10\n\x08\x66irmware\x18\x06 \x01(\t\x12\x10\n\x08usb_type\x18\x07 \x01(\t\x12\x13\n\x0bsdk_version\x18\x08 \x01(\t\x12\r\n\x05\x65rror\x18\t \x01(\t\x12\x19\n\x11last_frame_age_ms\x18\n \x01(\x03\x12\x12\n\nactual_fps\x18\x0b \x01(\x01\x12\x33\n\x08profiles\x18\x0c \x03(\x0b\x32!.panthera.camera.v1.CameraProfile\"_\n\x13\x43\x61ptureFrameRequest\x12\x34\n\x06stream\x18\x01 \x01(\x0e\x32$.panthera.camera.v1.CameraStreamType\x12\x12\n\ntimeout_ms\x18\x02 \x01(\x05\"t\n\x13StreamFramesRequest\x12\x34\n\x06stream\x18\x01 \x01(\x0e\x32$.panthera.camera.v1.CameraStreamType\x12\x13\n\x0bmax_rate_hz\x18\x02 \x01(\x01\x12\x12\n\nmax_frames\x18\x03 \x01(\x05\"\x99\x02\n\x0b\x43\x61meraFrame\x12\x34\n\x06stream\x18\x01 \x01(\x0e\x32$.panthera.camera.v1.CameraStreamType\x12;\n\x0cpixel_format\x18\x02 \x01(\x0e\x32%.panthera.camera.v1.CameraPixelFormat\x12\x10\n\x08sequence\x18\x03 \x01(\x03\x12\x16\n\x0e\x63\x61ptured_at_ns\x18\x04 \x01(\x03\x12\x1b\n\x13\x64\x65vice_timestamp_ms\x18\x05 \x01(\x01\x12\r\n\x05width\x18\x06 \x01(\x05\x12\x0e\n\x06height\x18\x07 \x01(\x05\x12\x0e\n\x06stride\x18\x08 \x01(\x05\x12\x13\n\x0b\x64\x65pth_scale\x18\t \x01(\x01\x12\x0c\n\x04\x64\x61ta\x18\n \x01(\x0c*r\n\x10\x43\x61meraStreamType\x12\"\n\x1e\x43\x41MERA_STREAM_TYPE_UNSPECIFIED\x10\x00\x12\x1c\n\x18\x43\x41MERA_STREAM_TYPE_DEPTH\x10\x01\x12\x1c\n\x18\x43\x41MERA_STREAM_TYPE_COLOR\x10\x02*s\n\x11\x43\x61meraPixelFormat\x12#\n\x1f\x43\x41MERA_PIXEL_FORMAT_UNSPECIFIED\x10\x00\x12\x1b\n\x17\x43\x41MERA_PIXEL_FORMAT_Z16\x10\x01\x12\x1c\n\x18\x43\x41MERA_PIXEL_FORMAT_RGB8\x10\x02\x32\x9d\x02\n\rCameraService\x12V\n\tGetStatus\x12\'.panthera.camera.v1.CameraStatusRequest\x1a .panthera.camera.v1.CameraStatus\x12X\n\x0c\x43\x61ptureFrame\x12\'.panthera.camera.v1.CaptureFrameRequest\x1a\x1f.panthera.camera.v1.CameraFrame\x12Z\n\x0cStreamFrames\x12\'.panthera.camera.v1.StreamFramesRequest\x1a\x1f.panthera.camera.v1.CameraFrame0\x01\x42\x15\xaa\x02\x12Panthera.Camera.V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0c\x63\x61mera.proto\x12\x12panthera.camera.v1\"\x15\n\x13\x43\x61meraStatusRequest\"\xae\x01\n\rCameraProfile\x12\x34\n\x06stream\x18\x01 \x01(\x0e\x32$.panthera.camera.v1.CameraStreamType\x12;\n\x0cpixel_format\x18\x02 \x01(\x0e\x32%.panthera.camera.v1.CameraPixelFormat\x12\r\n\x05width\x18\x03 \x01(\x05\x12\x0e\n\x06height\x18\x04 \x01(\x05\x12\x0b\n\x03\x66ps\x18\x05 \x01(\x05\"\xc4\x02\n\x0c\x43\x61meraStatus\x12\x0f\n\x07\x65nabled\x18\x01 \x01(\x08\x12\x11\n\tavailable\x18\x02 \x01(\x08\x12\x11\n\tstreaming\x18\x03 \x01(\x08\x12\r\n\x05model\x18\x04 \x01(\t\x12\x0e\n\x06serial\x18\x05 \x01(\t\x12\x10\n\x08\x66irmware\x18\x06 \x01(\t\x12\x10\n\x08usb_type\x18\x07 \x01(\t\x12\x13\n\x0bsdk_version\x18\x08 \x01(\t\x12\r\n\x05\x65rror\x18\t \x01(\t\x12\x19\n\x11last_frame_age_ms\x18\n \x01(\x03\x12\x12\n\nactual_fps\x18\x0b \x01(\x01\x12\x33\n\x08profiles\x18\x0c \x03(\x0b\x32!.panthera.camera.v1.CameraProfile\x12\x32\n\x04role\x18\r \x01(\x0e\x32$.panthera.camera.v1.CameraDeviceRole\"_\n\x13\x43\x61ptureFrameRequest\x12\x34\n\x06stream\x18\x01 \x01(\x0e\x32$.panthera.camera.v1.CameraStreamType\x12\x12\n\ntimeout_ms\x18\x02 \x01(\x05\"t\n\x13StreamFramesRequest\x12\x34\n\x06stream\x18\x01 \x01(\x0e\x32$.panthera.camera.v1.CameraStreamType\x12\x13\n\x0bmax_rate_hz\x18\x02 \x01(\x01\x12\x12\n\nmax_frames\x18\x03 \x01(\x05\"\xec\x02\n\x0b\x43\x61meraFrame\x12\x34\n\x06stream\x18\x01 \x01(\x0e\x32$.panthera.camera.v1.CameraStreamType\x12;\n\x0cpixel_format\x18\x02 \x01(\x0e\x32%.panthera.camera.v1.CameraPixelFormat\x12\x10\n\x08sequence\x18\x03 \x01(\x03\x12\x16\n\x0e\x63\x61ptured_at_ns\x18\x04 \x01(\x03\x12\x1b\n\x13\x64\x65vice_timestamp_ms\x18\x05 \x01(\x01\x12\r\n\x05width\x18\x06 \x01(\x05\x12\x0e\n\x06height\x18\x07 \x01(\x05\x12\x0e\n\x06stride\x18\x08 \x01(\x05\x12\x13\n\x0b\x64\x65pth_scale\x18\t \x01(\x01\x12\x0c\n\x04\x64\x61ta\x18\n \x01(\x0c\x12\x32\n\x04role\x18\x0b \x01(\x0e\x32$.panthera.camera.v1.CameraDeviceRole\x12\x1d\n\x15\x63\x61ptured_monotonic_ns\x18\x0c \x01(\x03*r\n\x10\x43\x61meraStreamType\x12\"\n\x1e\x43\x41MERA_STREAM_TYPE_UNSPECIFIED\x10\x00\x12\x1c\n\x18\x43\x41MERA_STREAM_TYPE_DEPTH\x10\x01\x12\x1c\n\x18\x43\x41MERA_STREAM_TYPE_COLOR\x10\x02*u\n\x10\x43\x61meraDeviceRole\x12\"\n\x1e\x43\x41MERA_DEVICE_ROLE_UNSPECIFIED\x10\x00\x12\x1c\n\x18\x43\x41MERA_DEVICE_ROLE_WRIST\x10\x01\x12\x1f\n\x1b\x43\x41MERA_DEVICE_ROLE_OVERHEAD\x10\x02*\x91\x01\n\x11\x43\x61meraPixelFormat\x12#\n\x1f\x43\x41MERA_PIXEL_FORMAT_UNSPECIFIED\x10\x00\x12\x1b\n\x17\x43\x41MERA_PIXEL_FORMAT_Z16\x10\x01\x12\x1c\n\x18\x43\x41MERA_PIXEL_FORMAT_RGB8\x10\x02\x12\x1c\n\x18\x43\x41MERA_PIXEL_FORMAT_JPEG\x10\x03\x32\x9d\x02\n\rCameraService\x12V\n\tGetStatus\x12\'.panthera.camera.v1.CameraStatusRequest\x1a .panthera.camera.v1.CameraStatus\x12X\n\x0c\x43\x61ptureFrame\x12\'.panthera.camera.v1.CaptureFrameRequest\x1a\x1f.panthera.camera.v1.CameraFrame\x12Z\n\x0cStreamFrames\x12\'.panthera.camera.v1.StreamFramesRequest\x1a\x1f.panthera.camera.v1.CameraFrame0\x01\x42\x15\xaa\x02\x12Panthera.Camera.V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,22 +32,24 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'camera_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\252\002\022Panthera.Camera.V1'
-  _globals['_CAMERASTREAMTYPE']._serialized_start=1010
-  _globals['_CAMERASTREAMTYPE']._serialized_end=1124
-  _globals['_CAMERAPIXELFORMAT']._serialized_start=1126
-  _globals['_CAMERAPIXELFORMAT']._serialized_end=1241
+  _globals['_CAMERASTREAMTYPE']._serialized_start=1145
+  _globals['_CAMERASTREAMTYPE']._serialized_end=1259
+  _globals['_CAMERADEVICEROLE']._serialized_start=1261
+  _globals['_CAMERADEVICEROLE']._serialized_end=1378
+  _globals['_CAMERAPIXELFORMAT']._serialized_start=1381
+  _globals['_CAMERAPIXELFORMAT']._serialized_end=1526
   _globals['_CAMERASTATUSREQUEST']._serialized_start=36
   _globals['_CAMERASTATUSREQUEST']._serialized_end=57
   _globals['_CAMERAPROFILE']._serialized_start=60
   _globals['_CAMERAPROFILE']._serialized_end=234
   _globals['_CAMERASTATUS']._serialized_start=237
-  _globals['_CAMERASTATUS']._serialized_end=509
-  _globals['_CAPTUREFRAMEREQUEST']._serialized_start=511
-  _globals['_CAPTUREFRAMEREQUEST']._serialized_end=606
-  _globals['_STREAMFRAMESREQUEST']._serialized_start=608
-  _globals['_STREAMFRAMESREQUEST']._serialized_end=724
-  _globals['_CAMERAFRAME']._serialized_start=727
-  _globals['_CAMERAFRAME']._serialized_end=1008
-  _globals['_CAMERASERVICE']._serialized_start=1244
-  _globals['_CAMERASERVICE']._serialized_end=1529
+  _globals['_CAMERASTATUS']._serialized_end=561
+  _globals['_CAPTUREFRAMEREQUEST']._serialized_start=563
+  _globals['_CAPTUREFRAMEREQUEST']._serialized_end=658
+  _globals['_STREAMFRAMESREQUEST']._serialized_start=660
+  _globals['_STREAMFRAMESREQUEST']._serialized_end=776
+  _globals['_CAMERAFRAME']._serialized_start=779
+  _globals['_CAMERAFRAME']._serialized_end=1143
+  _globals['_CAMERASERVICE']._serialized_start=1529
+  _globals['_CAMERASERVICE']._serialized_end=1814
 # @@protoc_insertion_point(module_scope)

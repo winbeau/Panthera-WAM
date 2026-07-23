@@ -40,6 +40,10 @@ case "$(uname -m)" in
 esac
 
 command -v uv >/dev/null 2>&1 || { echo "uv is required" >&2; exit 1; }
+command -v v4l2-ctl >/dev/null 2>&1 || {
+    echo "v4l2-ctl is required; install the v4l-utils package" >&2
+    exit 1
+}
 [[ -x "$python" ]] || { echo "system Python is missing: $python" >&2; exit 1; }
 if git -C "$repo_root" submodule status --recursive | grep -q '^-'; then
     echo "vendor submodules are missing; run: git submodule update --init --recursive" >&2
@@ -96,15 +100,19 @@ sed "s|@REPO_ROOT@|$escaped_repo_root|g" \
     "$repo_root/deploy/armd.service.in" > "$systemd_dir/armd.service"
 sed "s|@REPO_ROOT@|$escaped_repo_root|g" \
     "$repo_root/deploy/camerad.service.in" > "$systemd_dir/camerad.service"
+sed "s|@REPO_ROOT@|$escaped_repo_root|g" \
+    "$repo_root/deploy/overhead-camera.service.in" > "$systemd_dir/overhead-camera.service"
 systemctl --user daemon-reload
-systemctl --user enable camerad.service armd.service
+systemctl --user enable overhead-camera.service camerad.service armd.service
 
 uv run --no-sync --package panthera-armd armd --sim --check
 uv run --no-sync --package panthera-armd camerad --mode sim --check
+uv run --no-sync --package panthera-armd camerad --backend sim --role overhead --check
 
 echo "Raspberry Pi 5 deployment installed and simulation checks passed."
 echo "WPF arm endpoint:    http://$bind_address:50051"
 echo "WPF camera endpoint: http://$bind_address:50052"
+echo "WPF overhead endpoint: http://$bind_address:50053"
 echo "Services were enabled but not started; real hardware remains untouched."
 echo "Install udev rules once, then ask the operator for explicit confirmation before starting armd:"
 echo "  sudo install -m 0644 '$repo_root/deploy/99-panthera-ht.rules' /etc/udev/rules.d/"

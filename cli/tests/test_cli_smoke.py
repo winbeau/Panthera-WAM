@@ -94,10 +94,15 @@ def free_port() -> int:
 
 def test_camera_endpoint_uses_dedicated_port(monkeypatch) -> None:
     monkeypatch.delenv("PANTHERA_CAMERA_ENDPOINT", raising=False)
+    monkeypatch.delenv("PANTHERA_OVERHEAD_CAMERA_ENDPOINT", raising=False)
     monkeypatch.setenv("PANTHERA_ENDPOINT", "192.168.1.20:50051")
     assert camera_endpoint() == "192.168.1.20:50052"
+    assert camera_endpoint("overhead") == "192.168.1.20:50053"
     monkeypatch.setenv("PANTHERA_ENDPOINT", "[::1]:50051")
     assert camera_endpoint() == "[::1]:50052"
+    assert camera_endpoint("overhead") == "[::1]:50053"
+    monkeypatch.setenv("PANTHERA_OVERHEAD_CAMERA_ENDPOINT", "127.0.0.1:60053")
+    assert camera_endpoint("overhead") == "127.0.0.1:60053"
 
 
 def test_cli_control_estop_and_status(tmp_path, monkeypatch) -> None:
