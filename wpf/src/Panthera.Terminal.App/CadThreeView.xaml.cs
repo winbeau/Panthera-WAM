@@ -38,6 +38,7 @@ public partial class CadThreeView : UserControl
     private bool _cameraPushActive;
     private bool _initializing;
     private DateTimeOffset _lastCameraPush = DateTimeOffset.MinValue;
+    private double _rightColumnWidth = 212;
     private WebView2? _browser;
 
     public CadThreeView()
@@ -64,14 +65,28 @@ public partial class CadThreeView : UserControl
     public double TcpZ { get => (double)GetValue(TcpZProperty); set => SetValue(TcpZProperty, value); }
     public string Theme { get => (string)GetValue(ThemeProperty); set => SetValue(ThemeProperty, value); }
 
-    public void UpdateColorCameraFrame(BitmapSource frame)
+    public void UpdateOverheadCameraFrame(BitmapSource frame)
     {
-        if (!_bridgeReady || _cameraPushActive || _browser?.CoreWebView2 is null
-            || DateTimeOffset.UtcNow - _lastCameraPush < CameraPushInterval)
+        if (!TryBeginCameraPush())
         {
             return;
         }
         _ = PushColorCameraFrameAsync(frame);
+    }
+
+    public void UpdateOverheadCameraJpeg(byte[] jpeg)
+    {
+        if (!TryBeginCameraPush())
+        {
+            return;
+        }
+        _ = PushCameraDataUrlAsync($"data:image/jpeg;base64,{Convert.ToBase64String(jpeg)}");
+    }
+
+    public void SetRightColumnWidth(double width)
+    {
+        _rightColumnWidth = Math.Clamp(width, 180, 360);
+        _ = ApplyLayoutAsync();
     }
 
     public async Task<bool> WaitUntilReadyAsync(TimeSpan timeout)
@@ -166,6 +181,7 @@ public partial class CadThreeView : UserControl
                 _bridgeReady = true;
                 _stateDirty = true;
                 _ = ApplyThemeAsync();
+                _ = ApplyLayoutAsync();
                 return;
             }
             if (type == "model-ready")
@@ -227,20 +243,23 @@ public partial class CadThreeView : UserControl
             $"window.PantheraWpfBridge?.setTheme({JsonSerializer.Serialize(theme)})");
     }
 
-    private async Task PushColorCameraFrameAsync(BitmapSource frame)
+    private async Task ApplyLayoutAsync()
     {
         var browser = _browser;
-        if (browser?.CoreWebView2 is null)
+        if (!_bridgeReady || browser?.CoreWebView2 is null)
         {
             return;
         }
-        _cameraPushActive = true;
+        await browser.ExecuteScriptAsync(
+            $"window.PantheraWpfBridge?.setRightColumnWidth({_rightColumnWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+    }
+
+    private async Task PushColorCameraFrameAsync(BitmapSource frame)
+    {
         try
         {
             var dataUrl = await Task.Run(() => EncodeJpegDataUrl(frame));
-            await browser.ExecuteScriptAsync(
-                $"window.PantheraWpfBridge?.setCameraFrame({JsonSerializer.Serialize(dataUrl)})");
-            _lastCameraPush = DateTimeOffset.UtcNow;
+            await PushCameraDataUrlCoreAsync(dataUrl);
         }
         catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
         {
@@ -250,6 +269,45 @@ public partial class CadThreeView : UserControl
         {
             _cameraPushActive = false;
         }
+    }
+
+    private async Task PushCameraDataUrlAsync(string dataUrl)
+    {
+        try
+        {
+            await PushCameraDataUrlCoreAsync(dataUrl);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
+        {
+            AppDiagnostics.Write("cad-camera-frame", exception);
+        }
+        finally
+        {
+            _cameraPushActive = false;
+        }
+    }
+
+    private async Task PushCameraDataUrlCoreAsync(string dataUrl)
+    {
+        var browser = _browser;
+        if (browser?.CoreWebView2 is null)
+        {
+            return;
+        }
+        await browser.ExecuteScriptAsync(
+            $"window.PantheraWpfBridge?.setCameraFrame({JsonSerializer.Serialize(dataUrl)})");
+        _lastCameraPush = DateTimeOffset.UtcNow;
+    }
+
+    private bool TryBeginCameraPush()
+    {
+        if (!_bridgeReady || _cameraPushActive || _browser?.CoreWebView2 is null
+            || DateTimeOffset.UtcNow - _lastCameraPush < CameraPushInterval)
+        {
+            return false;
+        }
+        _cameraPushActive = true;
+        return true;
     }
 
     private static string EncodeJpegDataUrl(BitmapSource frame)

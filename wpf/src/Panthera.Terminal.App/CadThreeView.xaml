@@ -19,8 +19,8 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="精确 CAD 三视图" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="SIDE · FRONT · TOP" Margin="10,0,0,0"
+                <TextBlock Text="CAD 双视图与俯视列" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="SIDE · FRONT · TOP · OVERHEAD" Margin="10,0,0,0"
                            FontFamily="Cascadia Mono, Consolas" FontSize="11.5"
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" />
                 <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">

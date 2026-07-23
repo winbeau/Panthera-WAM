@@ -381,10 +381,13 @@ public sealed class MainWindowViewModelTests
         public Task<DaemonSnapshot> GetDaemonStatusAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default) =>
+        public Task<CameraSnapshot> GetCameraStatusAsync(
+            CameraSourceKind source,
+            CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
         public async IAsyncEnumerable<CameraFrameSnapshot> StreamCameraFramesAsync(
+            CameraSourceKind source,
             CameraStreamKind stream,
             double maxRateHz = 15,
             [EnumeratorCancellation]

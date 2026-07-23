@@ -67,7 +67,10 @@ public partial class App : Application
                 services.AddSingleton(settings);
                 services.AddSingleton<IArmdClient>(_ => uiAcceptanceMode
                     ? new UiAcceptanceArmdClient()
-                    : new ArmdClient(settings.Endpoint, settings.CameraEndpoint));
+                    : new ArmdClient(
+                        settings.Endpoint,
+                        settings.CameraEndpoint,
+                        settings.OverheadCameraEndpoint));
                 services.AddSingleton<IEnvironmentGuideService, WindowsEnvironmentGuideService>();
                 services.AddSingleton<IRemoteDeploymentService, OpenSshRemoteDeploymentService>();
                 services.AddSingleton<ISshConnectionDiscoveryService, WindowsSshConnectionDiscoveryService>();
@@ -158,6 +161,8 @@ public partial class App : Application
         var backendMode = Environment.GetEnvironmentVariable("PANTHERA_BACKEND_MODE");
         var endpoint = Environment.GetEnvironmentVariable("PANTHERA_ENDPOINT");
         var cameraEndpoint = Environment.GetEnvironmentVariable("PANTHERA_CAMERA_ENDPOINT");
+        var overheadCameraEndpoint = Environment.GetEnvironmentVariable(
+            "PANTHERA_OVERHEAD_CAMERA_ENDPOINT");
         return settings with
         {
             BackendMode = string.IsNullOrWhiteSpace(backendMode) ? settings.BackendMode : backendMode,
@@ -165,6 +170,9 @@ public partial class App : Application
             CameraEndpoint = string.IsNullOrWhiteSpace(cameraEndpoint)
                 ? settings.CameraEndpoint
                 : cameraEndpoint,
+            OverheadCameraEndpoint = string.IsNullOrWhiteSpace(overheadCameraEndpoint)
+                ? settings.OverheadCameraEndpoint
+                : overheadCameraEndpoint,
         };
     }
 

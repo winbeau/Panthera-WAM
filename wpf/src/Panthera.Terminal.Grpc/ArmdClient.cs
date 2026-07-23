@@ -17,19 +17,24 @@ public sealed class ArmdClient : IArmdClient
     private readonly GrpcChannel _jogChannel;
     private readonly GrpcChannel _executionChannel;
     private readonly GrpcChannel _cameraChannel;
+    private readonly GrpcChannel _overheadCameraChannel;
     private readonly ArmService.ArmServiceClient _client;
     private readonly ArmService.ArmServiceClient _stateClient;
     private readonly ArmService.ArmServiceClient _heartbeatClient;
     private readonly ArmService.ArmServiceClient _jogClient;
     private readonly ArmService.ArmServiceClient _executionClient;
     private readonly CameraService.CameraServiceClient _cameraClient;
+    private readonly CameraService.CameraServiceClient _overheadCameraClient;
     private readonly DatasetService.DatasetServiceClient _datasetClient;
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _heartbeatLifetime;
     private Task? _heartbeatTask;
     private string _leaseToken = string.Empty;
 
-    public ArmdClient(string endpoint, string? cameraEndpoint = null)
+    public ArmdClient(
+        string endpoint,
+        string? cameraEndpoint = null,
+        string? overheadCameraEndpoint = null)
     {
         _channel = CreateChannel(endpoint);
         _stateChannel = CreateChannel(endpoint);
@@ -37,12 +42,14 @@ public sealed class ArmdClient : IArmdClient
         _jogChannel = CreateChannel(endpoint);
         _executionChannel = CreateChannel(endpoint);
         _cameraChannel = CreateChannel(cameraEndpoint ?? endpoint);
+        _overheadCameraChannel = CreateChannel(overheadCameraEndpoint ?? cameraEndpoint ?? endpoint);
         _client = new ArmService.ArmServiceClient(_channel);
         _stateClient = new ArmService.ArmServiceClient(_stateChannel);
         _heartbeatClient = new ArmService.ArmServiceClient(_heartbeatChannel);
         _jogClient = new ArmService.ArmServiceClient(_jogChannel);
         _executionClient = new ArmService.ArmServiceClient(_executionChannel);
         _cameraClient = new CameraService.CameraServiceClient(_cameraChannel);
+        _overheadCameraClient = new CameraService.CameraServiceClient(_overheadCameraChannel);
         _datasetClient = new DatasetService.DatasetServiceClient(_executionChannel);
     }
 
@@ -67,13 +74,17 @@ public sealed class ArmdClient : IArmdClient
         }, cancellationToken);
     }
 
-    public async Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default)
+    public async Task<CameraSnapshot> GetCameraStatusAsync(
+        CameraSourceKind source,
+        CancellationToken cancellationToken = default)
     {
-        var response = await InvokeRetryableAsync(async () => await _cameraClient.GetStatusAsync(
+        var response = await InvokeRetryableAsync(async () => await CameraClient(source).GetStatusAsync(
             new CameraStatusRequest(),
             deadline: DateTime.UtcNow.AddSeconds(3),
             cancellationToken: cancellationToken), cancellationToken);
+        ValidateCameraRole(source, response.Role);
         return new CameraSnapshot(
+            source,
             response.Enabled,
             response.Available,
             response.Streaming,
@@ -88,6 +99,7 @@ public sealed class ArmdClient : IArmdClient
     }
 
     public async IAsyncEnumerable<CameraFrameSnapshot> StreamCameraFramesAsync(
+        CameraSourceKind source,
         CameraStreamKind stream,
         double maxRateHz = 15,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -103,24 +115,34 @@ public sealed class ArmdClient : IArmdClient
                 : CameraStreamType.Color,
             MaxRateHz = maxRateHz,
         };
-        using var call = _cameraClient.StreamFrames(request, cancellationToken: cancellationToken);
+        if (source == CameraSourceKind.Overhead && stream == CameraStreamKind.Depth)
+        {
+            throw new ArgumentException("俯视相机不提供深度流", nameof(stream));
+        }
+        using var call = CameraClient(source).StreamFrames(request, cancellationToken: cancellationToken);
         while (await call.ResponseStream.MoveNext(cancellationToken))
         {
             var frame = call.ResponseStream.Current;
+            ValidateCameraRole(source, frame.Role);
             yield return new CameraFrameSnapshot(
+                source,
                 frame.Stream == CameraStreamType.Depth
                     ? CameraStreamKind.Depth
                     : CameraStreamKind.Color,
-                frame.PixelFormat == CameraPixelFormat.Z16
-                    ? CameraPixelKind.Z16
-                    : CameraPixelKind.Rgb8,
+                frame.PixelFormat switch
+                {
+                    CameraPixelFormat.Z16 => CameraPixelKind.Z16,
+                    CameraPixelFormat.Jpeg => CameraPixelKind.Jpeg,
+                    _ => CameraPixelKind.Rgb8,
+                },
                 frame.Sequence,
                 frame.CapturedAtNs,
                 frame.Width,
                 frame.Height,
                 frame.Stride,
                 frame.DepthScale,
-                frame.Data.ToByteArray());
+                frame.Data.ToByteArray(),
+                frame.CapturedMonotonicNs);
         }
     }
 
@@ -589,6 +611,7 @@ public sealed class ArmdClient : IArmdClient
         _jogChannel.Dispose();
         _executionChannel.Dispose();
         _cameraChannel.Dispose();
+        _overheadCameraChannel.Dispose();
         _lifetime.Dispose();
     }
 
@@ -760,7 +783,30 @@ public sealed class ArmdClient : IArmdClient
             EnableMultipleHttp2Connections = false,
             ConnectTimeout = TimeSpan.FromSeconds(3),
         };
-        return GrpcChannel.ForAddress(endpoint, new GrpcChannelOptions { HttpHandler = handler });
+        return GrpcChannel.ForAddress(endpoint, new GrpcChannelOptions
+        {
+            HttpHandler = handler,
+            MaxReceiveMessageSize = 16 * 1024 * 1024,
+            MaxSendMessageSize = 16 * 1024 * 1024,
+        });
+    }
+
+    private CameraService.CameraServiceClient CameraClient(CameraSourceKind source) =>
+        source == CameraSourceKind.Overhead ? _overheadCameraClient : _cameraClient;
+
+    private static void ValidateCameraRole(CameraSourceKind source, CameraDeviceRole role)
+    {
+        var expected = source == CameraSourceKind.Overhead
+            ? CameraDeviceRole.Overhead
+            : CameraDeviceRole.Wrist;
+        if (source == CameraSourceKind.Wrist && role == CameraDeviceRole.Unspecified)
+        {
+            return;
+        }
+        if (role != expected)
+        {
+            throw new InvalidOperationException($"相机端点角色不匹配：期望 {expected}，实际 {role}");
+        }
     }
 
     private static ControlSnapshot MapControl(ControlStatus value) =>

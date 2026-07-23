@@ -126,7 +126,7 @@ public sealed class OpenSshRemoteDeploymentServiceTests
     }
 
     [Fact]
-    public void BuildTunnelArguments_UsesLoopbackForBothGrpcServices()
+    public void BuildTunnelArguments_UsesLoopbackForAllGrpcServices()
     {
         var settings = new SshConnectionSettings(
             Host: "100.78.118.74",
@@ -138,6 +138,7 @@ public sealed class OpenSshRemoteDeploymentServiceTests
 
         Assert.Contains("127.0.0.1:50050:127.0.0.1:50051", args);
         Assert.Contains("127.0.0.1:50049:127.0.0.1:50052", args);
+        Assert.Contains("127.0.0.1:50048:127.0.0.1:50053", args);
         Assert.Contains("ExitOnForwardFailure=yes", args);
         Assert.Contains("StrictHostKeyChecking=accept-new", args);
         Assert.Equal("winbeau@100.78.118.74", args[^1]);
@@ -179,7 +180,8 @@ public sealed class OpenSshRemoteDeploymentServiceTests
             "systemd-user");
 
         Assert.Contains("cd '/home/user/Panthera-WAM'", script, StringComparison.Ordinal);
-        Assert.Contains("systemctl --user start camerad.service armd.service", script, StringComparison.Ordinal);
+        Assert.Contains("overhead-camera.service", script, StringComparison.Ordinal);
+        Assert.Contains("systemctl --user start $units", script, StringComparison.Ordinal);
         Assert.Contains("/dev/ttyACM*", script, StringComparison.Ordinal);
         Assert.Contains("exit 23", script, StringComparison.Ordinal);
         Assert.DoesNotContain("install", script, StringComparison.OrdinalIgnoreCase);
@@ -192,6 +194,8 @@ public sealed class OpenSshRemoteDeploymentServiceTests
 
         Assert.Contains("systemctl --user is-active armd.service", script, StringComparison.Ordinal);
         Assert.Contains("systemctl --user is-active camerad.service", script, StringComparison.Ordinal);
+        Assert.Contains("systemctl --user is-active overhead-camera.service", script, StringComparison.Ordinal);
+        Assert.Contains("50051|50052|50053", script, StringComparison.Ordinal);
         Assert.Contains("stable=$((stable + 1))", script, StringComparison.Ordinal);
         Assert.Contains("[ \"$stable\" -ge 3 ]", script, StringComparison.Ordinal);
         Assert.Contains("journalctl --user -u armd.service", script, StringComparison.Ordinal);

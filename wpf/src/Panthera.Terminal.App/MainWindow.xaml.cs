@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -26,6 +27,7 @@ public partial class MainWindow : FluentWindow
     private long _renderedVersion;
     private long _renderedColorVersion;
     private long _renderedDepthVersion;
+    private long _renderedOverheadVersion;
     private bool _shutdownComplete;
 
     public MainWindow(
@@ -169,29 +171,96 @@ public partial class MainWindow : FluentWindow
             _renderedVersion = version;
             _viewModel.ApplySnapshot(snapshot);
         }
-        RenderCameraFrame(CameraStreamKind.Color, ColorCameraImage, ref _renderedColorVersion);
-        RenderCameraFrame(CameraStreamKind.Depth, DepthCameraImage, ref _renderedDepthVersion);
+        RenderCameraFrame(
+            CameraSourceKind.Wrist,
+            CameraStreamKind.Color,
+            ref _renderedColorVersion,
+            ColorCameraImage,
+            WristCameraImage);
+        RenderCameraFrame(
+            CameraSourceKind.Wrist,
+            CameraStreamKind.Depth,
+            ref _renderedDepthVersion,
+            DepthCameraImage);
+        RenderCameraFrame(
+            CameraSourceKind.Overhead,
+            CameraStreamKind.Color,
+            ref _renderedOverheadVersion);
     }
 
-    private void RenderCameraFrame(CameraStreamKind stream, Image image, ref long renderedVersion)
+    private void RenderCameraFrame(
+        CameraSourceKind cameraSource,
+        CameraStreamKind stream,
+        ref long renderedVersion,
+        params Image[] images)
     {
-        var (frame, version) = _cameraFrames.Read(stream);
+        var (frame, version) = _cameraFrames.Read(cameraSource, stream);
         if (frame is null || version == renderedVersion)
         {
             return;
         }
         renderedVersion = version;
+        if (cameraSource == CameraSourceKind.Overhead
+            && frame.PixelFormat == CameraPixelKind.Jpeg)
+        {
+            CadView.UpdateOverheadCameraJpeg(frame.Data);
+            return;
+        }
         var source = frame.PixelFormat switch
         {
             CameraPixelKind.Rgb8 => CreateColorBitmap(frame),
             CameraPixelKind.Z16 => CreateDepthBitmap(frame),
+            CameraPixelKind.Jpeg => CreateJpegBitmap(frame),
             _ => null,
         };
-        image.Source = source;
-        if (stream == CameraStreamKind.Color && source is not null)
+        foreach (var image in images)
         {
-            CadView.UpdateColorCameraFrame(source);
+            image.Source = source;
         }
+        if (cameraSource == CameraSourceKind.Overhead && source is not null)
+        {
+            CadView.UpdateOverheadCameraFrame(source);
+        }
+    }
+
+    private static BitmapSource CreateJpegBitmap(CameraFrameSnapshot frame)
+    {
+        using var stream = new MemoryStream(frame.Data, writable: false);
+        var decoder = BitmapDecoder.Create(
+            stream,
+            BitmapCreateOptions.PreservePixelFormat,
+            BitmapCacheOption.OnLoad);
+        var bitmap = decoder.Frames[0];
+        bitmap.Freeze();
+        return bitmap;
+    }
+
+    private void CameraColumnSplitter_DragDelta(object sender, DragDeltaEventArgs eventArgs) =>
+        SynchronizeCameraColumn();
+
+    private void CameraLayout_SizeChanged(object sender, SizeChangedEventArgs eventArgs) =>
+        SynchronizeCameraColumn();
+
+    private void SynchronizeCameraColumn()
+    {
+        if (CameraColumn is null || CadViewRow is null || WristCameraRow is null || CadView is null)
+        {
+            return;
+        }
+        var width = Math.Clamp(CameraColumn.ActualWidth, 180, 360);
+        // The embedded CAD host has a 40 px WPF header, then two square cells
+        // separated and padded by 18 px in HTML. Keep TOP, OVERHEAD and WRIST
+        // as one vertically aligned column of equal squares.
+        var cadHeight = (2 * width) + 58;
+        if (Math.Abs(CadViewRow.ActualHeight - cadHeight) > 0.5)
+        {
+            CadViewRow.Height = new GridLength(cadHeight);
+        }
+        if (Math.Abs(WristCameraRow.ActualHeight - width) > 0.5)
+        {
+            WristCameraRow.Height = new GridLength(width);
+        }
+        CadView.SetRightColumnWidth(width);
     }
 
     private static BitmapSource CreateColorBitmap(CameraFrameSnapshot frame)
@@ -309,6 +378,7 @@ public partial class MainWindow : FluentWindow
                 BackendMode = "SshRemote",
                 Endpoint = "http://127.0.0.1:50050",
                 CameraEndpoint = "http://127.0.0.1:50049",
+                OverheadCameraEndpoint = "http://127.0.0.1:50048",
                 Ssh = sshSettings,
             };
             _settingsStore.Save(updated);

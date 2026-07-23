@@ -7,7 +7,7 @@ using Panthera.Terminal.Settings;
 namespace Panthera.Terminal.App;
 
 /// <summary>
-/// Keeps localhost:50050/50049 forwarded to the selected Linux backend. The
+/// Keeps localhost:50050/50049/50048 forwarded to the selected Linux backend. The
 /// remote service can therefore bind only to loopback on either Raspberry Pi or
 /// WSL; WPF does not need to guess the target network interface.
 /// </summary>

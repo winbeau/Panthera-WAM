@@ -15,6 +15,7 @@ public sealed class JsonTerminalSettingsStoreTests : IDisposable
         var expected = new TerminalSettings(
             Endpoint: "http://100.78.118.74:50051",
             CameraEndpoint: "http://100.78.118.74:50052",
+            OverheadCameraEndpoint: "http://100.78.118.74:50053",
             Theme: "Dark",
             JogSpeed: 0.22,
             WslDistribution: "Ubuntu",
@@ -41,6 +42,20 @@ public sealed class JsonTerminalSettingsStoreTests : IDisposable
         var actual = new JsonTerminalSettingsStore(path).Load();
 
         Assert.Equal(new TerminalSettings(), actual);
+    }
+
+    [Fact]
+    public void Load_LegacySettings_FillsOverheadEndpointDefault()
+    {
+        Directory.CreateDirectory(_directory);
+        var path = Path.Combine(_directory, "legacy-settings.json");
+        File.WriteAllText(path, """{"Endpoint":"http://pi5:50051","CameraEndpoint":"http://pi5:50052"}""");
+
+        var actual = new JsonTerminalSettingsStore(path).Load();
+
+        Assert.Equal("http://pi5:50051", actual.Endpoint);
+        Assert.Equal("http://pi5:50052", actual.CameraEndpoint);
+        Assert.Equal("http://127.0.0.1:50048", actual.OverheadCameraEndpoint);
     }
 
     [Theory]

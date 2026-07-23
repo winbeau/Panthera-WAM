@@ -60,7 +60,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         DatasetRepoId = "local/panthera-wam";
         DatasetTask = "Panthera demonstration";
         TeachRecordingName = NextRecordingName();
-        ConnectionDetail = $"arm {settings.Endpoint} · camera {settings.CameraEndpoint}";
+        ConnectionDetail =
+            $"arm {settings.Endpoint} · wrist {settings.CameraEndpoint} · overhead {settings.OverheadCameraEndpoint}";
     }
 
     public TerminalSettings Settings { get; private set; }
@@ -101,6 +102,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty]
     private string _cameraSummary = "等待 camerad";
+
+    [ObservableProperty]
+    private bool _overheadCameraAvailable;
+
+    [ObservableProperty]
+    private string _overheadCameraSummary = "等待 overhead-camera";
 
     [ObservableProperty]
     private string _connectionDetail = string.Empty;
@@ -324,7 +331,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             var daemon = await _client.GetDaemonStatusAsync(cancellationToken);
-            var camera = await _client.GetCameraStatusAsync(cancellationToken);
+            var camera = await _client.GetCameraStatusAsync(CameraSourceKind.Wrist, cancellationToken);
             var control = await _client.GetControlStatusAsync(cancellationToken);
             var limits = await _client.GetSoftLimitsAsync(cancellationToken);
             ConnectionState = _client.ConnectionState;
@@ -340,7 +347,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
             CameraSummary = CameraAvailable
                 ? $"camerad 采集 · {camera.ActualFps:F1} fps"
                 : camera.Enabled ? camera.Error : "camerad 未启用相机";
-            ConnectionDetail = $"arm {Settings.Endpoint} · camera {Settings.CameraEndpoint}";
+            try
+            {
+                var overhead = await _client.GetCameraStatusAsync(
+                    CameraSourceKind.Overhead,
+                    cancellationToken);
+                OverheadCameraAvailable = overhead.Available && overhead.Streaming;
+                OverheadCameraSummary = OverheadCameraAvailable
+                    ? $"C920e 采集 · {overhead.ActualFps:F1} fps"
+                    : overhead.Enabled ? overhead.Error : "overhead-camera 未启用";
+            }
+            catch (Exception exception)
+            {
+                OverheadCameraAvailable = false;
+                OverheadCameraSummary = exception.Message;
+            }
+            ConnectionDetail =
+                $"arm {Settings.Endpoint} · wrist {Settings.CameraEndpoint} · overhead {Settings.OverheadCameraEndpoint}";
             _gripperMinimum = limits.GripperMinimum;
             _gripperMaximum = limits.GripperMaximum;
             OnPropertyChanged(nameof(GripperPercent));
@@ -352,6 +375,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             AddLog("Info", "Connection", $"机械臂 {Settings.Endpoint}");
             AddLog("Info", "Connection", $"相机 {Settings.CameraEndpoint}");
             AddLog(CameraAvailable ? "Info" : "Warning", "D405", CameraSummary);
+            AddLog(
+                OverheadCameraAvailable ? "Info" : "Warning",
+                "C920e",
+                OverheadCameraSummary);
             await RefreshTeachRecordingsAsync();
         }
         catch (Exception exception)

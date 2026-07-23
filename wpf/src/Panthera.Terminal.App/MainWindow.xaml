@@ -123,6 +123,14 @@
                     <Border Margin="0,0,4,0" Style="{StaticResource CockpitBadgeStyle}">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse Margin="0,0,6,0" Style="{StaticResource StatusDotStyle}" Fill="{DynamicResource SystemFillColorSuccessBrush}" />
+                            <TextBlock Text="C920e " FontSize="12.5" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding OverheadCameraSummary}" MaxWidth="100" TextTrimming="CharacterEllipsis"
+                                       FontFamily="Cascadia Mono, Consolas" FontSize="12" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                    <Border Margin="0,0,4,0" Style="{StaticResource CockpitBadgeStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Margin="0,0,6,0" Style="{StaticResource StatusDotStyle}" Fill="{DynamicResource SystemFillColorSuccessBrush}" />
                             <TextBlock Text="D405 " FontSize="12.5" VerticalAlignment="Center" />
                             <TextBlock Text="{Binding CameraSummary}" MaxWidth="100" TextTrimming="CharacterEllipsis"
                                        FontFamily="Cascadia Mono, Consolas" FontSize="12" VerticalAlignment="Center" />
@@ -189,7 +197,11 @@
                     </Grid.ColumnDefinitions>
 
                     <Grid Grid.Column="0">
-                        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="7" /><RowDefinition Height="212" /></Grid.RowDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition x:Name="CadViewRow" Height="482" />
+                            <RowDefinition Height="7" />
+                            <RowDefinition x:Name="WristCameraRow" Height="212" />
+                        </Grid.RowDefinitions>
                         <Border Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
                             <local:CadThreeView x:Name="CadView"
                                 J1="{Binding Joints[0].Position}" J2="{Binding Joints[1].Position}" J3="{Binding Joints[2].Position}"
@@ -198,7 +210,14 @@
                                 GripperPercent="{Binding GripperPercent, Mode=OneWay}" Theme="{Binding Theme, Mode=OneWay}" />
                         </Border>
 
-                        <Border Grid.Row="2" Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
+                        <Grid Grid.Row="2" SizeChanged="CameraLayout_SizeChanged">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" MinWidth="620" />
+                                <ColumnDefinition Width="7" />
+                                <ColumnDefinition x:Name="CameraColumn" Width="212" MinWidth="180" MaxWidth="360" />
+                            </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                 <Border Style="{StaticResource CardHeaderStyle}">
@@ -266,6 +285,36 @@
                                 </Grid>
                             </Grid>
                         </Border>
+
+                            <GridSplitter Grid.Column="1" Width="7" HorizontalAlignment="Stretch"
+                                          Background="Transparent" ResizeDirection="Columns"
+                                          ResizeBehavior="PreviousAndNext"
+                                          DragDelta="CameraColumnSplitter_DragDelta"
+                                          AutomationProperties.AutomationId="CameraColumnSplitter" />
+
+                            <Border Grid.Column="2" Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
+                                <Grid>
+                                    <Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                    <Border Style="{StaticResource CardHeaderStyle}">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="{Binding CameraSummary}" Style="{StaticResource MetaTextStyle}" />
+                                            <TextBlock Text="D405 腕部摄像头" Style="{StaticResource SectionHeaderTextStyle}" />
+                                        </DockPanel>
+                                    </Border>
+                                    <Border Grid.Row="1" Background="#FF101418" ClipToBounds="True">
+                                        <Grid>
+                                            <Image x:Name="WristCameraImage" Stretch="UniformToFill"
+                                                   AutomationProperties.AutomationId="WristCameraImage" />
+                                            <Border VerticalAlignment="Top" HorizontalAlignment="Left" Margin="7"
+                                                    Padding="6,2" CornerRadius="3" Background="#AA000000">
+                                                <TextBlock Text="WRIST · RGB8" Foreground="White"
+                                                           FontFamily="Cascadia Mono, Consolas" FontSize="10" />
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </Grid>
                     </Grid>
 
                     <Grid Grid.Column="2">

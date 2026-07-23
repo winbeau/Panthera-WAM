@@ -24,16 +24,21 @@ public sealed class CameraStreamHostedService : BackgroundService
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
         Task.WhenAll(
-            PumpAsync(CameraStreamKind.Color, stoppingToken),
-            PumpAsync(CameraStreamKind.Depth, stoppingToken));
+            PumpAsync(CameraSourceKind.Wrist, CameraStreamKind.Color, stoppingToken),
+            PumpAsync(CameraSourceKind.Wrist, CameraStreamKind.Depth, stoppingToken),
+            PumpAsync(CameraSourceKind.Overhead, CameraStreamKind.Color, stoppingToken));
 
-    private async Task PumpAsync(CameraStreamKind stream, CancellationToken stoppingToken)
+    private async Task PumpAsync(
+        CameraSourceKind source,
+        CameraStreamKind stream,
+        CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await foreach (var frame in _client.StreamCameraFramesAsync(stream, CameraStreamRateHz, stoppingToken))
+                var rate = source == CameraSourceKind.Overhead ? 15.0 : CameraStreamRateHz;
+                await foreach (var frame in _client.StreamCameraFramesAsync(source, stream, rate, stoppingToken))
                 {
                     _frames.Publish(frame);
                 }
@@ -44,7 +49,11 @@ public sealed class CameraStreamHostedService : BackgroundService
             }
             catch (Exception exception)
             {
-                _logger.LogWarning(exception, "D405 {Stream} 视频流断开，稍后重连", stream);
+                _logger.LogWarning(
+                    exception,
+                    "{Source} {Stream} 视频流断开，稍后重连",
+                    source,
+                    stream);
                 await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
         }

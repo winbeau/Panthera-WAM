@@ -84,7 +84,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         }
         try
         {
-            var status = await _client.GetCameraStatusAsync(cancellationToken);
+            var status = await _client.GetCameraStatusAsync(CameraSourceKind.Wrist, cancellationToken);
             var healthy = status.Enabled && status.Available && status.Streaming;
             var detail = healthy
                 ? $"{status.Model} · {status.ActualFps:F1} fps · {status.LastFrameAgeMs} ms"
@@ -197,7 +197,9 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
                 {
                     return new EnvironmentGuideResult(steps);
                 }
-                var cameraStatus = await _client.GetCameraStatusAsync(cancellationToken);
+                var cameraStatus = await _client.GetCameraStatusAsync(
+                    CameraSourceKind.Wrist,
+                    cancellationToken);
                 var cameraHealthy = cameraStatus.Enabled && cameraStatus.Available && cameraStatus.Streaming;
                 var cameraDetail = cameraHealthy
                     ? $"{cameraStatus.Model} · {cameraStatus.ActualFps:F1} fps"
@@ -244,7 +246,7 @@ public sealed class WindowsEnvironmentGuideService : IEnvironmentGuideService
         }
         try
         {
-            var status = await _client.GetCameraStatusAsync(cancellationToken);
+            var status = await _client.GetCameraStatusAsync(CameraSourceKind.Wrist, cancellationToken);
             var healthy = status.Enabled && status.Available && status.Streaming;
             var detail = healthy
                 ? $"{status.Model} · {status.ActualFps:F1} fps · {status.LastFrameAgeMs} ms"
