@@ -10,10 +10,17 @@ enum CameraStreamType {
   CAMERA_STREAM_TYPE_COLOR = 2;
 }
 
+enum CameraDeviceRole {
+  CAMERA_DEVICE_ROLE_UNSPECIFIED = 0;
+  CAMERA_DEVICE_ROLE_WRIST = 1;
+  CAMERA_DEVICE_ROLE_OVERHEAD = 2;
+}
+
 enum CameraPixelFormat {
   CAMERA_PIXEL_FORMAT_UNSPECIFIED = 0;
   CAMERA_PIXEL_FORMAT_Z16 = 1;
   CAMERA_PIXEL_FORMAT_RGB8 = 2;
+  CAMERA_PIXEL_FORMAT_JPEG = 3;
 }
 
 message CameraStatusRequest {}
@@ -39,6 +46,7 @@ message CameraStatus {
   int64 last_frame_age_ms = 10;
   double actual_fps = 11;
   repeated CameraProfile profiles = 12;
+  CameraDeviceRole role = 13;
 }
 
 message CaptureFrameRequest {
@@ -63,6 +71,8 @@ message CameraFrame {
   int32 stride = 8;
   double depth_scale = 9;
   bytes data = 10;
+  CameraDeviceRole role = 11;
+  int64 captured_monotonic_ns = 12;
 }
 
 service CameraService {

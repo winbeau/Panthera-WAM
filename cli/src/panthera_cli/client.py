@@ -28,15 +28,22 @@ def endpoint() -> str:
     return os.environ.get("PANTHERA_ENDPOINT", "127.0.0.1:50051")
 
 
-def camera_endpoint() -> str:
-    configured = os.environ.get("PANTHERA_CAMERA_ENDPOINT")
+def camera_endpoint(source: str = "wrist") -> str:
+    normalized = source.strip().lower()
+    if normalized not in {"wrist", "overhead"}:
+        raise ValueError("camera source 必须是 wrist 或 overhead")
+    environment_name = (
+        "PANTHERA_OVERHEAD_CAMERA_ENDPOINT" if normalized == "overhead" else "PANTHERA_CAMERA_ENDPOINT"
+    )
+    configured = os.environ.get(environment_name)
     if configured:
         return configured
     arm_target = endpoint()
     host, separator, port = arm_target.rpartition(":")
+    camera_port = "50053" if normalized == "overhead" else "50052"
     if separator and port.isdecimal():
-        return f"{host}:50052"
-    return "127.0.0.1:50052"
+        return f"{host}:{camera_port}"
+    return f"127.0.0.1:{camera_port}"
 
 
 def default_client_id() -> str:
@@ -78,8 +85,11 @@ def create_stub(target: str | None = None):
     return channel, arm_pb2_grpc.ArmServiceStub(channel)
 
 
-def create_camera_stub(target: str | None = None):
-    channel = grpc.insecure_channel(target or camera_endpoint(), options=LOCAL_CHANNEL_OPTIONS)
+def create_camera_stub(target: str | None = None, *, source: str = "wrist"):
+    channel = grpc.insecure_channel(
+        target or camera_endpoint(source),
+        options=LOCAL_CHANNEL_OPTIONS,
+    )
     return channel, camera_pb2_grpc.CameraServiceStub(channel)
 
 

@@ -42,7 +42,14 @@ public sealed record DaemonSnapshot(
     string SdkVersion,
     bool EStopLatchHazardPresent);
 
+public enum CameraSourceKind
+{
+    Wrist,
+    Overhead,
+}
+
 public sealed record CameraSnapshot(
+    CameraSourceKind Source,
     bool Enabled,
     bool Available,
     bool Streaming,
@@ -65,9 +72,11 @@ public enum CameraPixelKind
 {
     Z16,
     Rgb8,
+    Jpeg,
 }
 
 public sealed record CameraFrameSnapshot(
+    CameraSourceKind Source,
     CameraStreamKind Stream,
     CameraPixelKind PixelFormat,
     long Sequence,
@@ -76,7 +85,8 @@ public sealed record CameraFrameSnapshot(
     int Height,
     int Stride,
     double DepthScale,
-    byte[] Data);
+    byte[] Data,
+    long CapturedMonotonicNs);
 
 public sealed record ControlSnapshot(
     bool Held,
@@ -162,6 +172,7 @@ public sealed record DatasetJobSnapshot(
 public sealed record TerminalSettings(
     string Endpoint = "http://127.0.0.1:50050",
     string CameraEndpoint = "http://127.0.0.1:50049",
+    string OverheadCameraEndpoint = "http://127.0.0.1:50048",
     string Theme = "System",
     string WslDistribution = "Ubuntu-22.04",
     string WslUser = "",

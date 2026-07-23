@@ -138,6 +138,27 @@ def camera_stream_type(value: str) -> int:
     raise typer.BadParameter("stream 必须是 depth 或 color")
 
 
+def camera_source(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"wrist", "overhead"}:
+        raise typer.BadParameter("source 必须是 wrist 或 overhead")
+    return normalized
+
+
+def validate_camera_role(status, source: str) -> None:
+    expected = (
+        camera_pb2.CAMERA_DEVICE_ROLE_OVERHEAD
+        if source == "overhead"
+        else camera_pb2.CAMERA_DEVICE_ROLE_WRIST
+    )
+    if status.role == camera_pb2.CAMERA_DEVICE_ROLE_UNSPECIFIED and source == "wrist":
+        return
+    if status.role != expected:
+        actual = camera_pb2.CameraDeviceRole.Name(status.role)
+        expected_name = camera_pb2.CameraDeviceRole.Name(expected)
+        raise typer.BadParameter(f"端点角色不匹配：期望 {expected_name}，实际 {actual}")
+
+
 def camera_status_data(status) -> dict:
     return {
         "enabled": status.enabled,
@@ -151,6 +172,7 @@ def camera_status_data(status) -> dict:
         "error": status.error,
         "last_frame_age_ms": status.last_frame_age_ms,
         "actual_fps": status.actual_fps,
+        "role": camera_pb2.CameraDeviceRole.Name(status.role),
         "profiles": [
             {
                 "stream": camera_pb2.CameraStreamType.Name(profile.stream),
@@ -176,6 +198,10 @@ def save_camera_frame(frame, output: Path) -> Path:
         output = output.with_suffix(output.suffix or ".ppm")
         payload = frame.data
         header = f"P6\n{frame.width} {frame.height}\n255\n".encode()
+    elif frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_JPEG:
+        output = output.with_suffix(output.suffix or ".jpg")
+        payload = frame.data
+        header = b""
     else:
         output = output.with_suffix(output.suffix or ".raw")
         payload = frame.data
@@ -185,12 +211,14 @@ def save_camera_frame(frame, output: Path) -> Path:
     metadata = {
         "sequence": frame.sequence,
         "captured_at_ns": frame.captured_at_ns,
+        "captured_monotonic_ns": frame.captured_monotonic_ns,
         "device_timestamp_ms": frame.device_timestamp_ms,
         "width": frame.width,
         "height": frame.height,
         "stride": frame.stride,
         "depth_scale": frame.depth_scale,
         "pixel_format": camera_pb2.CameraPixelFormat.Name(frame.pixel_format),
+        "role": camera_pb2.CameraDeviceRole.Name(frame.role),
         "image": output.name,
     }
     output.with_suffix(output.suffix + ".json").write_text(
@@ -440,14 +468,19 @@ def daemon_version() -> None:
 
 
 @camera_app.command("status")
-def camera_status(as_json: bool = typer.Option(False, "--json")) -> None:
-    channel, stub = create_camera_stub()
+def camera_status(
+    source: str = typer.Option("wrist", "--source"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    source = camera_source(source)
+    channel, stub = create_camera_stub(source=source)
     try:
         status = stub.GetStatus(camera_pb2.CameraStatusRequest())
     except grpc.RpcError as exc:
         fail_rpc(exc)
     finally:
         channel.close()
+    validate_camera_role(status, source)
     data = camera_status_data(status)
     if as_json:
         console.print_json(json.dumps(data, ensure_ascii=False))
@@ -459,36 +492,50 @@ def camera_status(as_json: bool = typer.Option(False, "--json")) -> None:
 
 @camera_app.command("snapshot")
 def camera_snapshot(
-    stream: str = typer.Option("depth", "--stream"),
+    source: str = typer.Option("wrist", "--source"),
+    stream: str | None = typer.Option(None, "--stream"),
     output: Path | None = typer.Option(None, "--out"),
     timeout_ms: int = typer.Option(5000, "--timeout-ms", min=100, max=10000),
 ) -> None:
+    source = camera_source(source)
+    stream = stream or ("color" if source == "overhead" else "depth")
+    if source == "overhead" and stream.strip().lower() == "depth":
+        raise typer.BadParameter("overhead 相机不提供 depth 流")
     stream_type = camera_stream_type(stream)
-    channel, stub = create_camera_stub()
+    channel, stub = create_camera_stub(source=source)
     try:
+        status = stub.GetStatus(camera_pb2.CameraStatusRequest())
+        validate_camera_role(status, source)
         frame = stub.CaptureFrame(camera_pb2.CaptureFrameRequest(stream=stream_type, timeout_ms=timeout_ms))
     except grpc.RpcError as exc:
         fail_rpc(exc)
     finally:
         channel.close()
-    default_name = f"d405-{stream}-{frame.sequence}"
+    default_name = f"{source}-{stream}-{frame.sequence}"
     saved = save_camera_frame(frame, output or Path(default_name))
     console.print(f"[green]已保存[/green] {saved} ({frame.width}x{frame.height}, sequence={frame.sequence})")
 
 
 @camera_app.command("stream")
 def camera_stream(
-    stream: str = typer.Option("depth", "--stream"),
+    source: str = typer.Option("wrist", "--source"),
+    stream: str | None = typer.Option(None, "--stream"),
     max_rate_hz: float = typer.Option(10.0, "--rate-hz", min=0.1, max=90.0),
     frames: int = typer.Option(30, "--frames", min=0),
     output_dir: Path | None = typer.Option(None, "--out-dir"),
 ) -> None:
+    source = camera_source(source)
+    stream = stream or ("color" if source == "overhead" else "depth")
+    if source == "overhead" and stream.strip().lower() == "depth":
+        raise typer.BadParameter("overhead 相机不提供 depth 流")
     stream_type = camera_stream_type(stream)
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
-    channel, stub = create_camera_stub()
+    channel, stub = create_camera_stub(source=source)
     received = 0
     try:
+        status = stub.GetStatus(camera_pb2.CameraStatusRequest())
+        validate_camera_role(status, source)
         for frame in stub.StreamFrames(
             camera_pb2.StreamFramesRequest(
                 stream=stream_type,
@@ -503,7 +550,8 @@ def camera_stream(
             else:
                 console.print(
                     f"sequence={frame.sequence} {frame.width}x{frame.height} "
-                    f"device_ts={frame.device_timestamp_ms:.3f}ms bytes={len(frame.data)}"
+                    f"device_ts={frame.device_timestamp_ms:.3f}ms "
+                    f"monotonic_ns={frame.captured_monotonic_ns} bytes={len(frame.data)}"
                 )
     except KeyboardInterrupt:
         pass

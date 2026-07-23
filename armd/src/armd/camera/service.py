@@ -1,4 +1,4 @@
-"""armd 内部的 D405 CameraService gRPC 适配层。"""
+"""armd 内部的通用 CameraService gRPC 适配层。"""
 
 from __future__ import annotations
 
@@ -8,14 +8,13 @@ import time
 import grpc
 from panthera_arm import camera_pb2, camera_pb2_grpc
 
-from .backend import CameraFrameSnapshot, CameraPixelFormat, CameraStream, CameraWorker
+from .backend import CameraFrameSnapshot, CameraPixelFormat, CameraRole, CameraStream, CameraWorker
 
 
-def camera_stream(value: int) -> CameraStream:
-    if value in (
-        camera_pb2.CAMERA_STREAM_TYPE_UNSPECIFIED,
-        camera_pb2.CAMERA_STREAM_TYPE_DEPTH,
-    ):
+def camera_stream(value: int, *, default: CameraStream = CameraStream.DEPTH) -> CameraStream:
+    if value == camera_pb2.CAMERA_STREAM_TYPE_UNSPECIFIED:
+        return default
+    if value == camera_pb2.CAMERA_STREAM_TYPE_DEPTH:
         return CameraStream.DEPTH
     if value == camera_pb2.CAMERA_STREAM_TYPE_COLOR:
         return CameraStream.COLOR
@@ -33,7 +32,15 @@ def pixel_format_message(pixel_format: CameraPixelFormat) -> int:
     return {
         CameraPixelFormat.Z16: camera_pb2.CAMERA_PIXEL_FORMAT_Z16,
         CameraPixelFormat.RGB8: camera_pb2.CAMERA_PIXEL_FORMAT_RGB8,
+        CameraPixelFormat.JPEG: camera_pb2.CAMERA_PIXEL_FORMAT_JPEG,
     }[pixel_format]
+
+
+def role_message(role: CameraRole) -> int:
+    return {
+        CameraRole.WRIST: camera_pb2.CAMERA_DEVICE_ROLE_WRIST,
+        CameraRole.OVERHEAD: camera_pb2.CAMERA_DEVICE_ROLE_OVERHEAD,
+    }[role]
 
 
 def frame_message(frame: CameraFrameSnapshot) -> camera_pb2.CameraFrame:
@@ -51,6 +58,8 @@ def frame_message(frame: CameraFrameSnapshot) -> camera_pb2.CameraFrame:
         stride=frame.stride,
         depth_scale=frame.depth_scale,
         data=data,
+        role=role_message(frame.role),
+        captured_monotonic_ns=frame.captured_monotonic_ns,
     )
 
 
@@ -76,6 +85,7 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
             error=status.error,
             last_frame_age_ms=status.last_frame_age_ms,
             actual_fps=status.actual_fps,
+            role=role_message(status.role),
         )
         for profile in status.profiles:
             response.profiles.add(
@@ -90,7 +100,10 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
     async def CaptureFrame(self, request, context):
         worker = await self._require_worker(context)
         try:
-            stream = camera_stream(request.stream)
+            stream = camera_stream(
+                request.stream,
+                default=(CameraStream.COLOR if worker.role is CameraRole.OVERHEAD else CameraStream.DEPTH),
+            )
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         timeout_ms = request.timeout_ms or 5000
@@ -108,7 +121,10 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
     async def StreamFrames(self, request, context):
         worker = await self._require_worker(context)
         try:
-            stream = camera_stream(request.stream)
+            stream = camera_stream(
+                request.stream,
+                default=(CameraStream.COLOR if worker.role is CameraRole.OVERHEAD else CameraStream.DEPTH),
+            )
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         max_rate_hz = request.max_rate_hz or 30.0
@@ -134,7 +150,7 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
                     if not status.available:
                         await context.abort(
                             grpc.StatusCode.UNAVAILABLE,
-                            status.error or "D405 当前不可用",
+                            status.error or f"{worker.role.value} 相机当前不可用",
                         )
                     continue
                 last_sequence = frame.sequence

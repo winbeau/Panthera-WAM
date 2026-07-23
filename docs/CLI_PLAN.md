@@ -16,7 +16,10 @@
 - 硬件与线程模型、安全层（AcquireControl 互斥 / watchdog / 软限位预检 / EStop 直通）均沿用 README 已定架构，不重新论证。
 - 本计划中的 "SDK" 特指任务给出的方法清单：`Panthera.py`（38 个方法，含 4 个 staticmethod）+ `recorder.py`（`Recorder` 类 4 个方法）。
 - `Panthera` 继承自 `htr.Robot`（pybind11 编译扩展），示例脚本里直接调用的 `set_stop()` / `set_reset_zero()` / `motor_send_cmd()` 等继承/组合层方法**不在**给定清单内、其真实签名未核实。架构明确要求 EStop 与回零两项能力，因此第 2.3 节把它们作为"补充映射"单列，并在第 7 章标注核实动作，不假装已完整覆盖这一整层。
-- D405 视频流、LeRobot 数据导出不是 `Panthera`/`Recorder` 的方法，是 README 里明确的 v2 路线图条目；D405 已以独立 `camera.proto` + WSL `camerad:50052` 实现，与 `armd:50051` 由同一 Linux 启动流程管理。LeRobot 仍建议使用独立 `dataset.proto`，两者不在 `arm.proto` 的"无损"核对范围内计数。
+- D405/C920e 视频流、LeRobot 数据导出不是 `Panthera`/`Recorder` 的方法，是独立扩展能力；
+  D405 使用 `camera.proto` + `camerad:50052`，C920e 复用同一 CameraService 契约但由
+  第二个独立进程监听 `50053`。LeRobot 使用独立 `dataset.proto`，三者均不在
+  `arm.proto` 的“无损”核对范围内计数。
 
 ---
 
@@ -230,11 +233,16 @@ panthera teach record stop
 panthera teach play PATH [--kp FLOAT_LIST] [--kd FLOAT_LIST] [--mode mit|posvel] [--playback-dt FLOAT=0.01] [--smooth-window INT=7]
 panthera teach list [--json]
 
-panthera camera status [--json]
-panthera camera snapshot [--stream depth|color] [--out PATH]
-panthera camera stream [--stream depth|color] [--frames INT] [--out-dir DIR]
+panthera camera status [--source wrist|overhead] [--json]
+panthera camera snapshot [--source wrist|overhead] [--stream depth|color] [--out PATH]
+panthera camera stream [--source wrist|overhead] [--stream depth|color] [--frames INT] [--out-dir DIR]
 panthera dataset export-lerobot TRAJECTORY_PATH [--out-dir DIR] [--repo-id OWNER/NAME] [--task TEXT]
 ```
+
+相机端点约定：`wrist` 默认读取 `PANTHERA_CAMERA_ENDPOINT`（`127.0.0.1:50052`），
+`overhead` 默认读取 `PANTHERA_OVERHEAD_CAMERA_ENDPOINT`（`127.0.0.1:50053`）。
+`overhead + depth` 必须在客户端参数校验阶段拒绝；服务端报告的设备角色与 `--source`
+不符时同样失败，禁止因设备枚举顺序变化交换腕部/俯视画面。
 
 ---
 
@@ -579,8 +587,10 @@ service ArmService {
   验收：给定含/不含中间速度的 waypoint 列表，服务端正确选择两种插值分支；执行状态可流式观察、可取消。
 - **M7 拖动示教录制回放**：`teach start/stop/record start/record stop/play/list`。
   验收：`teach start` 后徒手拖动阻力明显降低（重力+摩擦补偿生效）；录制的 jsonl 字段与 `Recorder.log` 一致；`teach play` 能回放且末端误差在可接受范围内；回放中途 `CancelExecution` 能安全收尾（明确定义的减速停止策略，而非让机械臂悬停在危险位置）。
-- **M8 相机流与 LeRobot 导出**：独立 `camera.proto`/`dataset.proto`、`camerad:50052`、WPF 双视频和官方 LeRobotDataset v3 隔离导出均已落地。
-  验收：D405 与机械臂同时 attach 到同一 Linux，状态、快照与持续帧流通过独立 CameraService 端点访问；LeRobotDataset v3 字段映射与异步导出通过 DatasetService 完成。
+- **M8 相机流与 LeRobot 导出**：D405 `camerad:50052`、独立 `camera.proto`/
+  `dataset.proto`、WPF D405 双视频和官方 LeRobotDataset v3 隔离导出已落地。
+  C920e 增量按 FINAL_PLAN Part 3 的 M-C0–M-C4 执行：`50053` 复用 CameraService，CLI
+  通过 `--source overhead` 访问，并为 LingBot-VA 提供 Pi 单调时钟与本地录制字段。
 - **M9 无损审计收尾**：`tools/audit_sdk_contract.py` 已核对 42 项方法、RPC 实现、CLI 与继承层签名，确保 0 条遗漏、0 条无理由。
 
 ---

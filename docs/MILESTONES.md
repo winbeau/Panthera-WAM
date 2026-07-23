@@ -26,6 +26,8 @@
 | 阶段 2 | v1：armd + CLI（M1–M4） | 4 / 4 ✅ |
 | 阶段 3 | WPF v1（M-W0 – M-W3） | 5 / 5 ✅ |
 | 阶段 4 | v2（M5–M9） | 5 / 5（实现）✅；真机运动验收待用户在场 |
+| 阶段 5 | Raspberry Pi 5 控制主机迁移 | 6 / 6 ✅ |
+| 阶段 6 | C920e 独立服务与 LingBot-VA 采集前置 | 0 / 5 |
 
 ---
 
@@ -161,6 +163,30 @@
   depth/infrared/color 及 metadata 节点生成 `/home/winbeau/camera-devices/` 稳定别名，
   不再依赖 `/dev/videoN`；C920e 1080p MJPEG 30fps、D405 Z16/GREY/YUYV 均采集
   成功，当前 D405 序列号 `251323070051`，`pyrealsense2` 按序列号固定设备
+
+---
+
+## 阶段 6：C920e 独立服务与 LingBot-VA 采集前置
+
+> 固定端口：机械臂 `50051`、D405 腕部相机 `50052`、C920e 俯视相机 `50053`。
+> 本阶段的相机验收均为只读，不包含机械臂运动；详细决策与验收门槛见
+> `FINAL_PLAN.md` Part 3。
+
+- [ ] 🧪 **M-C0 契约与双端点仿真**：`camera.proto` 增加腕部/俯视角色、JPEG/MJPEG
+  格式与 Pi 单调时钟；Python/C# stub 同步生成；D405 与 C920e 仿真端点可同时运行，
+  关闭任一端不影响另一端
+- [ ] 🧪 **M-C1 C920e V4L2 后端**：uv 管理依赖，只打开稳定别名
+  `/home/winbeau/camera-devices/c920e`，拒绝 `/dev/videoN`/metadata；请求并保留
+  `1920×1080 MJPEG@30`，完成 300 帧、拔插重连与 10 分钟稳定性验收
+- [ ] 🧪 **M-C2 部署/CLI/三端口链路**：新增独立 systemd unit；Pi 安装与启动流程管理
+  50051/50052/50053；CLI 增加 `--source wrist|overhead`；Windows Remote 直连与
+  SSH `50048→50053` 隧道均通过状态、快照和连续帧验收
+- [ ] 🧪 **M-C3 WPF 双相机接入**：新增 `OverheadCameraEndpoint` 与按来源分槽的
+  latest-wins 管线；右列“CAD 俯视图 / C920e / D405”三格正方形，D405 与运动控制同一行，
+  `GridSplitter` 联动尺寸；C920e 断开不影响 D405 或机械臂 UI
+- [ ] 🧪 **M-C4 LingBot-VA 采集前置**：Pi 本地录制 overhead/wrist/可选 depth 与机械臂
+  状态，以单调时钟最近邻对齐，记录丢帧和同步偏差；完成 5 分钟质量报告与字段映射，
+  WPF 仅承担预览和控制，不作为训练数据传输链路
 
 ---
 

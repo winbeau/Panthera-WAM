@@ -32,16 +32,34 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
     public Task<DaemonSnapshot> GetDaemonStatusAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new DaemonSnapshot(true, true, 200.0, "ui-acceptance", false));
 
-    public Task<CameraSnapshot> GetCameraStatusAsync(CancellationToken cancellationToken = default) =>
+    public Task<CameraSnapshot> GetCameraStatusAsync(
+        CameraSourceKind source,
+        CancellationToken cancellationToken = default) =>
         Task.FromResult(new CameraSnapshot(
-            true, true, true, "RealSense D405 Simulator", "SIM-D405-0001", "sim", "sim", "sim", "", 8, 30.0));
+            source,
+            true,
+            true,
+            true,
+            source == CameraSourceKind.Overhead ? "Logitech C920e Simulator" : "RealSense D405 Simulator",
+            source == CameraSourceKind.Overhead ? "SIM-C920E-0001" : "SIM-D405-0001",
+            "sim",
+            "sim",
+            "sim",
+            "",
+            8,
+            30.0));
 
     public async IAsyncEnumerable<CameraFrameSnapshot> StreamCameraFramesAsync(
+        CameraSourceKind source,
         CameraStreamKind stream,
         double maxRateHz = 15,
         [EnumeratorCancellation]
         CancellationToken cancellationToken = default)
     {
+        if (source == CameraSourceKind.Overhead && stream == CameraStreamKind.Depth)
+        {
+            throw new ArgumentException("俯视相机不提供深度流", nameof(stream));
+        }
         const int width = 160;
         const int height = 120;
         var delay = TimeSpan.FromSeconds(1.0 / Math.Clamp(maxRateHz, 1.0, 30.0));
@@ -53,6 +71,7 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
                 ? CreateColorFrame(width, height, sequence)
                 : CreateDepthFrame(width, height, sequence);
             yield return new CameraFrameSnapshot(
+                source,
                 stream,
                 stream == CameraStreamKind.Color ? CameraPixelKind.Rgb8 : CameraPixelKind.Z16,
                 sequence,
@@ -61,7 +80,8 @@ internal sealed class UiAcceptanceArmdClient : IArmdClient
                 height,
                 stream == CameraStreamKind.Color ? width * 3 : width * 2,
                 stream == CameraStreamKind.Depth ? 0.001 : 0.0,
-                data);
+                data,
+                Environment.TickCount64 * 1_000_000);
             await Task.Delay(delay, cancellationToken);
         }
     }

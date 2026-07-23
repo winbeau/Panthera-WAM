@@ -1,0 +1,24 @@
+[Unit]
+Description=Panthera-WAM Logitech C920e overhead capture service
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NO_PROXY=127.0.0.1,localhost,::1
+Environment=no_proxy=127.0.0.1,localhost,::1
+Environment=PANTHERA_OVERHEAD_CAMERA_BIND=127.0.0.1:50053
+Environment=PANTHERA_OVERHEAD_CAMERA_LOCAL_BIND=[::1]:50053
+Environment=PANTHERA_OVERHEAD_CAMERA_DEVICE=/home/winbeau/camera-devices/c920e
+UnsetEnvironment=http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy grpc_proxy GRPC_PROXY
+EnvironmentFile=-%h/.config/panthera-wam/armd.env
+ExecStart=/usr/bin/env uv run --no-sync --package panthera-armd camerad --backend v4l2 --role overhead --bind ${PANTHERA_OVERHEAD_CAMERA_BIND} --local-bind ${PANTHERA_OVERHEAD_CAMERA_LOCAL_BIND} --device ${PANTHERA_OVERHEAD_CAMERA_DEVICE} --width 1920 --height 1080 --fps 30
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGINT
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

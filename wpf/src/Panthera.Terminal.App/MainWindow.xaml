@@ -129,6 +129,14 @@
                         </StackPanel>
                     </Border>
                     <Border Margin="0,0,4,0" Style="{StaticResource CockpitBadgeStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Margin="0,0,6,0" Style="{StaticResource StatusDotStyle}" Fill="{DynamicResource SystemFillColorSuccessBrush}" />
+                            <TextBlock Text="C920e " FontSize="12.5" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding OverheadCameraSummary}" MaxWidth="100" TextTrimming="CharacterEllipsis"
+                                       FontFamily="Cascadia Mono, Consolas" FontSize="12" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                    <Border Margin="0,0,4,0" Style="{StaticResource CockpitBadgeStyle}">
                         <TextBlock Text="{Binding LiveSummary}" FontFamily="Cascadia Mono, Consolas" FontSize="12" VerticalAlignment="Center" />
                     </Border>
                 </StackPanel>
@@ -343,7 +351,8 @@
                                 <Grid Background="#FF101418">
                                     <Image x:Name="OverheadCameraImage" Stretch="UniformToFill"
                                            AutomationProperties.AutomationId="OverheadCameraImage" />
-                                    <StackPanel Panel.ZIndex="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <StackPanel x:Name="OverheadCameraPlaceholder" Panel.ZIndex="1"
+                                                HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <ui:SymbolIcon Symbol="Camera20" FontSize="26" Foreground="#FF84909C" />
                                         <TextBlock Text="C920e · 等待俯视画面" Margin="0,8,0,0" Foreground="#FFD3DAE1"
                                                    FontSize="11" HorizontalAlignment="Center" />

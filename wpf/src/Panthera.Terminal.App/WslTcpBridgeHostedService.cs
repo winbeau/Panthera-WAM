@@ -8,6 +8,7 @@ public sealed class WslTcpBridgeHostedService : BackgroundService
 {
     private readonly WslTcpBridge _armBridge;
     private readonly WslTcpBridge _cameraBridge;
+    private readonly WslTcpBridge _overheadCameraBridge;
 
     public WslTcpBridgeHostedService(TerminalSettings settings)
     {
@@ -21,12 +22,18 @@ public sealed class WslTcpBridgeHostedService : BackgroundService
             settings.WslUser,
             EndpointPort(settings.CameraEndpoint, 50049),
             50052);
+        _overheadCameraBridge = new WslTcpBridge(
+            settings.WslDistribution,
+            settings.WslUser,
+            EndpointPort(settings.OverheadCameraEndpoint, 50048),
+            50053);
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
         Task.WhenAll(
             _armBridge.RunAsync(stoppingToken),
-            _cameraBridge.RunAsync(stoppingToken));
+            _cameraBridge.RunAsync(stoppingToken),
+            _overheadCameraBridge.RunAsync(stoppingToken));
 
     private static int EndpointPort(string endpoint, int fallback) =>
         Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ? uri.Port : fallback;

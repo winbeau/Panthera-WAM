@@ -138,7 +138,7 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
             return new RemoteDeploymentReport(steps, targetKind, architecture, repository, startMethod);
         }
 
-        ReportRunning(progress, "后端端口探活", "正在确认服务与 50051 / 50052 连续稳定…");
+        ReportRunning(progress, "后端端口探活", "正在确认 50051 / 50052 / 50053 服务状态…");
         ProcessResult verification;
         try
         {
@@ -154,7 +154,9 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
             "后端端口探活",
             verification.Success && HasListeningPorts(verification.Output),
             verification.Success
-                ? (HasListeningPorts(verification.Output) ? "已发现 50051/50052 监听" : verification.Output.Trim())
+                ? (HasListeningPorts(verification.Output)
+                    ? "机械臂/D405 已监听；已部署 C920e 时同时确认 50053"
+                    : verification.Output.Trim())
                 : FailureDetail(verification, "远程端口探活失败"),
             verification.Command));
         ReportCompleted(progress, steps[^1]);
@@ -166,10 +168,13 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
     public static IReadOnlyList<string> BuildTunnelArguments(
         SshConnectionSettings settings,
         int localArmPort = 50050,
-        int localCameraPort = 50049)
+        int localCameraPort = 50049,
+        int localOverheadCameraPort = 50048)
     {
         ValidateSettings(settings);
-        if (localArmPort is <= 0 or > 65535 || localCameraPort is <= 0 or > 65535)
+        if (localArmPort is <= 0 or > 65535
+            || localCameraPort is <= 0 or > 65535
+            || localOverheadCameraPort is <= 0 or > 65535)
         {
             throw new ArgumentOutOfRangeException(nameof(localArmPort));
         }
@@ -183,6 +188,8 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
         args.Add($"127.0.0.1:{localArmPort}:127.0.0.1:50051");
         args.Add("-L");
         args.Add($"127.0.0.1:{localCameraPort}:127.0.0.1:50052");
+        args.Add("-L");
+        args.Add($"127.0.0.1:{localOverheadCameraPort}:127.0.0.1:50053");
         args.Add(Target(settings));
         return args;
     }
@@ -247,7 +254,11 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
                   printf '%s\n' '未发现 Panthera 通信串口 /dev/ttyACM*；请检查机械臂供电和 USB 连接' >&2
                   exit 23
                 fi
-                systemctl --user start camerad.service armd.service
+                units='camerad.service armd.service'
+                if systemctl --user cat overhead-camera.service >/dev/null 2>&1; then
+                  units="overhead-camera.service $units"
+                fi
+                systemctl --user start $units
                 """
             : $$"""
                 set -eu
@@ -270,10 +281,18 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
         while [ "$attempt" -lt 15 ]; do
           arm_state=$(systemctl --user is-active armd.service 2>/dev/null || true)
           camera_state=$(systemctl --user is-active camerad.service 2>/dev/null || true)
-          ports=$(ss -ltn 2>/dev/null | grep -E ':(50051|50052)([[:space:]]|$)' || true)
+          overhead_required=false
+          overhead_state=missing
+          if systemctl --user cat overhead-camera.service >/dev/null 2>&1; then
+            overhead_required=true
+            overhead_state=$(systemctl --user is-active overhead-camera.service 2>/dev/null || true)
+          fi
+          ports=$(ss -ltn 2>/dev/null | grep -E ':(50051|50052|50053)([[:space:]]|$)' || true)
           if [ "$arm_state" = active ] && [ "$camera_state" = active ] \
             && printf '%s\n' "$ports" | grep -q ':50051' \
-            && printf '%s\n' "$ports" | grep -q ':50052'; then
+            && printf '%s\n' "$ports" | grep -q ':50052' \
+            && { [ "$overhead_required" = false ] \
+              || { [ "$overhead_state" = active ] && printf '%s\n' "$ports" | grep -q ':50053'; }; }; then
             stable=$((stable + 1))
             if [ "$stable" -ge 3 ]; then
               printf '%s\n' "$ports"
@@ -286,7 +305,7 @@ public sealed class OpenSshRemoteDeploymentService : IRemoteDeploymentService
           sleep 1
         done
         printf '%s\n' '后端未能稳定运行 3 秒' >&2
-        systemctl --user status armd.service camerad.service --no-pager -l >&2 || true
+        systemctl --user status armd.service camerad.service overhead-camera.service --no-pager -l >&2 || true
         journalctl --user -u armd.service -n 30 --no-pager >&2 || true
         printf '%s\n' "$ports"
         exit 24

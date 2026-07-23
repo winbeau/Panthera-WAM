@@ -2,10 +2,11 @@
 
 > 状态：v2 已按本计划实现；实时进度与待真机验收项以 `MILESTONES.md` 为准。
 > **控制主机迁移（2026-07-22，覆盖下文旧 WSL 主路径）**：Panthera-HT、D405 与 C920e
-> 改为由 Raspberry Pi 5 ARM64 直接独占；`armd:50051`、`camerad:50052` 绑定 Pi 的
+> 改为由 Raspberry Pi 5 ARM64 直接独占；`armd:50051`、D405 `camerad:50052` 与
+> C920e `CameraService:50053` 绑定 Pi 的
 > Tailscale/LAN IP，Windows WPF 以 `Remote` 模式直连。WSL bridge 只保留兼容回退。
 > WPF 同时提供显式触发的 `SshRemote` 向导：只针对已部署仓库，自动识别 Pi/WSL、
-> 工作目录与启动入口，并用 localhost SSH 双端口转发接入 armd/camerad；不安装依赖。
+> 工作目录与启动入口，并用 localhost SSH 三端口转发接入 armd/两项 camerad；不安装依赖。
 > Pi Python 依赖必须由 `uv` 管理，SDK/librealsense 必须来自主仓库 `vendor/` fork submodule。
 > 本稿在 `CLI_PLAN.md` / WPF 三份视觉稿基础上，逐条回填了对抗审计提出的 16 项 load-bearing 缺陷（见文末「审计修订对照」），并将 CLI+armd 契约与 WPF 设计合并成一份。
 > 覆盖口径：SDK（`Panthera` 38 + `Recorder` 4 = 42 个公开方法/静态方法）每一项，落到 **(a) CLI 命令 + RPC** / **(b) 内部覆盖+理由** / **(c) 生命周期** 三种归宿之一；机器可执行结果见 `sdk-capability-audit.json`。
@@ -16,8 +17,9 @@
 
 ```
 Windows: WPF 可视化终端 ── gRPC / Pi IP 或 SSH tunnel ──┬→ armd (:50051) → ArmService → vendor SDK → Panthera-HT
-Raspberry Pi 5: panthera-cli ─────────────┴→ camerad (:50052) → CameraService → vendor librealsense → D405
-兼容回退: WSL2 + Windows 本地 bridge (:50050/:50049)
+Raspberry Pi 5: panthera-cli ─────────────┼→ camerad (:50052) → CameraService → vendor librealsense → D405
+                                                        └→ camerad (:50053) → CameraService → V4L2/MJPEG → C920e
+兼容回退: WSL2 + Windows 本地 bridge（仅 armd/D405）；Pi SSH 三隧道 (:50050/:50049/:50048)
 ```
 
 - **硬件**：Panthera-HT 六轴机械臂（高擎，7×USB 串口）、腕部 Intel RealSense D405
@@ -25,13 +27,17 @@ Raspberry Pi 5: panthera-cli ─────────────┴→ camer
   vendored librealsense RSUSB/libusb 后端。当前 D405 序列号为 `251323070051`；V4L2
   节点必须使用 `/home/winbeau/camera-devices/` 下的 udev 稳定别名，完整契约见
   `docs/CAMERA_DEVICES.md`，禁止持久化 `/dev/videoN`。
-- **armd/camerad**：两者同属同一 Linux 后端，由统一启动流程管理。`armd:50051` 独占机械臂，`camerad:50052` 独占 D405；客户端分别连接两个端口。安全层 = 控制权互斥 / watchdog 心跳 / 软限位预检 / EStop。
+- **armd/camerad**：三项进程同属同一 Linux 后端，由统一启动流程管理。`armd:50051`
+  独占机械臂，D405 `camerad:50052` 独占腕部相机，第二个 `camerad` 实例在 `50053`
+  独占 C920e 俯视相机；三个进程故障隔离，任一相机失败不得阻止机械臂或另一相机启动。
+  机械臂安全层 = 控制权互斥 / watchdog 心跳 / 软限位预检 / EStop。
 - **客户端**：`panthera-cli`（Python typer）+ WPF 可视化终端（.NET 9，Fluent，系统/浅色/深色三主题）。两者都是纯 gRPC 客户端，不直接打开机械臂或相机 SDK。
-- **网络边界**：WPF 的 `Remote` 模式直接连接 Pi 的两个 gRPC 端口，不启动 WSL/usbipd/
+- **网络边界**：WPF 的 `Remote` 模式直接连接 Pi 的三个 gRPC 端口，不启动 WSL/usbipd/
   TCP bridge。当前契约未提供 TLS 或用户身份认证，控制权 lease 不是网络认证；因此服务
   应绑定精确的 Tailscale/受信 LAN IP，并由主机防火墙限制来源，禁止公网暴露。
-  `SshRemote` 模式则将两个服务保持在远端 loopback，通过 Windows OpenSSH 转发到本地
-  `50050/50049`；SSH 向导只在用户点击后运行，不保存密码、不克隆或安装远端内容。
+  `SshRemote` 模式则将三个服务保持在远端 loopback，通过 Windows OpenSSH 转发到本地
+  `50050/50049/50048`，分别转发到远端 `50051/50052/50053`；SSH 向导只在用户点击后运行，
+  不保存密码、不克隆或安装远端内容。
 - **零修改\* 的边界**：官方 SDK 源码零修改，但 armd **不能**直接调用 SDK 的阻塞式方法（`iswait=True` 等待、`moveL()`、`Recorder.play()`）——这些方法会把唯一的硬件线程钉死数秒到整条轨迹，破坏可抢占安全层。armd 改为**用 SDK 的公开规划/控制原语（`compute_cartesian_path` / `septic_interpolation` / `Joint_Pos_Vel(iswait=False)` / `check_position_reached`）在自己的控制循环里逐周期步进**。M0-2 真机结果进一步否决了 SDK moveL 内部的 MIT 执行路径，详见 §V9。
 
 ### 三条贯穿全局的架构决策（审计核心矛盾的收敛结论）
@@ -506,9 +512,101 @@ panthera dataset export-lerobot TRAJECTORY_PATH [--out-dir DIR] [--repo-id OWNER
 - **M5 阻抗/动力学**：`joint mit`/`gripper mit`、`dynamics *`。验收：各项与直调 SDK 对拍一致；`friction` 缺 `--fc/--fv` 用配置默认不抛异常。
 - **M6 多点轨迹**：`trajectory run-waypoints`（自建执行循环）。验收：含/不含中间速度分支正确、可流式观察、可取消。
 - **M7 拖动示教录制回放**：`teach start/stop/record*/play/list`。验收：`teach start` 后徒手阻力明显降低；录制 jsonl 字段与 `Recorder.log` 一致；`teach play`（自建回放循环）末端误差可接受、中途 `CancelExecution` 减速收尾。
-- **M8 相机流 + LeRobot 导出**：独立 `camera.proto`/`dataset.proto`、双端口 WPF 视频与官方 LeRobotDataset v3 隔离导出 worker 已落地。
+- **M8 相机流 + LeRobot 导出**：独立 `camera.proto`/`dataset.proto`、D405 彩色/深度双流
+  WPF 视频与官方 LeRobotDataset v3 隔离导出 worker 已落地；C920e 增量见 Part 3。
 - **M9 无损审计收尾**：`tools/audit_sdk_contract.py` 已自动核对 42 项 SDK 方法、ArmService 实现、CLI 命令与继承层真实签名，0 遗漏、0 无理由。
 - **WPF v2**：示教录制回放面板、D405 视频流、数据采集视图。
+
+---
+
+# Part 3 — C920e 俯视相机与 LingBot-VA 采集前置计划
+
+## 12. 已锁定架构
+
+1. **独立端口、复用契约**：保留 D405 `camerad:50052`，新增第二个 `camerad`
+   实例监听 `50053`，两者复用 `proto/camera.proto` 的 `CameraService`，不把双设备塞进
+   同一进程，也不在 `arm.proto` 增加相机占位 RPC。
+2. **设备角色不可由枚举顺序推断**：`camera.proto` 增加 `CameraDeviceRole`
+   （`WRIST` / `OVERHEAD`），D405 端点必须报告 `WRIST`，C920e 端点必须报告
+   `OVERHEAD`；WPF 和 CLI 发现角色与端口配置不符时显式报错，禁止静默交换画面。
+3. **C920e 保留压缩帧**：C920e 在 Pi 上以稳定别名
+   `/home/winbeau/camera-devices/c920e` 请求 `1920×1080 MJPEG @ 30fps`。契约增加
+   JPEG/MJPEG 像素格式；WPF 预览默认限流 10–15fps 并直接解码 JPEG。禁止把
+   1080p RGB8 裸帧持续跨网络传输（约 178MiB/s）。
+4. **Pi 单调时钟是数据对齐基准**：`CameraFrame` 在现有 wall-clock
+   `captured_at_ns` 之外增加 `captured_monotonic_ns`。腕部、俯视和机械臂状态后续均以
+   Pi 单调时钟做最近邻对齐；序号只用于丢帧检测，不能代替时间戳。
+5. **WPF 只做预览，训练数据在 Pi 落盘**：WPF 可同时显示 D405 与 C920e，但
+   LingBot-VA 数据录制不得依赖 Windows 预览流或网络到达时间。后续采集器在 Pi 本地
+   消费两路相机与机械臂状态，WPF 只负责状态、预览、开始/停止与质量提示。
+6. **依赖和设备路径约束**：Python 依赖全部进入 uv workspace/lock；生产配置只接受
+   `docs/CAMERA_DEVICES.md` 的稳定别名，拒绝 `/dev/videoN` 和 metadata 节点。D405
+   继续由 vendored librealsense 与序列号 `251323070051` 固定，不因 C920e 改造而回退。
+
+## 13. 服务与端口映射
+
+| 能力 | Pi 端口 | Pi 进程/设备 | Windows Remote | Windows SshRemote 本地端口 |
+|---|---:|---|---|---:|
+| 机械臂 | 50051 | `armd` / Panthera-HT | `Pi:50051` | 50050 |
+| 腕部相机 | 50052 | `camerad --backend realsense --role wrist` / D405 | `Pi:50052` | 50049 |
+| 俯视相机 | 50053 | `camerad --backend v4l2 --role overhead` / C920e | `Pi:50053` | 50048 |
+
+同一个 `camerad` 可执行文件通过参数选择后端和角色，但 systemd 必须运行两个独立实例：
+`camerad.service` 与 `overhead-camera.service`。两者分别拥有 worker、gRPC server、日志与
+重启策略；C920e 断开只让 `50053` 进入 unavailable/reconnect，不得重启 D405。
+
+## 14. 实施顺序与验收门槛
+
+### M-C0｜契约与仿真
+
+- `camera.proto` 增加角色、JPEG/MJPEG 与单调时钟字段，重新生成 Python/C# stub。
+- 把现有 D405 专用命名收敛为通用 `CameraWorker`，保留全部 D405 回归。
+- 新增确定性的 C920e 仿真后端，`50052`/`50053` 可同时启动、自检和流帧。
+- 验收：两个端点角色不同、序号独立、关闭一端不影响另一端；Python CI 与 WPF Release
+  构建通过。
+
+### M-C1｜Pi 5 C920e 后端
+
+- 新增 V4L2/UVC 后端，只打开 `/home/winbeau/camera-devices/c920e`；启动时验证不是
+  metadata 节点，并核对 MJPEG 1080p30 能力。
+- Python 依赖由 uv 管理；优先保留设备原生 MJPEG，避免无意义的 RGB 解码再编码。
+- 服务端设置单帧大小上限和 gRPC 16MiB 消息上限，超过上限丢帧并上报结构化错误，
+  不让进程因异常帧退出。
+- 验收（只读、不涉及机械臂运动）：`GetStatus`、单帧、连续 30fps 300 帧、拔插重连、
+  10 分钟稳定性；分辨率/FPS/角色/稳定设备路径均正确。
+
+### M-C2｜部署、CLI 与三端口链路
+
+- 新增 `overhead-camera.service.in`；Pi 安装脚本、env 示例和启动脚本管理三项服务。
+- CLI 的 `camera status/snapshot/stream` 增加 `--source wrist|overhead`，环境变量增加
+  `PANTHERA_OVERHEAD_CAMERA_ENDPOINT`，默认 `127.0.0.1:50053`。
+- SSH 向导启动并探活 `50051/50052/50053`，持久隧道增加
+  `127.0.0.1:50048 → remote:50053`；Remote 模式直接使用 Pi `50053`。
+- 验收：先在 Pi 用 CLI 完整走通 C920e，再从 Windows 经 Remote 与 SSH 两种模式分别
+  获取状态和连续帧；任何相机不可用时错误必须指明具体设备/端口。
+
+### M-C3｜WPF 双相机接入
+
+- `TerminalSettings` 保留现有 `CameraEndpoint` 作为 D405 兼容字段，新增
+  `OverheadCameraEndpoint`；旧 JSON 缺字段时自动补默认值，不破坏现有安装。
+- WPF 相机模型增加 `CameraSourceKind`，latest-wins 槽位以 `(source, stream)` 为键；
+  后台分别泵 D405 color/depth 与 C920e color，任一流异常独立退避。
+- 控制页采用已确认布局：右列依次为 CAD 俯视图、C920e 俯视画面、D405 腕部画面，
+  三格均为正方形；D405 与运动控制同一行，原生 `GridSplitter` 联动调整右列宽度与整组高度。
+- UI 分别显示两台相机的连接、FPS、帧龄与错误；JPEG 用 `BitmapImage` 解码，D405
+  RGB8/Z16 继续走当前渲染路径。
+- 验收：仿真三流 UI 验收、主题/高 DPI/窗口缩放、断开 C920e 后 D405 与机械臂仍正常，
+  Windows Release 构建和自动化测试通过。
+
+### M-C4｜LingBot-VA 采集前置
+
+- 定义本地样本命名：`observation.images.overhead`、`observation.images.wrist`，D405 深度
+  作为可选 `observation.depth.wrist`；每帧保存原始时间戳、单调时间戳、序号和设备角色。
+- 采集器按动作/状态采样时刻选择最近相机帧，并记录时间差；默认超过一个帧周期即标记
+  样本不同步，不静默复用陈旧帧。
+- 先实现只读录制与质量报告，再接入示教动作；WPF 不直接承担训练数据写盘。
+- 验收：双相机 + 状态的 5 分钟本地录制无时间倒退，丢帧率/同步偏差可量化，并能导出
+  LingBot-VA/LeRobot 后续消费所需的明确字段映射。
 
 ---
 

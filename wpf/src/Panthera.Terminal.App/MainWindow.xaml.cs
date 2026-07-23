@@ -26,6 +26,7 @@ public partial class MainWindow : FluentWindow
     private long _renderedVersion;
     private long _renderedColorVersion;
     private long _renderedDepthVersion;
+    private long _renderedOverheadVersion;
     private bool _shutdownComplete;
 
     public MainWindow(
@@ -170,13 +171,31 @@ public partial class MainWindow : FluentWindow
             _renderedVersion = version;
             _viewModel.ApplySnapshot(snapshot);
         }
-        RenderCameraFrame(CameraStreamKind.Color, ColorCameraImage, ref _renderedColorVersion);
-        RenderCameraFrame(CameraStreamKind.Depth, DepthCameraImage, ref _renderedDepthVersion);
+        RenderCameraFrame(
+            CameraSourceKind.Wrist,
+            CameraStreamKind.Color,
+            ref _renderedColorVersion,
+            ColorCameraImage,
+            WristCameraImage);
+        RenderCameraFrame(
+            CameraSourceKind.Wrist,
+            CameraStreamKind.Depth,
+            ref _renderedDepthVersion,
+            DepthCameraImage);
+        RenderCameraFrame(
+            CameraSourceKind.Overhead,
+            CameraStreamKind.Color,
+            ref _renderedOverheadVersion,
+            OverheadCameraImage);
     }
 
-    private void RenderCameraFrame(CameraStreamKind stream, Image image, ref long renderedVersion)
+    private void RenderCameraFrame(
+        CameraSourceKind cameraSource,
+        CameraStreamKind stream,
+        ref long renderedVersion,
+        params Image[] images)
     {
-        var (frame, version) = _cameraFrames.Read(stream);
+        var (frame, version) = _cameraFrames.Read(cameraSource, stream);
         if (frame is null || version == renderedVersion)
         {
             return;
@@ -186,14 +205,37 @@ public partial class MainWindow : FluentWindow
         {
             CameraPixelKind.Rgb8 => CreateColorBitmap(frame),
             CameraPixelKind.Z16 => CreateDepthBitmap(frame),
+            CameraPixelKind.Jpeg => CreateJpegBitmap(frame),
             _ => null,
         };
-        image.Source = source;
-        if (stream == CameraStreamKind.Color && source is not null)
+        if (source is null)
         {
-            WristCameraImage.Source = source;
+            return;
+        }
+        foreach (var image in images)
+        {
+            image.Source = source;
+        }
+        if (cameraSource == CameraSourceKind.Wrist && stream == CameraStreamKind.Color)
+        {
             WristCameraPlaceholder.Visibility = Visibility.Collapsed;
         }
+        else if (cameraSource == CameraSourceKind.Overhead)
+        {
+            OverheadCameraPlaceholder.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static BitmapSource CreateJpegBitmap(CameraFrameSnapshot frame)
+    {
+        using var stream = new MemoryStream(frame.Data, writable: false);
+        var decoder = BitmapDecoder.Create(
+            stream,
+            BitmapCreateOptions.PreservePixelFormat,
+            BitmapCacheOption.OnLoad);
+        var bitmap = decoder.Frames[0];
+        bitmap.Freeze();
+        return bitmap;
     }
 
     private void VisualWorkspace_SizeChanged(object sender, SizeChangedEventArgs eventArgs) =>
@@ -340,6 +382,7 @@ public partial class MainWindow : FluentWindow
                 BackendMode = "SshRemote",
                 Endpoint = "http://127.0.0.1:50050",
                 CameraEndpoint = "http://127.0.0.1:50049",
+                OverheadCameraEndpoint = "http://127.0.0.1:50048",
                 Ssh = sshSettings,
             };
             _settingsStore.Save(updated);
