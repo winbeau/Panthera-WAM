@@ -13,6 +13,7 @@ obj/
 .vs/
 *.user
 wpf/installer/publish/
+wpf/installer/publish-ssh-wizard/
 wpf/installer/output/
 wpf/installer/ChineseSimplified.isl
 
