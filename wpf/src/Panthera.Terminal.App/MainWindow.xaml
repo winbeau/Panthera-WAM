@@ -184,13 +184,19 @@
 
                 <Grid x:Name="ControlPage" Margin="10,7,10,6">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" /><ColumnDefinition Width="8" />
-                        <ColumnDefinition Width="296" />
+                        <ColumnDefinition Width="*" MinWidth="760" />
+                        <ColumnDefinition Width="8" />
+                        <ColumnDefinition Width="296" MinWidth="260" MaxWidth="430" />
                     </Grid.ColumnDefinitions>
 
-                    <Grid Grid.Column="0">
-                        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="7" /><RowDefinition Height="212" /></Grid.RowDefinitions>
-                        <Border Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
+                    <Grid x:Name="VisualWorkspace" Grid.Column="0" MinWidth="900"
+                          SizeChanged="VisualWorkspace_SizeChanged">
+                        <Grid.RowDefinitions>
+                            <RowDefinition x:Name="CadWorkspaceRow" Height="*" MinHeight="220" />
+                            <RowDefinition Height="8" />
+                            <RowDefinition x:Name="MotionWorkspaceRow" Height="234" />
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
                             <local:CadThreeView x:Name="CadView"
                                 J1="{Binding Joints[0].Position}" J2="{Binding Joints[1].Position}" J3="{Binding Joints[2].Position}"
                                 J4="{Binding Joints[3].Position}" J5="{Binding Joints[4].Position}" J6="{Binding Joints[5].Position}"
@@ -198,75 +204,168 @@
                                 GripperPercent="{Binding GripperPercent, Mode=OneWay}" Theme="{Binding Theme, Mode=OneWay}" />
                         </Border>
 
-                        <Border Grid.Row="2" Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
+                        <UniformGrid x:Name="BottomSquarePanel" Grid.Row="2" Columns="3"
+                                     HorizontalAlignment="Center">
+                        <Border Margin="4" Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                 <Border Style="{StaticResource CardHeaderStyle}">
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <TextBlock Text="运动控制" Style="{StaticResource SectionHeaderTextStyle}" />
-                                        <ProgressBar Grid.Column="1" Width="180" Height="4" Margin="18,0" HorizontalAlignment="Right" VerticalAlignment="Center" Maximum="1" Value="{Binding ExecutionFraction}" />
-                                        <TextBlock Grid.Column="2" Text="统一 Linux 控制面 · WPF 仅发送意图" Style="{StaticResource MetaTextStyle}" />
+                                        <ProgressBar Grid.Column="1" Width="90" Height="4" Margin="10,0" HorizontalAlignment="Right" VerticalAlignment="Center" Maximum="1" Value="{Binding ExecutionFraction}" />
+                                        <TextBlock Grid.Column="2" Text="安全意图" Style="{StaticResource MetaTextStyle}" />
                                     </Grid>
                                 </Border>
-                                <Grid Grid.Row="1" Margin="10,5,10,7">
+                                <ScrollViewer x:Name="MotionControlScrollViewer" Grid.Row="1"
+                                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                              VerticalContentAlignment="Stretch">
+                                <Grid Margin="10,0"
+                                      MinHeight="{Binding ViewportHeight, ElementName=MotionControlScrollViewer}">
                                     <Grid.Resources>
                                         <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
-                                            <Setter Property="Height" Value="34" />
-                                            <Setter Property="Padding" Value="8,1" />
-                                            <Setter Property="FontSize" Value="13.5" />
+                                            <Setter Property="Height" Value="30" />
+                                            <Setter Property="Width" Value="68" />
+                                            <Setter Property="Padding" Value="6,1" />
+                                            <Setter Property="FontSize" Value="12.5" />
+                                            <Setter Property="HorizontalAlignment" Value="Left" />
                                             <Setter Property="VerticalContentAlignment" Value="Center" />
                                         </Style>
                                     </Grid.Resources>
-                                    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="42" /></Grid.RowDefinitions>
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="13" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="26" />
+                                        <RowDefinition Height="*" MinHeight="92" />
+                                        <RowDefinition Height="70" />
+                                        <RowDefinition Height="1" />
+                                        <RowDefinition Height="26" />
+                                        <RowDefinition Height="*" MinHeight="92" />
+                                        <RowDefinition Height="70" />
+                                    </Grid.RowDefinitions>
 
-                                    <UniformGrid Grid.Column="0" Columns="3" Rows="2" Margin="0,0,5,0">
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J1 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ1, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveJTargetJ1" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J2 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ2, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveJTargetJ2" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J3 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ3, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveJTargetJ3" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J4 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ4, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveJTargetJ4" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J5 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ5, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveJTargetJ5" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J6 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ6, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveJTargetJ6" /></StackPanel>
+                                    <Border Grid.Row="0" Padding="8,0"
+                                            Background="{DynamicResource ControlFillColorTertiaryBrush}">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="MoveJ" VerticalAlignment="Center"
+                                                       FontFamily="Cascadia Mono, Consolas" FontSize="10"
+                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                            <TextBlock Text="轴" VerticalAlignment="Center" FontSize="11.5" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        </DockPanel>
+                                    </Border>
+
+                                    <UniformGrid Grid.Row="1" Columns="3" Rows="2" VerticalAlignment="Center">
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J1 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ1, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveJTargetJ1" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J2 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ2, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveJTargetJ2" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J3 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ3, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveJTargetJ3" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J4 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ4, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveJTargetJ4" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J5 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ5, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveJTargetJ5" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="J6 / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetJ6, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveJTargetJ6" /></StackPanel>
                                     </UniformGrid>
 
-                                    <Border Grid.Column="1" Grid.RowSpan="2" Width="1" Margin="6,0" HorizontalAlignment="Center" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
+                                    <Border Grid.Row="3" Height="1" Margin="0" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
 
-                                    <UniformGrid Grid.Column="2" Columns="3" Rows="2" Margin="5,0,0,0">
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="X / m" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetX, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveLTargetX" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Y / m" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetY, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveLTargetY" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Z / m" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetZ, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveLTargetZ" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Roll / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetRoll, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveLTargetRoll" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Pitch / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetPitch, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveLTargetPitch" /></StackPanel>
-                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Yaw / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetYaw, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.AutomationId="MoveLTargetYaw" /></StackPanel>
+                                    <Border Grid.Row="4" Padding="8,0"
+                                            Background="{DynamicResource ControlFillColorTertiaryBrush}">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="MoveL" VerticalAlignment="Center"
+                                                       FontFamily="Cascadia Mono, Consolas" FontSize="10"
+                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                            <TextBlock Text="笛卡尔" VerticalAlignment="Center" FontSize="11.5" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        </DockPanel>
+                                    </Border>
+
+                                    <UniformGrid Grid.Row="5" Columns="3" Rows="2" VerticalAlignment="Center">
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="X / m" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetX, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveLTargetX" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Y / m" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetY, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveLTargetY" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Z / m" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetZ, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveLTargetZ" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Roll / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetRoll, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveLTargetRoll" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Pitch / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetPitch, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveLTargetPitch" /></StackPanel>
+                                        <StackPanel Style="{StaticResource InputStackStyle}"><TextBlock Text="Yaw / rad" Style="{StaticResource MetricLabelStyle}" /><TextBox Text="{Binding TargetYaw, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0.###}}" AutomationProperties.AutomationId="MoveLTargetYaw" /></StackPanel>
                                     </UniformGrid>
 
-                                    <Grid Grid.Row="1" Grid.Column="0" Margin="4,2,8,0">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="150" /><ColumnDefinition Width="58" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="时长" FontSize="12.5" VerticalAlignment="Center" />
+                                    <Grid Grid.Row="2" Margin="4,2,4,0">
+                                        <Grid.RowDefinitions><RowDefinition Height="30" /><RowDefinition Height="36" /></Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="45" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="时长" FontSize="12" VerticalAlignment="Center" />
                                         <Slider Grid.Column="1" Margin="8,0" Minimum="0.5" Maximum="10" Value="{Binding TargetMoveJDuration}" Style="{StaticResource MotionSliderStyle}" AutomationProperties.AutomationId="MoveJDurationSlider" />
                                         <TextBlock Grid.Column="2" Text="{Binding TargetMoveJDuration, StringFormat={}{0:F1} s}" Style="{StaticResource MetaTextStyle}" HorizontalAlignment="Left" />
-                                        <TextBlock Grid.Column="3" Text="关节空间" Margin="0,0,10,0" HorizontalAlignment="Right" Style="{StaticResource MetaTextStyle}" />
-                                        <ui:Button Grid.Column="4" Content="MoveJ" Height="38" Padding="12,0" FontSize="13" VerticalContentAlignment="Center" Appearance="Primary" Command="{Binding MoveJCommand}" AutomationProperties.AutomationId="MoveJButton" />
-                                        <ui:Button Grid.Column="5" Content="取消" Height="38" Padding="11,0" FontSize="13" VerticalContentAlignment="Center" Appearance="Transparent" Command="{Binding CancelExecutionCommand}" Margin="5,0,0,0" AutomationProperties.AutomationId="CancelExecutionButton" />
+                                        <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <TextBlock Text="关节空间" Margin="0,0,8,0" VerticalAlignment="Center" Style="{StaticResource MetaTextStyle}" />
+                                            <ui:Button Content="MoveJ" Height="34" Padding="9,0" FontSize="12" VerticalContentAlignment="Center" Appearance="Primary" Command="{Binding MoveJCommand}" AutomationProperties.AutomationId="MoveJButton" />
+                                            <ui:Button Content="取消" Height="34" Padding="8,0" FontSize="12" VerticalContentAlignment="Center" Appearance="Transparent" Command="{Binding CancelExecutionCommand}" Margin="4,0,0,0" AutomationProperties.AutomationId="CancelExecutionButton" />
+                                        </StackPanel>
                                     </Grid>
 
-                                    <Grid Grid.Row="1" Grid.Column="2" Margin="8,2,4,0">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="150" /><ColumnDefinition Width="58" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="时长" FontSize="12.5" VerticalAlignment="Center" />
+                                    <Grid Grid.Row="6" Margin="4,2,4,0">
+                                        <Grid.RowDefinitions><RowDefinition Height="30" /><RowDefinition Height="36" /></Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="45" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="时长" FontSize="12" VerticalAlignment="Center" />
                                         <Slider Grid.Column="1" Margin="8,0" Minimum="0.5" Maximum="10" Value="{Binding TargetMoveLDuration}" Style="{StaticResource MotionSliderStyle}" AutomationProperties.AutomationId="MoveLDurationSlider" />
                                         <TextBlock Grid.Column="2" Text="{Binding TargetMoveLDuration, StringFormat={}{0:F1} s}" Style="{StaticResource MetaTextStyle}" HorizontalAlignment="Left" />
-                                        <CheckBox Grid.Column="3" Content="保持当前姿态" Margin="0,0,10,0" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                  IsChecked="{Binding PreserveOrientation, Mode=TwoWay}"
-                                                  ToolTip="勾选时仅使用 X/Y/Z，Roll/Pitch/Yaw 不下发；取消勾选后六维目标全部生效。"
-                                                  AutomationProperties.AutomationId="MoveLPreserveOrientationCheckBox" />
-                                        <ui:Button Grid.Column="4" Content="MoveL" Height="38" Padding="12,0" FontSize="13" VerticalContentAlignment="Center" Appearance="Primary" Command="{Binding MoveLCommand}" AutomationProperties.AutomationId="MoveLButton" />
-                                        <ui:Button Grid.Column="5" Content="取消" Height="38" Padding="11,0" FontSize="13" VerticalContentAlignment="Center" Appearance="Transparent" Command="{Binding CancelExecutionCommand}" Margin="5,0,0,0" AutomationProperties.AutomationId="CancelMoveLExecutionButton" />
+                                        <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <CheckBox Content="保持姿态" Margin="0,0,8,0" VerticalAlignment="Center" FontSize="11.5"
+                                                      IsChecked="{Binding PreserveOrientation, Mode=TwoWay}"
+                                                      ToolTip="勾选时仅使用 X/Y/Z，Roll/Pitch/Yaw 不下发；取消勾选后六维目标全部生效。"
+                                                      AutomationProperties.AutomationId="MoveLPreserveOrientationCheckBox" />
+                                            <ui:Button Content="MoveL" Height="34" Padding="9,0" FontSize="12" VerticalContentAlignment="Center" Appearance="Primary" Command="{Binding MoveLCommand}" AutomationProperties.AutomationId="MoveLButton" />
+                                            <ui:Button Content="取消" Height="34" Padding="8,0" FontSize="12" VerticalContentAlignment="Center" Appearance="Transparent" Command="{Binding CancelExecutionCommand}" Margin="4,0,0,0" AutomationProperties.AutomationId="CancelMoveLExecutionButton" />
+                                        </StackPanel>
                                     </Grid>
                                 </Grid>
+                                </ScrollViewer>
                             </Grid>
                         </Border>
+
+                            <Border x:Name="WristCameraCard" Margin="4"
+                                    Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
+                                <Grid Background="#FF101418">
+                                    <Image x:Name="WristCameraImage" Stretch="UniformToFill"
+                                           AutomationProperties.AutomationId="WristCameraImage" />
+                                    <StackPanel x:Name="WristCameraPlaceholder" Panel.ZIndex="1"
+                                                HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="Camera20" FontSize="26" Foreground="#FF84909C" />
+                                        <TextBlock Text="D405 · 等待腕部画面" Margin="0,8,0,0" Foreground="#FFD3DAE1"
+                                                   FontSize="11" HorizontalAlignment="Center" />
+                                    </StackPanel>
+                                    <Border Panel.ZIndex="2" Height="36" VerticalAlignment="Top" Padding="11,0"
+                                            Background="#D91B2329" BorderBrush="#33FFFFFF" BorderThickness="0,0,0,1">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="D405 · RGB8" Foreground="#FFC5CDD3"
+                                                       FontFamily="Cascadia Mono, Consolas" FontSize="10.5" VerticalAlignment="Center" />
+                                            <TextBlock Text="腕部摄像头" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </Border>
+                                </Grid>
+                            </Border>
+
+                            <Border Margin="4" Style="{StaticResource CockpitCardStyle}" ClipToBounds="True">
+                                <Grid Background="#FF101418">
+                                    <Image x:Name="OverheadCameraImage" Stretch="UniformToFill"
+                                           AutomationProperties.AutomationId="OverheadCameraImage" />
+                                    <StackPanel Panel.ZIndex="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="Camera20" FontSize="26" Foreground="#FF84909C" />
+                                        <TextBlock Text="C920e · 等待俯视画面" Margin="0,8,0,0" Foreground="#FFD3DAE1"
+                                                   FontSize="11" HorizontalAlignment="Center" />
+                                    </StackPanel>
+                                    <Border Panel.ZIndex="2" Height="36" VerticalAlignment="Top" Padding="11,0"
+                                            Background="#D91B2329" BorderBrush="#33FFFFFF" BorderThickness="0,0,0,1">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="C920e · RGB" Foreground="#FFC5CDD3"
+                                                       FontFamily="Cascadia Mono, Consolas" FontSize="10.5" VerticalAlignment="Center" />
+                                            <TextBlock Text="俯视摄像头" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </UniformGrid>
                     </Grid>
+
+                    <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch"
+                                  ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"
+                                  Background="{DynamicResource DividerStrokeColorDefaultBrush}"
+                                  ShowsPreview="True" Cursor="SizeWE"
+                                  AutomationProperties.Name="调整主工作区与右侧控制栏宽度" />
 
                     <Grid Grid.Column="2">
                         <Grid.RowDefinitions><RowDefinition Height="126" /><RowDefinition Height="7" /><RowDefinition Height="*" /><RowDefinition Height="7" /><RowDefinition Height="142" /></Grid.RowDefinitions>

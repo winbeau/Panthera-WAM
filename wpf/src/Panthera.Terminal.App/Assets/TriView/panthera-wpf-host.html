@@ -26,11 +26,11 @@
         .app { width:100%!important; height:100vh!important; min-height:0!important; margin:0!important; border:0!important; border-radius:0!important; box-shadow:none!important; background:transparent!important; }
         .topbar,.controls,.statusline { display:none!important; }
         .stage-shell { height:100vh!important; min-height:0!important; padding:0!important; }
-        .stage { height:100vh!important; min-height:0!important; padding:6px!important; gap:6px!important; grid-template-columns:minmax(0,1.22fr) minmax(0,1.22fr) minmax(215px,.72fr)!important; grid-template-rows:minmax(0,1fr) minmax(0,1fr)!important; grid-template-areas:'side front top' 'side front facts'!important; }
+        .stage { height:100vh!important; min-height:0!important; padding:6px!important; gap:6px!important; grid-template-columns:repeat(3,minmax(0,1fr))!important; grid-template-rows:minmax(0,1fr)!important; grid-template-areas:'side front top'!important; }
         .side { grid-area:side!important; height:100%!important; aspect-ratio:auto!important; align-self:stretch!important; }
         .front { grid-area:front!important; height:100%!important; aspect-ratio:auto!important; align-self:stretch!important; }
         .top { grid-area:top!important; width:100%!important; height:100%!important; aspect-ratio:auto!important; align-self:stretch!important; }
-        .facts { grid-area:facts!important; min-height:0!important; padding:0!important; overflow:hidden!important; background:#0b1014!important; }
+        .facts { display:none!important; }
         .wpf-state-cache { display:none!important; }
         .camera-panel { width:100%; height:100%; min-height:0; display:grid; grid-template-rows:38px minmax(0,1fr) 28px; background:#0b1014; }
         .camera-head { display:flex; align-items:center; gap:8px; padding:0 10px; color:#f4f7f8; background:#182126; border-bottom:1px solid rgba(255,255,255,.10); }
@@ -47,11 +47,6 @@
         .view-head strong { font-size:13px!important; letter-spacing:.35px!important; }
         .view-head span { font-size:11px!important; }
         .viewport .view-note,.viewport .scale { font-size:10.5px!important; }
-        @media (max-width:980px) {
-          .stage { grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important; grid-template-rows:minmax(0,1.18fr) minmax(210px,.82fr)!important; grid-template-areas:'side front' 'top facts'!important; }
-          .top { height:100%!important; aspect-ratio:auto!important; align-self:stretch!important; }
-          .facts { overflow:hidden!important; }
-        }
       `;
 
       function post(message) {
@@ -96,9 +91,9 @@
 
       function applyCameraFrame(dataUrl) {
         const doc = frame.contentDocument;
-        const image = doc?.getElementById('wpf-d405-rgb');
+        const image = doc?.getElementById('wpf-overhead-rgb');
         const viewport = image?.closest('.camera-frame');
-        const state = doc?.getElementById('wpf-d405-state');
+        const state = doc?.getElementById('wpf-overhead-state');
         if (!image || !viewport || !dataUrl) return false;
         image.onload = () => {
           viewport.classList.add('has-frame');
@@ -130,16 +125,16 @@
         doc.head.appendChild(style);
 
         const facts = doc.querySelector('.facts');
-        if (facts && !doc.getElementById('wpf-d405-rgb')) {
+        if (facts && !doc.getElementById('wpf-overhead-rgb')) {
           const cache = doc.createElement('div');
           cache.className = 'wpf-state-cache';
           while (facts.firstChild) cache.appendChild(facts.firstChild);
           facts.appendChild(cache);
           const panel = doc.createElement('section');
           panel.className = 'camera-panel';
-          panel.innerHTML = `<div class="camera-head"><strong>D405 彩色画面</strong><span id="wpf-d405-state">WAITING</span></div>
-            <div class="camera-frame"><img id="wpf-d405-rgb" alt="D405 RGB 实时画面"><div class="camera-empty">D405 RGB · 等待帧</div></div>
-            <div class="camera-meta"><b>RGB8</b><span>640 × 480</span><span>WPF camera stream</span></div>`;
+          panel.innerHTML = `<div class="camera-head"><strong>俯视摄像头</strong><span id="wpf-overhead-state">WAITING</span></div>
+            <div class="camera-frame"><img id="wpf-overhead-rgb" alt="C920e 俯视实时画面"><div class="camera-empty">C920e · 等待俯视画面</div></div>
+            <div class="camera-meta"><b>C920e</b><span>OVERHEAD</span><span>WPF camera stream</span></div>`;
           facts.appendChild(panel);
         }
         const list = doc.getElementById('chain-list');

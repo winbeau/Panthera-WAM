@@ -100,6 +100,7 @@ public partial class MainWindow : FluentWindow
 
     private async void OnLoaded(object sender, RoutedEventArgs eventArgs)
     {
+        _ = Dispatcher.BeginInvoke(new Action(SynchronizeVisualWorkspace), DispatcherPriority.Loaded);
         _renderTimer.Start();
         await _viewModel.InitializeAsync();
         if (App.IsScreenshotMode)
@@ -190,8 +191,38 @@ public partial class MainWindow : FluentWindow
         image.Source = source;
         if (stream == CameraStreamKind.Color && source is not null)
         {
-            CadView.UpdateColorCameraFrame(source);
+            WristCameraImage.Source = source;
+            WristCameraPlaceholder.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void VisualWorkspace_SizeChanged(object sender, SizeChangedEventArgs eventArgs) =>
+        SynchronizeVisualWorkspace();
+
+    private void SynchronizeVisualWorkspace()
+    {
+        if (BottomSquarePanel is null || MotionWorkspaceRow is null)
+        {
+            return;
+        }
+
+        if (VisualWorkspace.ActualWidth <= 0
+            || VisualWorkspace.ActualHeight <= CadWorkspaceRow.MinHeight + 8)
+        {
+            return;
+        }
+
+        var squareSize = Math.Min(
+            VisualWorkspace.ActualWidth / 3,
+            VisualWorkspace.ActualHeight - CadWorkspaceRow.MinHeight - 8);
+        squareSize = Math.Max(220, squareSize);
+
+        if (!MotionWorkspaceRow.Height.IsAbsolute || Math.Abs(MotionWorkspaceRow.Height.Value - squareSize) > 0.5)
+        {
+            MotionWorkspaceRow.Height = new GridLength(squareSize);
+        }
+        BottomSquarePanel.Width = squareSize * 3;
+        BottomSquarePanel.Height = squareSize;
     }
 
     private static BitmapSource CreateColorBitmap(CameraFrameSnapshot frame)
