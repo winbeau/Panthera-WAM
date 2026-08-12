@@ -1310,7 +1310,14 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
             if not self._leases.heartbeat(token):
                 await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
-            motion = PolicyChunkMotion(chunk)
+            motion = PolicyChunkMotion(
+                chunk,
+                forward_kinematics=(
+                    self._policy_path_validator.tool_position
+                    if not is_sim and self._policy_path_validator is not None
+                    else None
+                ),
+            )
             accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
             try:
                 await asyncio.wrap_future(accepted)
@@ -1333,6 +1340,35 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 sampled_max_acceleration=metrics.sampled_max_acceleration,
                 sampled_max_jerk=metrics.sampled_max_jerk,
             )
+
+    async def GetPolicyAcceptance(self, request, context):
+        del context
+        record = self._executions.record(request.execution_id)
+        if record is None or not isinstance(record.motion, PolicyChunkMotion):
+            return arm_pb2.PolicyAcceptanceResponse(
+                terminal=False,
+                passed=False,
+                tolerance_m=self._policy_config.hardware_endpoint_tolerance_m,
+                reject_reason="unknown policy execution_id",
+            )
+        snapshot = self._executions.snapshot(request.execution_id)
+        if snapshot is None or not snapshot.terminal:
+            return arm_pb2.PolicyAcceptanceResponse(
+                terminal=False,
+                passed=False,
+                tolerance_m=self._policy_config.hardware_endpoint_tolerance_m,
+            )
+        endpoint_error = record.motion.endpoint_error_m
+        passed = snapshot.result is MotionStepResult.DONE and (
+            endpoint_error is None or endpoint_error <= self._policy_config.hardware_endpoint_tolerance_m
+        )
+        return arm_pb2.PolicyAcceptanceResponse(
+            terminal=True,
+            passed=passed,
+            endpoint_error_m=endpoint_error or 0.0,
+            tolerance_m=self._policy_config.hardware_endpoint_tolerance_m,
+            reject_reason=snapshot.error_message,
+        )
 
     async def TeachStart(self, request, context):
         await self._refresh_teach_motion()

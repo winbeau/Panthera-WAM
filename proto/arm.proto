@@ -463,6 +463,15 @@ message ApplyPolicyChunkResponse {
   double sampled_max_jerk = 8;
 }
 
+message PolicyAcceptanceRequest { string execution_id = 1; }
+message PolicyAcceptanceResponse {
+  bool terminal = 1;
+  bool passed = 2;
+  double endpoint_error_m = 3;      // tool-point Euclidean endpoint error
+  double tolerance_m = 4;           // hardware default 0.03 m
+  string reject_reason = 5;
+}
+
 // ============================================================
 // 示教录制回放（v2）
 // ============================================================
@@ -587,6 +596,7 @@ service ArmService {
   // ---------- 多点轨迹（需 lease，v2）----------
   rpc RunJointTrajectory(RunJointTrajectoryRequest) returns (ExecutionAccepted);
   rpc ApplyPolicyChunk(PolicyActionChunk) returns (ApplyPolicyChunkResponse);    // 需 lease；真机 token 仅由 Pi 本地工具签发
+  rpc GetPolicyAcceptance(PolicyAcceptanceRequest) returns (PolicyAcceptanceResponse); // 只读；末端3cm验收
 
   // ---------- 示教录制回放（v2）----------
   rpc TeachStart(TeachStartRequest) returns (TeachStartResponse);               // 需 lease

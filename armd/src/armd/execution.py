@@ -30,7 +30,7 @@ class ExecutionSnapshot:
 
 
 @dataclass(slots=True)
-class _ExecutionRecord:
+class ExecutionRecord:
     execution_id: str
     motion: TrackedMotion
     completion: Future[MotionStepResult]
@@ -38,7 +38,7 @@ class _ExecutionRecord:
 
 class ExecutionRegistry:
     def __init__(self) -> None:
-        self._records: dict[str, _ExecutionRecord] = {}
+        self._records: dict[str, ExecutionRecord] = {}
         self._lock = threading.Lock()
 
     def register(
@@ -48,8 +48,12 @@ class ExecutionRegistry:
     ) -> str:
         execution_id = uuid.uuid4().hex
         with self._lock:
-            self._records[execution_id] = _ExecutionRecord(execution_id, motion, completion)
+            self._records[execution_id] = ExecutionRecord(execution_id, motion, completion)
         return execution_id
+
+    def record(self, execution_id: str) -> ExecutionRecord | None:
+        with self._lock:
+            return self._records.get(execution_id)
 
     def cancel(self, execution_id: str, reason: CancelReason = CancelReason.CLIENT) -> bool:
         with self._lock:

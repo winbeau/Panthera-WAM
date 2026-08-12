@@ -251,9 +251,16 @@ def validate_policy_chunk(
 
 
 class PolicyChunkMotion:
-    def __init__(self, chunk: ValidatedPolicyChunk) -> None:
+    def __init__(
+        self,
+        chunk: ValidatedPolicyChunk,
+        *,
+        forward_kinematics: Callable[[np.ndarray], np.ndarray] | None = None,
+    ) -> None:
         self.chunk = chunk
         self.reject_reason = ""
+        self.endpoint_error_m: float | None = None
+        self._forward_kinematics = forward_kinematics
         self._fraction = 0.0
         self._started_at: float | None = None
         self._hold_started_at: float | None = None
@@ -320,5 +327,28 @@ class PolicyChunkMotion:
             return MotionStepResult.RUNNING
         if now - self._hold_started_at < self.chunk.config.endpoint_hold_s:
             return MotionStepResult.RUNNING
+        if self._forward_kinematics is not None:
+            measured_endpoint = np.asarray(self._forward_kinematics(measured[:6]), dtype=np.float64)
+            target_endpoint = np.asarray(
+                self._forward_kinematics(self.chunk.waypoints[-1, :6]),
+                dtype=np.float64,
+            )
+            if (
+                measured_endpoint.shape != (3,)
+                or target_endpoint.shape != (3,)
+                or not np.isfinite(measured_endpoint).all()
+                or not np.isfinite(target_endpoint).all()
+            ):
+                hold_current_position(backend)
+                self.reject_reason = "policy endpoint FK is unavailable"
+                return MotionStepResult.FAILED
+            self.endpoint_error_m = float(np.linalg.norm(measured_endpoint - target_endpoint))
+            if self.endpoint_error_m > self.chunk.config.hardware_endpoint_tolerance_m:
+                hold_current_position(backend)
+                self.reject_reason = (
+                    "policy endpoint error exceeds "
+                    f"{self.chunk.config.hardware_endpoint_tolerance_m:.3f} m tolerance"
+                )
+                return MotionStepResult.FAILED
         self._fraction = 1.0
         return MotionStepResult.DONE

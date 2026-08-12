@@ -720,6 +720,26 @@ class ApplyPolicyChunkResponse(_message.Message):
     sampled_max_jerk: float
     def __init__(self, accepted: _Optional[bool] = ..., execution_id: _Optional[str] = ..., reject_reason: _Optional[str] = ..., max_joint_delta: _Optional[float] = ..., max_gripper_delta: _Optional[float] = ..., sampled_max_velocity: _Optional[float] = ..., sampled_max_acceleration: _Optional[float] = ..., sampled_max_jerk: _Optional[float] = ...) -> None: ...
 
+class PolicyAcceptanceRequest(_message.Message):
+    __slots__ = ("execution_id",)
+    EXECUTION_ID_FIELD_NUMBER: _ClassVar[int]
+    execution_id: str
+    def __init__(self, execution_id: _Optional[str] = ...) -> None: ...
+
+class PolicyAcceptanceResponse(_message.Message):
+    __slots__ = ("terminal", "passed", "endpoint_error_m", "tolerance_m", "reject_reason")
+    TERMINAL_FIELD_NUMBER: _ClassVar[int]
+    PASSED_FIELD_NUMBER: _ClassVar[int]
+    ENDPOINT_ERROR_M_FIELD_NUMBER: _ClassVar[int]
+    TOLERANCE_M_FIELD_NUMBER: _ClassVar[int]
+    REJECT_REASON_FIELD_NUMBER: _ClassVar[int]
+    terminal: bool
+    passed: bool
+    endpoint_error_m: float
+    tolerance_m: float
+    reject_reason: str
+    def __init__(self, terminal: _Optional[bool] = ..., passed: _Optional[bool] = ..., endpoint_error_m: _Optional[float] = ..., tolerance_m: _Optional[float] = ..., reject_reason: _Optional[str] = ...) -> None: ...
+
 class TeachStartRequest(_message.Message):
     __slots__ = ("kp", "kd", "fc", "fv")
     KP_FIELD_NUMBER: _ClassVar[int]

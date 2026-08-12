@@ -45,12 +45,15 @@ class ConservativePolicyPathValidator:
         if require_camera_boxes and not self.camera_boxes:
             raise ValueError("hardware policy requires at least one calibrated camera exclusion box")
 
+    def tool_position(self, joints: np.ndarray) -> np.ndarray:
+        return np.asarray(self.forward_kinematics(joints), dtype=np.float64)
+
     def __call__(self, sampled_positions: np.ndarray) -> str | None:
         samples = np.asarray(sampled_positions, dtype=np.float64)
         if samples.ndim != 2 or samples.shape[1] != 7 or not np.isfinite(samples).all():
             return "invalid sampled joint path"
         for index, joints in enumerate(samples[:, :6]):
-            tool = np.asarray(self.forward_kinematics(joints), dtype=np.float64)
+            tool = self.tool_position(joints)
             if tool.shape != (3,) or not np.isfinite(tool).all():
                 return f"FK failed at sampled path index {index}"
             if tool[2] < self.table_z_min:

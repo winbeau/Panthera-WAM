@@ -218,6 +218,11 @@ class ArmServiceStub:
                 request_serializer=arm__pb2.PolicyActionChunk.SerializeToString,
                 response_deserializer=arm__pb2.ApplyPolicyChunkResponse.FromString,
                 _registered_method=True)
+        self.GetPolicyAcceptance = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/GetPolicyAcceptance',
+                request_serializer=arm__pb2.PolicyAcceptanceRequest.SerializeToString,
+                response_deserializer=arm__pb2.PolicyAcceptanceResponse.FromString,
+                _registered_method=True)
         self.TeachStart = channel.unary_unary(
                 '/panthera.arm.v1.ArmService/TeachStart',
                 request_serializer=arm__pb2.TeachStartRequest.SerializeToString,
@@ -506,6 +511,13 @@ class ArmServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetPolicyAcceptance(self, request, context):
+        """只读；末端3cm验收
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def TeachStart(self, request, context):
         """---------- 示教录制回放（v2）----------
         需 lease
@@ -746,6 +758,11 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     servicer.ApplyPolicyChunk,
                     request_deserializer=arm__pb2.PolicyActionChunk.FromString,
                     response_serializer=arm__pb2.ApplyPolicyChunkResponse.SerializeToString,
+            ),
+            'GetPolicyAcceptance': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetPolicyAcceptance,
+                    request_deserializer=arm__pb2.PolicyAcceptanceRequest.FromString,
+                    response_serializer=arm__pb2.PolicyAcceptanceResponse.SerializeToString,
             ),
             'TeachStart': grpc.unary_unary_rpc_method_handler(
                     servicer.TeachStart,
@@ -1764,6 +1781,33 @@ class ArmService:
             '/panthera.arm.v1.ArmService/ApplyPolicyChunk',
             arm__pb2.PolicyActionChunk.SerializeToString,
             arm__pb2.ApplyPolicyChunkResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetPolicyAcceptance(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/GetPolicyAcceptance',
+            arm__pb2.PolicyAcceptanceRequest.SerializeToString,
+            arm__pb2.PolicyAcceptanceResponse.FromString,
             options,
             channel_credentials,
             insecure,

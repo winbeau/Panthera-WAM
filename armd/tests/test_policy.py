@@ -152,6 +152,17 @@ def test_policy_validator_rejects_unsafe_dynamics_and_swept_path():
         validate_policy_chunk(**kwargs, path_validator=lambda _: "camera exclusion box")
 
 
+def test_policy_motion_reports_cartesian_endpoint_acceptance():
+    now_ns = 10_000_000_000
+    kwargs = valid_kwargs(now_ns)
+    chunk = validate_policy_chunk(**kwargs)
+    motion = PolicyChunkMotion(
+        chunk,
+        forward_kinematics=lambda joints: np.array([joints[0], joints[1], joints[2]]),
+    )
+    assert motion.endpoint_error_m is None
+
+
 def test_policy_motion_runs_as_atomic_frames_and_holds_endpoint():
     backend = SimBackend()
     loop = HardwareLoop(lambda: backend, control_hz=200.0)
@@ -182,7 +193,10 @@ def test_policy_motion_runs_as_atomic_frames_and_holds_endpoint():
             now_monotonic_ns=time.monotonic_ns(),
             config=PolicySafetyConfig(endpoint_hold_s=0.02),
         )
-        motion = PolicyChunkMotion(chunk)
+        motion = PolicyChunkMotion(
+            chunk,
+            forward_kinematics=lambda joints: np.array([joints[0], joints[1], joints[2]]),
+        )
         accepted, completion = loop.start_motion_with_ack(motion)
         accepted.result(timeout=1)
         assert completion.result(timeout=2) is MotionStepResult.DONE
@@ -190,5 +204,7 @@ def test_policy_motion_runs_as_atomic_frames_and_holds_endpoint():
         assert [state.position for state in states[:6]] == pytest.approx(chunk.waypoints[-1, :6], abs=0.003)
         assert states[6].position == pytest.approx(chunk.waypoints[-1, 6], abs=0.003)
         assert motion.fraction == 1.0
+        assert motion.endpoint_error_m is not None
+        assert motion.endpoint_error_m <= 0.03
     finally:
         loop.stop()

@@ -99,6 +99,12 @@ async def test_apply_policy_chunk_executes_in_sim_and_enforces_session_sequence(
     done = await terminal_status(stub, accepted.execution_id)
     assert done.state == arm_pb2.EXEC_STATE_DONE
     assert done.fraction == 1.0
+    acceptance = await stub.GetPolicyAcceptance(
+        arm_pb2.PolicyAcceptanceRequest(execution_id=accepted.execution_id)
+    )
+    assert acceptance.terminal
+    assert acceptance.passed
+    assert acceptance.tolerance_m == pytest.approx(0.03)
 
     next_state = await stub.GetRobotState(arm_pb2.Empty())
     wrong_session = await stub.ApplyPolicyChunk(
@@ -121,6 +127,15 @@ async def test_apply_policy_chunk_executes_in_sim_and_enforces_session_sequence(
     )
     assert accepted_second.accepted
     assert (await terminal_status(stub, accepted_second.execution_id)).state == arm_pb2.EXEC_STATE_DONE
+
+
+@pytest.mark.asyncio
+async def test_policy_acceptance_rejects_unknown_execution(policy_stack):
+    _, stub, _ = policy_stack
+    response = await stub.GetPolicyAcceptance(arm_pb2.PolicyAcceptanceRequest(execution_id="missing"))
+    assert not response.terminal
+    assert not response.passed
+    assert "unknown" in response.reject_reason
 
 
 @pytest.mark.asyncio
