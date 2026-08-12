@@ -18,6 +18,8 @@ from armd.backend import (
     audit_sdk_source,
     require_serial_ports,
 )
+from armd.hardware_loop import MotionStepResult
+from armd.motion import TeachMotion
 
 
 @dataclass
@@ -236,6 +238,26 @@ def test_full_seven_slot_frame_uses_one_mode_and_one_flush(frame: JointFrame, co
     assert len(robot.events) == 7
     assert [event[0] for event in robot.events] == list(range(1, 8))
     assert {event[1] for event in robot.events} == {command}
+    assert robot.flushes == 1
+
+
+def test_teach_clamps_out_of_range_measured_gripper_before_real_frame_validation() -> None:
+    robot = FakeRobot()
+    robot.motors[6].state.position = -0.008168
+    backend = make_backend(robot)
+    backend.compensation_torque = lambda q, v, fc, fv, vel_threshold: np.zeros(6)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+    )
+
+    assert motion.step(backend, 0.0) is MotionStepResult.RUNNING
+    gripper_command = next(event for event in robot.events if event[:2] == (7, "mit"))
+    assert gripper_command[2] == pytest.approx(backend.limits.gripper_lower)
+    assert gripper_command[3:] == pytest.approx((0.0, 0.0, 0.0, 0.0))
+    assert robot.motors[6].state.position == pytest.approx(-0.008168)
     assert robot.flushes == 1
 
 

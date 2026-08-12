@@ -13,6 +13,7 @@ from armd.motion import (
     JOG_TARGET_LOOKAHEAD_S,
     JointJogMotion,
     JointPositionMotion,
+    TeachMotion,
     gripper_position_frame,
 )
 
@@ -36,6 +37,39 @@ class RecordingSimBackend(SimBackend):
     def write_frame(self, frame) -> None:
         self.frames.append(frame)
         super().write_frame(frame)
+
+
+@pytest.mark.parametrize(
+    ("measured_position", "commanded_position"),
+    [
+        (-0.008168, 0.0),
+        (0.4, 0.4),
+        (2.008168, 2.0),
+    ],
+)
+def test_teach_clamps_measured_gripper_position_to_command_limits(
+    measured_position: float,
+    commanded_position: float,
+) -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    backend._positions[6] = measured_position
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    frame = backend.frames[-1]
+    assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+    assert frame.gripper_position == pytest.approx(commanded_position)
+    assert frame.gripper_velocity == 0.0
+    assert frame.gripper_torque == 0.0
+    assert frame.gripper_kp == 0.0
+    assert frame.gripper_kd == 0.0
+    assert backend.read_all()[6].position == pytest.approx(measured_position)
 
 
 def test_gripper_position_frame_uses_requested_instantaneous_torque_budget() -> None:

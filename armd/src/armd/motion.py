@@ -701,7 +701,13 @@ class TeachMotion:
                 arm_torque=torque,
                 arm_kp=self.kp,
                 arm_kd=self.kd,
-                gripper_position=states[6].position,
+                gripper_position=float(
+                    np.clip(
+                        states[6].position,
+                        backend.limits.gripper_lower,
+                        backend.limits.gripper_upper,
+                    )
+                ),
                 gripper_velocity=0.0,
                 gripper_torque=0.0,
                 gripper_kp=0.0,
