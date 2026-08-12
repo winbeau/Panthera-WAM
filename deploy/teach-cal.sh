@@ -5,12 +5,12 @@
 #
 # 用法（在 Pi 5 上）：
 #   teach-cal.sh                        # 用当前基线拉起 teach
-#   teach-cal.sh --J1 "0,0.1,-0.02,0,0" # J1 增量微调：kd+0.1、fc-0.02，其余不变
-#   teach-cal.sh --J3 ".,.,.,.,-0.05"   # J3 仅 scale-0.05
+#   teach-cal.sh --J1 "0,0.1,-0.02,0,0" # J1 增量微调：kd+0.1、fc-0.02，其余 0 不变
+#   teach-cal.sh --J3 "0,0,0,0,-0.05"     # J3 仅 scale-0.05
 #   teach-cal.sh --show                 # 显示当前 6 关节参数
 #   teach-cal.sh --reset                # 恢复出厂基线
 #
-# 增量规则：逗号分隔 5 个值（顺序 kp,kd,fc,fv,scale）；"." = 不修改；
+# 增量规则：逗号分隔 5 个值（顺序 kp,kd,fc,fv,scale）；0 = 不修改；
 # 数字 = 当前值 + 增量（可正可负）。scale 必须保持 >0。
 #
 # 脚本动作：停残留 heartbeat → 写 env(scale) → 重启 armd（解锁 0x0B）→
@@ -48,17 +48,15 @@ while i < len(args):
         i += 1
     elif arg == "--show":
         i += 1
-    elif arg.startswith("--J") and len(arg) == 4 and arg[2] in "123456":
+    elif arg.startswith("--J") and len(arg) == 4 and arg[3] in "123456":
         joint = arg[2:]
         if i + 1 >= len(args):
-            raise SystemExit(f"error: {arg} 需要 5 个增量值（kp,kd,fc,fv,scale，. 表示不变）")
+            raise SystemExit(f"error: {arg} 需要 5 个增量值（kp,kd,fc,fv,scale，0 表示不修改）")
         deltas = [part.strip() for part in args[i + 1].split(",")]
         if len(deltas) != 5:
             raise SystemExit(f"error: {arg} 需要 5 个值，收到 {len(deltas)} 个")
         values = list(state[joint])
         for idx, delta in enumerate(deltas):
-            if delta == ".":
-                continue
             try:
                 values[idx] += float(delta)
             except ValueError:
