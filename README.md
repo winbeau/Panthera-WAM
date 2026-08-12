@@ -107,6 +107,7 @@ wpf\tools\run-tests.cmd
 - 日常开发和 CI 一律使用 `armd --sim`。
 - EStop 不需要 lease；固件 watchdog 默认 150ms。
 - `calibrate zero` 虽不产生运动，但会重定义坐标零点，必须按验收文档在最后执行并完成恢复。
+- **真机运动前先读 [`docs/JOINT_CONTROL.md`](docs/JOINT_CONTROL.md)**：单关节 jog 速度须 ≥0.3 rad/s（低于摩擦死区会触发固件堵转锁死，需重启 armd 恢复），`--vel` 用逗号分隔，运动命令前先 acquire + 后台 heartbeat。
 
 详细架构决策见 [`docs/FINAL_PLAN.md`](docs/FINAL_PLAN.md)。
 

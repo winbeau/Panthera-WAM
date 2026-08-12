@@ -7,9 +7,10 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 
 1. `docs/FINAL_PLAN.md` — **唯一权威计划**。架构决策、42 个 SDK 方法覆盖映射、arm.proto 草案、CLI 命令树、里程碑 M0→v1→WPF v1→v2、14 项审计修订。与其它文档冲突时以它为准。文末「**SDK 源码核实结论**」是逐行核对官方源码得到的一手事实（含 4 项契约修正与 N1–N10 新发现），**与 SDK README 冲突时以该节为准**（README 多处过时）。
 2. `docs/MILESTONES.md` — **进度看板**。每项打勾即 commit+push；🔒 标记＝需真机且用户在场，不可自动执行。
-3. `docs/CLI_PLAN.md` / `docs/WPF_PLAN.md` — 两侧的展开细节。
-4. `docs/CAMERA_DEVICES.md` — Pi 5 上 C920e/D405 的稳定设备别名、序列号与采集约束。
-5. `docs/mockups/mockup-C-fluent-cockpit.html` — **WPF 已定稿的视觉基准**（驾驶舱式：中央 SVG 雷达俯视图 + 左右圆形关节仪表 + jog pod）。A/B 两稿仅作参考。
+3. `docs/JOINT_CONTROL.md` — **关节控制手册**。真机 CLI 控制正确姿势、lease/心跳流程、低速 jog 固件堵转锁死等 bug 解决、C1 六关节符号实测表。**动真机前先读**。
+4. `docs/CLI_PLAN.md` / `docs/WPF_PLAN.md` — 两侧的展开细节。
+5. `docs/CAMERA_DEVICES.md` — Pi 5 上 C920e/D405 的稳定设备别名、序列号与采集约束。
+6. `docs/mockups/mockup-C-fluent-cockpit.html` — **WPF 已定稿的视觉基准**（驾驶舱式：中央 SVG 雷达俯视图 + 左右圆形关节仪表 + jog pod）。A/B 两稿仅作参考。
 
 ## 已敲定的决策（不要重新讨论）
 
