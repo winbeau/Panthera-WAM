@@ -14,7 +14,7 @@ from typing import Generic, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
 
-from .backend import Backend, MotorSnapshot, estop_recovery_frame
+from .backend import Backend, BackendError, MotorSnapshot, estop_recovery_frame
 from .state_tap import StateTap
 
 ResultT = TypeVar("ResultT")
@@ -416,6 +416,16 @@ class HardwareLoop:
         try:
             result = motion.step(backend, now)
         except BaseException as exc:
+            # 运动状态机抛异常时，最后写入的帧（例如 MIT 重力前馈帧）可能仍在
+            # 执行，不能只清空活动状态。先显式硬停止，再把结构化异常交给
+            # future，经 StreamExecution.error_message / reject_reason 可观测。
+            try:
+                backend.stop()
+            except BaseException as stop_exc:
+                # 保留原始异常到消息中；__context__ 自动链接原异常。
+                exc = BackendError(
+                    f"运动 step 异常后硬停止失败: {stop_exc}; 原始异常: {exc}"
+                )
             future = self._motion_future
             self._active_motion = None
             self._motion_future = None

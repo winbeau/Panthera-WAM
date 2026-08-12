@@ -49,6 +49,15 @@ SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
 DEFAULT_FRICTION_FC = np.array([0.20, 0.15, 0.15, 0.15, 0.04, 0.04], dtype=np.float64)
 DEFAULT_FRICTION_FV = np.array([0.06, 0.06, 0.06, 0.03, 0.02, 0.02], dtype=np.float64)
 
+# 电机↔URDF 关节轴符号 / zero offset 与 URDF 零点的坐标契约尚未验证
+# （见 docs/COORDINATE_CONTRACT.md）。真实 MIT teach/playback 依赖
+# get_Gravity(q) 前馈，符号错误会直接产生非预期运动，故默认拒绝。
+TEACH_CONTRACT_GATE_REASON = (
+    "重力/反馈坐标契约未验证：默认拒绝真实 MIT teach/playback；"
+    "请先完成 docs/COORDINATE_CONTRACT.md 的静态与真机核对，"
+    "再以 --allow-unverified-teach / PANTHERA_ALLOW_UNVERIFIED_TEACH=1 显式放行"
+)
+
 LEASE_PROTECTED_METHODS = {
     "ReleaseControl",
     "ClearEStop",
@@ -206,11 +215,15 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         policy_path_validator=None,
         policy_confirmations: PolicyConfirmationManager | None = None,
         policy_asset_allow_list: PolicyAssetAllowList | None = None,
+        allow_unverified_teach: bool | None = None,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
         self._kinematics = kinematics
         self._executions = executions
+        # None=自动（仿真放行/真机拒绝）；False=一律拒绝 MIT；True=一律放行 MIT。
+        # POS-VEL 回放不使用重力前馈，始终不受本门控影响。
+        self._allow_unverified_teach = allow_unverified_teach
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
@@ -235,6 +248,21 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         self._policy_last_request_id = ""
         self._policy_last_observation_sequence = 0
         self._policy_confirmations.revoke_all()
+
+    async def _teach_contract_gate(self, *, mit: bool) -> str:
+        """坐标契约未验证时默认拒绝真实 MIT teach/playback；返回空串表示放行。"""
+        if not mit:
+            return ""
+        if self._allow_unverified_teach is True:
+            return ""
+        if self._allow_unverified_teach is False:
+            return TEACH_CONTRACT_GATE_REASON
+        is_sim = await asyncio.wrap_future(
+            self._hardware_loop.submit(lambda backend: backend.is_sim)
+        )
+        if is_sim:
+            return ""
+        return TEACH_CONTRACT_GATE_REASON
 
     async def AcquireControl(self, request, context):
         try:
@@ -1377,6 +1405,9 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 accepted=False,
                 reject_reason="已有运动正在执行",
             )
+        gate_reason = await self._teach_contract_gate(mit=True)
+        if gate_reason:
+            return arm_pb2.TeachStartResponse(accepted=False, reject_reason=gate_reason)
         try:
             kp = finite_vector(request.kp, name="kp") if request.kp else np.zeros(6)
             kd = finite_vector(request.kd, name="kd") if request.kd else np.zeros(6)
@@ -1478,6 +1509,9 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         if self._hardware_loop.has_active_motion:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
         mode = "posvel" if request.mode == arm_pb2.PLAYBACK_MODE_POSVEL else "mit"
+        gate_reason = await self._teach_contract_gate(mit=mode == "mit")
+        if gate_reason:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, gate_reason)
         try:
             path = self._teach_store.existing_path(request.path)
             frames = await asyncio.to_thread(load_raw_frames, path)

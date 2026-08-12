@@ -163,6 +163,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=float(os.environ.get("PANTHERA_POLICY_ENDPOINT_TOLERANCE_M", "0.03")),
         help="真机实验末端到位验收容差（米；默认 0.03）",
     )
+    parser.add_argument(
+        "--allow-unverified-teach",
+        action="store_true",
+        default=os.environ.get("PANTHERA_ALLOW_UNVERIFIED_TEACH", "0") == "1",
+        help="显式放行未验证坐标契约的真实 MIT teach/playback（默认拒绝，安全门控）",
+    )
     parser.add_argument("--check", action="store_true", help="启动后通过 gRPC 做一次仿真自检并退出")
     return parser
 
@@ -250,6 +256,7 @@ async def run(args: argparse.Namespace) -> None:
         policy_path_validator=policy_path_validator,
         policy_confirmation_socket=(args.policy_confirmation_socket if not args.sim else None),
         policy_asset_allow_list=policy_asset_allow_list,
+        allow_unverified_teach=args.allow_unverified_teach,
     )
     loop.start()
     try:
@@ -285,6 +292,11 @@ async def run(args: argparse.Namespace) -> None:
 
         mode = "仿真" if args.sim else f"真机（固件看门狗 {args.motor_timeout_ms}ms）"
         binds = ", ".join(filter(None, (args.bind, args.local_bind)))
+        if not args.sim and not args.allow_unverified_teach:
+            print(
+                "安全门控：真实 MIT teach/playback 已默认拒绝（坐标契约未验证）；"
+                "核对 docs/COORDINATE_CONTRACT.md 后可用 --allow-unverified-teach 放行"
+            )
         print(
             f"armd {mode}服务已启动：grpc://{binds}，HardwareLoop={args.control_hz:g}Hz，D405={camera_mode}"
         )

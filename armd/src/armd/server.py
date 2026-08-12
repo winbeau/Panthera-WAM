@@ -39,6 +39,7 @@ class ArmdServer:
         policy_confirmations: PolicyConfirmationManager | None = None,
         policy_confirmation_socket: str | None = None,
         policy_asset_allow_list: PolicyAssetAllowList | None = None,
+        allow_unverified_teach: bool | None = None,
     ) -> None:
         if camera_worker is not None and camera_endpoint is not None:
             raise ValueError("camera_worker 与 camera_endpoint 不能同时设置")
@@ -66,6 +67,7 @@ class ArmdServer:
             policy_path_validator=policy_path_validator,
             policy_confirmations=confirmations,
             policy_asset_allow_list=policy_asset_allow_list,
+            allow_unverified_teach=allow_unverified_teach,
         )
         arm_pb2_grpc.add_ArmServiceServicer_to_server(
             self.arm_service,

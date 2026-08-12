@@ -10,6 +10,7 @@ from armd.backend import (
     ESTOP_RECOVERY_DAMPING_KD,
     IDLE_DAMPING_KD,
     Backend,
+    BackendError,
     FrameMode,
     JointFrame,
     SimBackend,
@@ -109,6 +110,78 @@ def test_client_cancel_is_forwarded_to_motion_state_machine() -> None:
         assert completion.result(timeout=1.0) is MotionStepResult.CANCELLED
         assert motion.cancel_reason is CancelReason.CLIENT
         assert motion.steps >= 1
+    finally:
+        loop.stop()
+
+
+def test_motion_step_exception_stops_backend_and_is_observable() -> None:
+    class ExplodingMotion:
+        def __init__(self) -> None:
+            self.reject_reason = ""
+
+        @property
+        def fraction(self) -> float:
+            return 0.0
+
+        def request_cancel(self, reason: CancelReason) -> None:
+            del reason
+
+        def step(self, backend: Backend, now: float) -> MotionStepResult:
+            del backend, now
+            raise RuntimeError("teach step boom")
+
+    holder: dict[str, ThreadRecordingBackend] = {}
+
+    def factory() -> ThreadRecordingBackend:
+        backend = ThreadRecordingBackend()
+        holder["backend"] = backend
+        return backend
+
+    loop = HardwareLoop(factory, control_hz=100.0)
+    loop.start()
+    try:
+        accepted, completion = loop.start_motion_with_ack(ExplodingMotion())
+        accepted.result(timeout=1.0)
+        with pytest.raises(RuntimeError, match="teach step boom"):
+            completion.result(timeout=1.0)
+        # 异常后必须显式硬停止，而不是继续维持最后写入的帧。
+        assert holder["backend"].stop_event.is_set()
+        assert not loop.has_active_motion
+        assert loop.is_running
+        # 硬停止清空 idle 策略：后续周期不再写入任何新控制帧。
+        assert loop.wait_for_cycles(3)
+        frames_after_stop = len(holder["backend"].frames)
+        assert loop.wait_for_cycles(6)
+        assert len(holder["backend"].frames) == frames_after_stop
+    finally:
+        loop.stop()
+
+
+def test_motion_step_exception_that_breaks_stop_propagates_stop_failure() -> None:
+    class StopFailingBackend(ThreadRecordingBackend):
+        def stop(self) -> None:
+            super().stop()
+            raise OSError("set_stop failed")
+
+    class ExplodingMotion:
+        def request_cancel(self, reason: CancelReason) -> None:
+            del reason
+
+        def step(self, backend: Backend, now: float) -> MotionStepResult:
+            del backend, now
+            raise BackendError("motion failed")
+
+    def factory() -> StopFailingBackend:
+        return StopFailingBackend()
+
+    loop = HardwareLoop(factory, control_hz=100.0)
+    loop.start()
+    try:
+        accepted, completion = loop.start_motion_with_ack(ExplodingMotion())
+        accepted.result(timeout=1.0)
+        with pytest.raises(BackendError, match="硬停止失败"):
+            completion.result(timeout=1.0)
+        assert not loop.has_active_motion
     finally:
         loop.stop()
 
