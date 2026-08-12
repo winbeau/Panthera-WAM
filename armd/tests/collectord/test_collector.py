@@ -17,6 +17,24 @@ from armd.hardware_loop import HardwareLoop
 from armd.server import ArmdServer
 
 
+def test_collector_grpc_limits_cover_full_resolution_depth_frames() -> None:
+    config = CollectorConfig(
+        arm_endpoint="127.0.0.1:1",
+        overhead_endpoint="127.0.0.1:2",
+        wrist_endpoint="127.0.0.1:3",
+        collection_root=Path("/tmp/unused"),
+        episode_id="unused",
+        canonical_task="unused",
+        operator="pytest",
+        panthera_wam_commit="a" * 40,
+        calibration={},
+        identity={},
+    )
+    options = dict(config.grpc_options)
+    assert options["grpc.max_receive_message_length"] >= 16 * 1024 * 1024
+    assert options["grpc.max_send_message_length"] >= 16 * 1024 * 1024
+
+
 @pytest.mark.asyncio
 async def test_collectord_sim_writes_atomic_dual_rgb_depth_episode(tmp_path: Path) -> None:
     hardware_loop = HardwareLoop(SimBackend, control_hz=200.0)

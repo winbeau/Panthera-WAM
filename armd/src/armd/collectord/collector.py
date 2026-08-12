@@ -44,7 +44,11 @@ class CollectorConfig:
     aliases_en: tuple[str, ...] = ()
     success: bool = True
     failure_reason: str | None = None
-    grpc_options: tuple[tuple[str, int], ...] = (("grpc.enable_http_proxy", 0),)
+    grpc_options: tuple[tuple[str, int], ...] = (
+        ("grpc.enable_http_proxy", 0),
+        ("grpc.max_receive_message_length", 16 * 1024 * 1024),
+        ("grpc.max_send_message_length", 16 * 1024 * 1024),
+    )
 
     def __post_init__(self) -> None:
         if not 0 < self.duration_s <= 3600:
