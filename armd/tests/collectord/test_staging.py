@@ -110,6 +110,23 @@ def test_collection_root_requires_explicit_usb3_ssd_approval(tmp_path: Path) -> 
     assert validate_collection_root(tmp_path) == tmp_path.resolve()
 
 
+def test_collection_root_accepts_system_disk_approval(tmp_path: Path) -> None:
+    (tmp_path / APPROVAL_MARKER).write_text(
+        json.dumps({"approved": True, "device_class": "system_disk"}),
+        encoding="utf-8",
+    )
+    assert validate_collection_root(tmp_path) == tmp_path.resolve()
+
+
+def test_collection_root_rejects_wrong_device_class(tmp_path: Path) -> None:
+    (tmp_path / APPROVAL_MARKER).write_text(
+        json.dumps({"approved": True, "device_class": "tmpfs"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="approve one of"):
+        validate_collection_root(tmp_path)
+
+
 def test_atomic_writer_publishes_only_after_full_validation(tmp_path: Path) -> None:
     writer = AtomicEpisodeWriter(tmp_path, "episode-1", allow_unapproved_root=True)
     sync, quality = reports()

@@ -18,6 +18,8 @@ from .quality import quality_gate_reasons
 from .schema import ACTION_SEMANTICS, AXES, FPS, SCHEMA_VERSION
 
 APPROVAL_MARKER = ".panthera-usb3-ssd.json"
+# 允许的采集根设备类别：usb3_ssd（外置盘）与 system_disk（系统盘，数据上传 HF 后清理）
+APPROVED_DEVICE_CLASSES = frozenset({"usb3_ssd", "system_disk"})
 _REQUIRED_IDENTITY_FIELDS = (
     "dataset_id",
     "task_id",
@@ -210,8 +212,10 @@ def validate_collection_root(root: Path, *, allow_unapproved: bool = False) -> P
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"collection root is not approved; missing valid {marker_path}") from exc
-    if marker.get("approved") is not True or marker.get("device_class") != "usb3_ssd":
-        raise ValueError("collection root marker must approve device_class=usb3_ssd")
+    if marker.get("approved") is not True or marker.get("device_class") not in APPROVED_DEVICE_CLASSES:
+        raise ValueError(
+            f"collection root marker must approve one of {sorted(APPROVED_DEVICE_CLASSES)}"
+        )
     return root
 
 
