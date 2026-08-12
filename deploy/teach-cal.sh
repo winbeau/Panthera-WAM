@@ -14,8 +14,12 @@
 set -euo pipefail
 
 env_file="$HOME/.config/panthera-wam/armd.env"
-fc_arg=""
-fv_arg=""
+# 摩擦补偿标定基线（现场实测）：J1/J5/J6 竖直/旋转轴摩擦小，库伦补偿过强会
+# 推动关节持续转动；J2/J3/J4 承重轴保持 SDK 默认。用 --fc/--fv 覆盖。
+FC_DEFAULT="0.05,0.15,0.15,0.15,0.02,0.02"
+FV_DEFAULT="0.02,0.06,0.06,0.03,0.01,0.01"
+fc_arg="--fc $FC_DEFAULT"
+fv_arg="--fv $FV_DEFAULT"
 scale_args=()
 
 while [ $# -gt 0 ]; do
