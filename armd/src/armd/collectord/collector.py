@@ -6,7 +6,9 @@ import asyncio
 import json
 import os
 import shutil
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -190,47 +192,237 @@ def _camera_extension(pixel_format: int) -> str:
     raise ValueError(f"unsupported camera pixel format: {pixel_format}")
 
 
-async def _consume_states(
-    stub: arm_pb2_grpc.ArmServiceStub,
+class _CaptureWorker:
+    """Own one blocking gRPC stream so large camera frames cannot starve state."""
+
+    def __init__(self, name: str, target: Callable[[threading.Event], None]) -> None:
+        self.name = name
+        self._target = target
+        self.stop_requested = threading.Event()
+        self.failed = threading.Event()
+        self.failure: BaseException | None = None
+        self._channel: object | None = None
+        self._ready_future: object | None = None
+        self._call: object | None = None
+        self._resource_lock = threading.Lock()
+        self._thread = threading.Thread(target=self._run, name=f"collectord-{name}", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def bind_channel(self, channel: object) -> bool:
+        with self._resource_lock:
+            self._channel = channel
+            should_close = self.stop_requested.is_set()
+        if should_close:
+            channel.close()
+            return False
+        return True
+
+    def bind_ready_future(self, ready_future: object) -> bool:
+        with self._resource_lock:
+            self._ready_future = ready_future
+            should_cancel = self.stop_requested.is_set()
+        if should_cancel:
+            ready_future.cancel()
+            return False
+        return True
+
+    def bind_call(self, call: object) -> bool:
+        with self._resource_lock:
+            self._call = call
+            should_cancel = self.stop_requested.is_set()
+        if should_cancel:
+            call.cancel()
+            return False
+        return True
+
+    def request_stop(self) -> None:
+        self.stop_requested.set()
+        with self._resource_lock:
+            call = self._call
+            ready_future = self._ready_future
+            channel = self._channel
+        if call is not None:
+            call.cancel()
+        if ready_future is not None:
+            ready_future.cancel()
+        if channel is not None:
+            channel.close()
+
+    def join(self, timeout_s: float = 5.0) -> None:
+        self._thread.join(timeout_s)
+        if self._thread.is_alive():
+            raise TimeoutError(f"collector worker did not stop: {self.name}")
+
+    def _run(self) -> None:
+        try:
+            self._target(self.stop_requested)
+        except grpc.RpcError as exc:
+            if not self.stop_requested.is_set() or exc.code() != grpc.StatusCode.CANCELLED:
+                self.failure = exc
+                self.failed.set()
+        except BaseException as exc:
+            self.failure = exc
+            self.failed.set()
+
+
+def _state_worker(
+    config: CollectorConfig,
     output: list[StateSample],
+    worker: _CaptureWorker,
 ) -> None:
-    baseline: int | None = None
-    call = stub.StreamMeasuredState(arm_pb2.StreamMeasuredStateRequest(start_at_latest=True))
-    async for message in call:
-        if baseline is None:
-            baseline = int(message.overwritten_samples_total)
-        output.append(_state_sample(message, baseline))
+    channel = grpc.insecure_channel(config.arm_endpoint, options=config.grpc_options)
+    if not worker.bind_channel(channel):
+        return
+    try:
+        ready_future = grpc.channel_ready_future(channel)
+        if not worker.bind_ready_future(ready_future):
+            return
+        ready_future.result(timeout=10.0)
+        stub = arm_pb2_grpc.ArmServiceStub(channel)
+        call = stub.StreamMeasuredState(arm_pb2.StreamMeasuredStateRequest(start_at_latest=True))
+        if not worker.bind_call(call):
+            return
+        baseline: int | None = None
+        for message in call:
+            if baseline is None:
+                baseline = int(message.overwritten_samples_total)
+            output.append(_state_sample(message, baseline))
+            if worker.stop_requested.is_set():
+                break
+    finally:
+        channel.close()
 
 
-async def _consume_camera(
-    stub: camera_pb2_grpc.CameraServiceStub,
+def _camera_worker(
+    config: CollectorConfig,
     *,
+    endpoint: str,
     stream: int,
     stream_name: str,
     raw_dir: Path,
     output: list[CameraSample],
+    worker: _CaptureWorker,
 ) -> None:
-    baseline: int | None = None
-    call = stub.StreamCollectedFrames(
-        camera_pb2.StreamCollectedFramesRequest(
-            stream=stream,
-            start_at_latest=True,
-        )
-    )
-    async for item in call:
-        if baseline is None:
-            baseline = int(item.overwritten_samples_total)
-        extension = _camera_extension(item.frame.pixel_format)
-        path = raw_dir / stream_name / f"{int(item.frame.sequence):012d}{extension}"
-        await asyncio.to_thread(_write_camera_payload, item.frame, path)
-        output.append(
-            _camera_sample(
-                item,
-                stream_name=stream_name,
-                path=path,
-                overflow_baseline=baseline,
+    channel = grpc.insecure_channel(endpoint, options=config.grpc_options)
+    if not worker.bind_channel(channel):
+        return
+    try:
+        ready_future = grpc.channel_ready_future(channel)
+        if not worker.bind_ready_future(ready_future):
+            return
+        ready_future.result(timeout=10.0)
+        stub = camera_pb2_grpc.CameraServiceStub(channel)
+        call = stub.StreamCollectedFrames(
+            camera_pb2.StreamCollectedFramesRequest(
+                stream=stream,
+                start_at_latest=True,
             )
         )
+        if not worker.bind_call(call):
+            return
+        baseline: int | None = None
+        for item in call:
+            if baseline is None:
+                baseline = int(item.overwritten_samples_total)
+            extension = _camera_extension(item.frame.pixel_format)
+            path = raw_dir / stream_name / f"{int(item.frame.sequence):012d}{extension}"
+            _write_camera_payload(item.frame, path)
+            output.append(
+                _camera_sample(
+                    item,
+                    stream_name=stream_name,
+                    path=path,
+                    overflow_baseline=baseline,
+                )
+            )
+            if worker.stop_requested.is_set():
+                break
+    finally:
+        channel.close()
+
+
+def _capture_workers(config: CollectorConfig, raw_dir: Path, result: CaptureResult) -> list[_CaptureWorker]:
+    workers: list[_CaptureWorker] = []
+
+    state_worker: _CaptureWorker
+    state_worker = _CaptureWorker(
+        "state",
+        lambda _stop: _state_worker(config, result.states, state_worker),
+    )
+    workers.append(state_worker)
+
+    def add_camera(endpoint: str, stream: int, stream_name: str, output: list[CameraSample]) -> None:
+        camera_worker: _CaptureWorker
+        camera_worker = _CaptureWorker(
+            stream_name,
+            lambda _stop: _camera_worker(
+                config,
+                endpoint=endpoint,
+                stream=stream,
+                stream_name=stream_name,
+                raw_dir=raw_dir,
+                output=output,
+                worker=camera_worker,
+            ),
+        )
+        workers.append(camera_worker)
+
+    add_camera(
+        config.overhead_endpoint,
+        camera_pb2.CAMERA_STREAM_TYPE_COLOR,
+        "overhead_rgb",
+        result.overhead_rgb,
+    )
+    add_camera(
+        config.wrist_endpoint,
+        camera_pb2.CAMERA_STREAM_TYPE_COLOR,
+        "wrist_rgb",
+        result.wrist_rgb,
+    )
+    if config.capture_depth:
+        add_camera(
+            config.wrist_endpoint,
+            camera_pb2.CAMERA_STREAM_TYPE_DEPTH,
+            "wrist_depth",
+            result.wrist_depth,
+        )
+    return workers
+
+
+async def _run_capture_workers(workers: list[_CaptureWorker], duration_s: float) -> None:
+    for worker in workers:
+        worker.start()
+    deadline = time.monotonic() + duration_s
+    failure: BaseException | None = None
+    try:
+        while True:
+            failed = next((worker for worker in workers if worker.failed.is_set()), None)
+            if failed is not None:
+                failure = RuntimeError(f"collector stream failed ({failed.name}): {failed.failure}")
+                break
+            if time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+    finally:
+        for worker in workers:
+            worker.request_stop()
+        join_outcomes = await asyncio.gather(
+            *(asyncio.to_thread(worker.join) for worker in workers),
+            return_exceptions=True,
+        )
+        join_failure = next(
+            (outcome for outcome in join_outcomes if isinstance(outcome, BaseException)),
+            None,
+        )
+        if join_failure is not None:
+            raise join_failure
+    failed = next((worker for worker in workers if worker.failed.is_set()), None)
+    if failed is not None:
+        failure = RuntimeError(f"collector stream failed ({failed.name}): {failed.failure}")
+    if failure is not None:
+        raise failure
 
 
 def _map_device_clock(frames: list[CameraSample]) -> AffineClockFit | None:
@@ -354,7 +546,7 @@ async def collect_episode(config: CollectorConfig) -> Path:
     overhead_channel = grpc.aio.insecure_channel(config.overhead_endpoint, options=config.grpc_options)
     wrist_channel = grpc.aio.insecure_channel(config.wrist_endpoint, options=config.grpc_options)
     channels = (arm_channel, overhead_channel, wrist_channel)
-    tasks: list[asyncio.Task[None]] = []
+    workers: list[_CaptureWorker] = []
     started_wall_time = time.time_ns()
     started_monotonic_ns = time.monotonic_ns()
     try:
@@ -374,50 +566,9 @@ async def collect_episode(config: CollectorConfig) -> Path:
                 expected_serial=config.expected_wrist_serial,
             ),
         )
-        tasks = [
-            asyncio.create_task(_consume_states(arm_stub, result.states)),
-            asyncio.create_task(
-                _consume_camera(
-                    overhead_stub,
-                    stream=camera_pb2.CAMERA_STREAM_TYPE_COLOR,
-                    stream_name="overhead_rgb",
-                    raw_dir=raw_dir,
-                    output=result.overhead_rgb,
-                )
-            ),
-            asyncio.create_task(
-                _consume_camera(
-                    wrist_stub,
-                    stream=camera_pb2.CAMERA_STREAM_TYPE_COLOR,
-                    stream_name="wrist_rgb",
-                    raw_dir=raw_dir,
-                    output=result.wrist_rgb,
-                )
-            ),
-        ]
-        if config.capture_depth:
-            tasks.append(
-                asyncio.create_task(
-                    _consume_camera(
-                        wrist_stub,
-                        stream=camera_pb2.CAMERA_STREAM_TYPE_DEPTH,
-                        stream_name="wrist_depth",
-                        raw_dir=raw_dir,
-                        output=result.wrist_depth,
-                    )
-                )
-            )
-        await asyncio.sleep(config.duration_s)
-        for task in tasks:
-            task.cancel()
-        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
-        failures = [
-            outcome
-            for outcome in outcomes
-            if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError)
-        ]
-        if failures:
-            raise RuntimeError(f"collector stream failed: {failures[0]}")
+        del arm_stub
+        workers = _capture_workers(config, raw_dir, result)
+        await _run_capture_workers(workers, config.duration_s)
 
         result.states.sort(key=lambda item: item.sampled_monotonic_ns)
         result.overhead_rgb.sort(key=lambda item: item.alignment_monotonic_ns)
@@ -526,10 +677,12 @@ async def collect_episode(config: CollectorConfig) -> Path:
             writer.abort("collector_failure", details={"error": str(exc)})
         raise
     finally:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        for worker in workers:
+            worker.request_stop()
+        await asyncio.gather(
+            *(asyncio.to_thread(worker.join) for worker in workers if worker._thread.is_alive()),
+            return_exceptions=True,
+        )
         await asyncio.gather(*(channel.close() for channel in channels))
 
 

@@ -2,19 +2,212 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 import grpc
 import pyarrow.parquet as pq
 import pytest
-from panthera_arm import camera_pb2_grpc
+from panthera_arm import camera_pb2, camera_pb2_grpc
 
 from armd.backend import SimBackend
 from armd.camera.backend import CameraRole, CameraWorker, SimCameraBackend, SimOverheadCameraBackend
 from armd.camera.service import CameraService
-from armd.collectord.collector import CollectorConfig, collect_episode
+from armd.collectord.collector import (
+    CaptureResult,
+    CollectorConfig,
+    _camera_worker,
+    _CaptureWorker,
+    _run_capture_workers,
+    _state_worker,
+    collect_episode,
+)
 from armd.hardware_loop import HardwareLoop
 from armd.server import ArmdServer
+
+
+@pytest.mark.asyncio
+async def test_capture_workers_keep_state_reader_progress_during_blocking_camera_io() -> None:
+    state_sequences: list[int] = []
+    camera_started = threading.Event()
+
+    def read_state(stop_requested: threading.Event) -> None:
+        sequence = 0
+        while not stop_requested.wait(0.001):
+            sequence += 1
+            state_sequences.append(sequence)
+
+    def block_camera(stop_requested: threading.Event) -> None:
+        camera_started.set()
+        stop_requested.wait()
+
+    workers = [
+        _CaptureWorker("state", read_state),
+        _CaptureWorker("camera", block_camera),
+    ]
+    await _run_capture_workers(workers, 0.08)
+
+    assert camera_started.is_set()
+    assert len(state_sequences) >= 20
+    assert state_sequences == list(range(1, len(state_sequences) + 1))
+    assert not any(worker._thread.is_alive() for worker in workers)
+
+
+def test_capture_worker_cancels_resources_bound_after_stop() -> None:
+    class Future:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    class Call:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    class Channel:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    worker = _CaptureWorker("late-bind", lambda _stop: None)
+    worker.request_stop()
+    channel = Channel()
+    ready_future = Future()
+    call = Call()
+
+    assert worker.bind_channel(channel) is False
+    assert worker.bind_ready_future(ready_future) is False
+    assert worker.bind_call(call) is False
+    assert channel.closed is True
+    assert ready_future.cancelled is True
+    assert call.cancelled is True
+
+
+@pytest.mark.asyncio
+async def test_capture_workers_fail_fast_and_join_peers() -> None:
+    peer_stopped = threading.Event()
+
+    def fail(_stop_requested: threading.Event) -> None:
+        raise RuntimeError("boom")
+
+    def wait_for_stop(stop_requested: threading.Event) -> None:
+        stop_requested.wait()
+        peer_stopped.set()
+
+    workers = [
+        _CaptureWorker("failed", fail),
+        _CaptureWorker("peer", wait_for_stop),
+    ]
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match=r"collector stream failed \(failed\): boom"):
+        await _run_capture_workers(workers, 5.0)
+
+    assert time.monotonic() - started < 1.0
+    assert peer_stopped.is_set()
+    assert not any(worker._thread.is_alive() for worker in workers)
+
+
+@pytest.mark.asyncio
+async def test_capture_workers_propagate_failure_at_duration_boundary() -> None:
+    def fail_at_boundary(stop_requested: threading.Event) -> None:
+        stop_requested.wait()
+        raise RuntimeError("tail failure")
+
+    worker = _CaptureWorker("tail", fail_at_boundary)
+    with pytest.raises(RuntimeError, match=r"collector stream failed \(tail\): tail failure"):
+        await _run_capture_workers([worker], 0.02)
+
+    assert not worker._thread.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_capture_workers_drain_real_200hz_state_during_large_camera_io(
+    tmp_path: Path,
+) -> None:
+    hardware_loop = HardwareLoop(SimBackend, control_hz=200.0, state_tap_capacity=64)
+    arm_server = ArmdServer(hardware_loop, bind="127.0.0.1:0")
+    hardware_loop.start()
+    await arm_server.start()
+
+    class SlowLargeOverheadBackend(SimOverheadCameraBackend):
+        def __init__(self) -> None:
+            super().__init__(fps=60)
+            self._jpeg = b"\xff\xd8" + b"x" * (512 * 1024) + b"\xff\xd9"
+
+    overhead_worker = CameraWorker(
+        SlowLargeOverheadBackend,
+        role=CameraRole.OVERHEAD,
+        collection_capacity=8,
+    )
+    overhead_server = grpc.aio.server(
+        options=(
+            ("grpc.max_receive_message_length", 16 * 1024 * 1024),
+            ("grpc.max_send_message_length", 16 * 1024 * 1024),
+        )
+    )
+    camera_pb2_grpc.add_CameraServiceServicer_to_server(
+        CameraService(overhead_worker),
+        overhead_server,
+    )
+    overhead_port = overhead_server.add_insecure_port("127.0.0.1:0")
+    overhead_worker.start()
+    await overhead_server.start()
+
+    config = CollectorConfig(
+        arm_endpoint=f"127.0.0.1:{arm_server.port}",
+        overhead_endpoint=f"127.0.0.1:{overhead_port}",
+        wrist_endpoint="127.0.0.1:1",
+        collection_root=tmp_path,
+        episode_id="unused",
+        canonical_task="unused",
+        operator="pytest",
+        panthera_wam_commit="a" * 40,
+        calibration={},
+        identity={},
+    )
+    result = CaptureResult()
+    raw_dir = tmp_path / "raw"
+    workers: list[_CaptureWorker] = []
+    state_worker: _CaptureWorker
+    state_worker = _CaptureWorker(
+        "state",
+        lambda _stop: _state_worker(config, result.states, state_worker),
+    )
+    camera_worker: _CaptureWorker
+    camera_worker = _CaptureWorker(
+        "overhead",
+        lambda _stop: _camera_worker(
+            config,
+            endpoint=config.overhead_endpoint,
+            stream=camera_pb2.CAMERA_STREAM_TYPE_COLOR,
+            stream_name="overhead_rgb",
+            raw_dir=raw_dir,
+            output=result.overhead_rgb,
+            worker=camera_worker,
+        ),
+    )
+    workers.extend((state_worker, camera_worker))
+    try:
+        await _run_capture_workers(workers, 0.6)
+    finally:
+        await arm_server.stop()
+        hardware_loop.stop()
+        await overhead_server.stop(0)
+        overhead_worker.stop()
+
+    sequences = [sample.sequence for sample in result.states]
+    assert len(sequences) >= 50
+    assert sequences == list(range(sequences[0], sequences[0] + len(sequences)))
+    assert all(sample.tap_oldest_available_sequence <= sample.sequence for sample in result.states)
+    assert result.overhead_rgb
+    assert not any(worker._thread.is_alive() for worker in workers)
 
 
 def test_collector_grpc_limits_cover_full_resolution_depth_frames() -> None:
