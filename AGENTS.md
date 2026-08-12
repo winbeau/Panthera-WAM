@@ -8,9 +8,11 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 1. `docs/FINAL_PLAN.md` — **唯一权威计划**。架构决策、42 个 SDK 方法覆盖映射、arm.proto 草案、CLI 命令树、里程碑 M0→v1→WPF v1→v2、14 项审计修订。与其它文档冲突时以它为准。文末「**SDK 源码核实结论**」是逐行核对官方源码得到的一手事实（含 4 项契约修正与 N1–N10 新发现），**与 SDK README 冲突时以该节为准**（README 多处过时）。
 2. `docs/MILESTONES.md` — **进度看板**。每项打勾即 commit+push；🔒 标记＝需真机且用户在场，不可自动执行。
 3. `docs/JOINT_CONTROL.md` — **关节控制手册**。真机 CLI 控制正确姿势、lease/心跳流程、低速 jog 固件堵转锁死等 bug 解决、C1 六关节符号实测表。**动真机前先读**。
-4. `docs/CLI_PLAN.md` / `docs/WPF_PLAN.md` — 两侧的展开细节。
-5. `docs/CAMERA_DEVICES.md` — Pi 5 上 C920e/D405 的稳定设备别名、序列号与采集约束。
-6. `docs/mockups/mockup-C-fluent-cockpit.html` — **WPF 已定稿的视觉基准**（驾驶舱式：中央 SVG 雷达俯视图 + 左右圆形关节仪表 + jog pod）。A/B 两稿仅作参考。
+4. `docs/COORDINATE_CONTRACT.md` — **坐标/符号契约**。C1/C2/C3 核对结论、解除 teach 门控清单、J6 事故复盘。
+5. `deploy/teach-cal.sh` — **示教参数标定脚本**。6 关节 × (kp,kd,fc,fv,scale) 增量微调（`--J1 "0,0.1,0,0,0"`，0 不改），状态持久化 `~/.config/panthera-wam/teach-cal.json`，`--show/--reset`。**当前定稿配置见手册 §6**。
+6. `docs/CLI_PLAN.md` / `docs/WPF_PLAN.md` — 两侧的展开细节。
+7. `docs/CAMERA_DEVICES.md` — Pi 5 上 C920e/D405 的稳定设备别名、序列号与采集约束。
+8. `docs/mockups/mockup-C-fluent-cockpit.html` — **WPF 已定稿的视觉基准**（驾驶舱式：中央 SVG 雷达俯视图 + 左右圆形关节仪表 + jog pod）。A/B 两稿仅作参考。
 
 ## 已敲定的决策（不要重新讨论）
 
@@ -19,6 +21,8 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 - 安全层：AcquireControl 控制权 lease（gRPC metadata 统一拦截）、watchdog 按控制模式分级停止、jog 用指令新鲜度窗口兜底（关节 250ms）、软限位入队前预检、EStop 直通不需持锁。
 - 里程碑顺序硬约束：**M0 三项架构 spike 全过才允许开工 v1**（见 FINAL_PLAN「阶段 0」）。
 - 仓库布局：`proto/`（单一契约）、`armd/`、`cli/`、`wpf/`、`deploy/`、`docs/`。
+- 真机运动：**move/movej（单次目标帧）在当前固件必锁死（0x0B，重启 armd 恢复），真机运动一律 `joint jog`（≥0.3 rad/s）**；teach 录制/回放走 MIT 流式帧不受影响（`deploy/teach-cal.sh` 标定参数拉起）。
+- 示教标定配置（定稿，2026-08-12）：每关节 5 参数 (kp,kd,fc,fv,scale)——J1(0,0.4,0.05,0.02,0.85*) J2(0,0.55,0.15,0.06,0.85) J3(0,0.6,0.15,0.06,1.15) J4(0,0.4,0.15,0.03,1.0) J5(0,0.15,0.02,0.01,0.85*) J6(0,0.08,0.02,0.01,0.85*)；*转动轴 scale 无效。标定工具 `deploy/teach-cal.sh`（增量微调，状态在 Pi 的 `~/.config/panthera-wam/teach-cal.json`），详见 `docs/JOINT_CONTROL.md` §6。
 
 ## 硬件与主机环境
 
