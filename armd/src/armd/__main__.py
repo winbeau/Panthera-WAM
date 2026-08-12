@@ -215,7 +215,7 @@ async def run(args: argparse.Namespace) -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     policy_path_validator = None
-    if not args.sim and args.policy_table_z_min is not None:
+    if not args.sim and args.policy_table_z_min is not None and policy_camera_boxes:
         policy_kinematics = KinematicsEngine(
             sdk_root=args.sdk_root,
             config_path=args.config,

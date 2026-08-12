@@ -29,6 +29,14 @@ def test_policy_path_gate_uses_environment(monkeypatch):
     assert args.policy_table_z_min == 0.10
 
 
+def test_table_height_without_camera_boxes_keeps_hardware_policy_fail_closed(monkeypatch):
+    monkeypatch.setenv("PANTHERA_POLICY_TABLE_Z_MIN", "0.10")
+    monkeypatch.delenv("PANTHERA_POLICY_CAMERA_BOXES_JSON", raising=False)
+    args = build_armd_parser().parse_args([])
+    assert args.policy_table_z_min == 0.10
+    assert parse_policy_camera_boxes(args.policy_camera_boxes_json) == ()
+
+
 def test_policy_camera_boxes_parse_from_deployment_json():
     boxes = parse_policy_camera_boxes('[{"lower":[0.1,0.2,0.3],"upper":[0.4,0.5,0.6]}]')
     assert boxes == (((0.1, 0.2, 0.3), (0.4, 0.5, 0.6)),)
