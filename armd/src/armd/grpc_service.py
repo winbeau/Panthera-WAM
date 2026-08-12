@@ -216,6 +216,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         policy_confirmations: PolicyConfirmationManager | None = None,
         policy_asset_allow_list: PolicyAssetAllowList | None = None,
         allow_unverified_teach: bool | None = None,
+        teach_gravity_scale: float = 1.0,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
@@ -224,6 +225,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         # None=自动（仿真放行/真机拒绝）；False=一律拒绝 MIT；True=一律放行 MIT。
         # POS-VEL 回放不使用重力前馈，始终不受本门控影响。
         self._allow_unverified_teach = allow_unverified_teach
+        self._teach_gravity_scale = float(teach_gravity_scale)
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
@@ -1413,7 +1415,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             kd = finite_vector(request.kd, name="kd") if request.kd else np.zeros(6)
             fc = finite_vector(request.fc, name="fc") if request.fc else DEFAULT_FRICTION_FC.copy()
             fv = finite_vector(request.fv, name="fv") if request.fv else DEFAULT_FRICTION_FV.copy()
-            motion = TeachMotion(kp=kp, kd=kd, fc=fc, fv=fv)
+            motion = TeachMotion(kp=kp, kd=kd, fc=fc, fv=fv, gravity_scale=self._teach_gravity_scale)
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
@@ -1578,6 +1580,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 tau_limit=tau_limit,
                 gripper_kp=gripper_kp,
                 gripper_kd=gripper_kd,
+                gravity_scale=self._teach_gravity_scale,
             )
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))

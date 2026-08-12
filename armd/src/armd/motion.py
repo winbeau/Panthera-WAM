@@ -643,6 +643,7 @@ class TeachMotion:
         fv: np.ndarray,
         tau_limit: np.ndarray = TEACH_TAU_LIMIT,
         vel_threshold: float = TEACH_VEL_THRESHOLD_S,
+        gravity_scale: float = 1.0,
     ) -> None:
         self.kp = np.asarray(kp, dtype=np.float64).copy()
         self.kd = np.asarray(kd, dtype=np.float64).copy()
@@ -656,7 +657,10 @@ class TeachMotion:
             raise ValueError("示教 kp/kd 不得为负，tau_limit 必须为正")
         if vel_threshold < 0 or not np.isfinite(vel_threshold):
             raise ValueError("vel_threshold 必须是非负有限数值")
+        if not np.isfinite(gravity_scale) or gravity_scale <= 0:
+            raise ValueError("gravity_scale 必须是正有限数值")
         self.vel_threshold = float(vel_threshold)
+        self.gravity_scale = float(gravity_scale)
         self.reject_reason = ""
         self._cancel_reason: CancelReason | None = None
         self._lock = threading.Lock()
@@ -691,6 +695,7 @@ class TeachMotion:
             self.fc,
             self.fv,
             self.vel_threshold,
+            self.gravity_scale,
         )
         torque = np.clip(torque, -self.tau_limit, self.tau_limit)
         backend.write_frame(
@@ -735,6 +740,7 @@ class TeachPlaybackMotion:
         gripper_kd: float,
         start_timeout_s: float = 30.0,
         settle_timeout_s: float = 2.0,
+        gravity_scale: float = 1.0,
     ) -> None:
         if not frames:
             raise ValueError("示教回放帧不能为空")
@@ -754,7 +760,10 @@ class TeachPlaybackMotion:
             raise ValueError("回放 kp/kd 不得为负，tau_limit 必须为正")
         if gripper_kp < 0 or gripper_kd < 0:
             raise ValueError("夹爪 kp/kd 不得为负")
+        if not np.isfinite(gravity_scale) or gravity_scale <= 0:
+            raise ValueError("gravity_scale 必须是正有限数值")
         self.vel_threshold = float(vel_threshold)
+        self.gravity_scale = float(gravity_scale)
         self.gripper_kp = float(gripper_kp)
         self.gripper_kd = float(gripper_kd)
         self.start_timeout_s = start_timeout_s
@@ -896,6 +905,7 @@ class TeachPlaybackMotion:
             self.fc,
             self.fv,
             self.vel_threshold,
+            self.gravity_scale,
         )
         torque = np.clip(torque, -self.tau_limit, self.tau_limit)
         backend.write_frame(

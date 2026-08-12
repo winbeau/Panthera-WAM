@@ -138,9 +138,11 @@ class SimBackend:
         fc: np.ndarray,
         fv: np.ndarray,
         vel_threshold: float,
+        gravity_scale: float = 1.0,
     ) -> np.ndarray:
         """仿真模型没有重力项，只复现 SDK 的摩擦补偿公式。"""
         self._require_open()
+        del gravity_scale
         positions = np.asarray(q, dtype=np.float64)
         velocities = np.asarray(v, dtype=np.float64)
         coulomb = np.asarray(fc, dtype=np.float64)

@@ -113,6 +113,27 @@ C2（零点）状态：7 关节回零后全部读数在 ±0.02 rad 内；armd �
 teach/playback 门控可按 `docs/COORDINATE_CONTRACT.md` §4 清单解除
 （`--allow-unverified-teach` / `PANTHERA_ALLOW_UNVERIFIED_TEACH=1`）。
 
+### 重力补偿标定（2026-08-12 实测）
+
+teach 试运行（kp/kd 非零）实测：**J2 从 0.089 漂移到 1.466 rad（≈78°）后被 kp 拉住，
+J4 漂到 0.62，J3 稳定**——J2/J4 重力补偿**过强**，J3 正确。平衡点拟合得实际重力矩
+≈ **0.7 × G(q)**（URDF 惯性参数偏大约 30%）。
+
+- 修复：`PANTHERA_TEACH_GRAVITY_SCALE`（`--teach-gravity-scale`）缩放重力项，
+  摩擦项不缩放；默认 1.0。
+- 标定流程：设 scale=0.7 → teach 小 kp/kd（如 0.3/0.1）→ 用户松手观测 10s →
+  迭代 scale 直到静止漂移 < 0.01 rad/s。**不要凭猜测改符号或全局翻转力矩**。
+
+### B5【严重】move/movej（单次目标帧）触发固件锁死
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `joint move` / `joint movej`（JointPositionMotion 只下发一次目标帧）在**任何速度**下都会锁死：目标关节不动（误差恒定），全板 mode 变 `0x0B`，需 `systemctl --user restart armd` 恢复 |
+| 对照 | 同关节用 `joint jog`（流式短前瞻）完全正常（J2 0.3 rad/s jog 正常运动 0.35 rad） |
+| 根因 | 当前固件（4.7.3）的 POS_VEL 单次目标执行路径不可靠（与 AGENTS.md「SDK/MIT 路径在当前固件上跟踪失败」一致），疑似固件侧保护/异常状态 |
+| 正确做法 | **真机运动一律用 `joint jog`（≥0.3 rad/s），不要用 move/movej 验证或控制**；move/movej 的 JointPositionMotion 修复（改为流式下发）前视为真机不可用 |
+| 影响 | teach 录制/回放不受影响（MIT 流式帧）；PolicyChunkMotion 走 position_frame 单帧——**真机策略执行前必须先修** |
+
 ## 4. 安全须知
 
 - **低速 jog 会锁死关节**：任何低于 0.1 rad/s 的单关节命令都视为危险操作；锁死后必须

@@ -275,6 +275,7 @@ class RealBackend:
         fc: np.ndarray,
         fv: np.ndarray,
         vel_threshold: float,
+        gravity_scale: float = 1.0,
     ) -> np.ndarray:
         """在硬件线程内调用官方 SDK 的重力与摩擦补偿实现。"""
         self._require_open()
@@ -286,6 +287,8 @@ class RealBackend:
             raise ValueError("补偿向量长度必须为 6")
         if vel_threshold < 0 or not np.isfinite(vel_threshold):
             raise ValueError("vel_threshold 必须是非负有限数值")
+        if not np.isfinite(gravity_scale) or gravity_scale <= 0:
+            raise ValueError("gravity_scale 必须是正有限数值")
         robot = self._require_robot()
         gravity = np.asarray(robot.get_Gravity(positions), dtype=np.float64)
         friction = np.asarray(
@@ -299,7 +302,7 @@ class RealBackend:
         )
         if gravity.shape != (6,) or friction.shape != (6,):
             raise BackendError("SDK 补偿力矩返回长度不是 6")
-        return gravity + friction
+        return gravity * gravity_scale + friction
 
     def maintain_idle(self) -> None:
         self._require_open()

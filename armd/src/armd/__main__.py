@@ -169,6 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("PANTHERA_ALLOW_UNVERIFIED_TEACH", "0") == "1",
         help="显式放行未验证坐标契约的真实 MIT teach/playback（默认拒绝，安全门控）",
     )
+    parser.add_argument(
+        "--teach-gravity-scale",
+        type=float,
+        default=float(os.environ.get("PANTHERA_TEACH_GRAVITY_SCALE", "1.0")),
+        help="示教重力补偿标定系数（默认 1.0；真机标定见 docs/JOINT_CONTROL.md）",
+    )
     parser.add_argument("--check", action="store_true", help="启动后通过 gRPC 做一次仿真自检并退出")
     return parser
 
@@ -257,6 +263,7 @@ async def run(args: argparse.Namespace) -> None:
         policy_confirmation_socket=(args.policy_confirmation_socket if not args.sim else None),
         policy_asset_allow_list=policy_asset_allow_list,
         allow_unverified_teach=args.allow_unverified_teach,
+        teach_gravity_scale=args.teach_gravity_scale,
     )
     loop.start()
     try:

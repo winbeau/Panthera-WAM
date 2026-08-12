@@ -354,3 +354,35 @@ def test_cartesian_trajectory_finishes_with_zero_velocity_lock() -> None:
     assert motion.step(backend, clock.now) is MotionStepResult.DONE
     assert backend.frames[-1].arm_position == pytest.approx(target)
     assert backend.frames[-1].arm_velocity == pytest.approx([0.0] * 6)
+
+
+def test_teach_passes_gravity_scale_to_compensation() -> None:
+    class ScaleRecordingBackend(SimBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.captured_scale: float | None = None
+
+        def compensation_torque(self, q, v, fc, fv, vel_threshold, gravity_scale=1.0):
+            self.captured_scale = gravity_scale
+            return np.zeros(6)
+
+    backend = ScaleRecordingBackend()
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        gravity_scale=0.7,
+    )
+    assert motion.step(backend, 0.0) is MotionStepResult.RUNNING
+    assert backend.captured_scale == pytest.approx(0.7)
+
+
+def test_teach_rejects_invalid_gravity_scale() -> None:
+    kwargs = {"kp": np.zeros(6), "kd": np.zeros(6), "fc": np.zeros(6), "fv": np.zeros(6)}
+    with pytest.raises(ValueError):
+        TeachMotion(**kwargs, gravity_scale=0.0)
+    with pytest.raises(ValueError):
+        TeachMotion(**kwargs, gravity_scale=-1.0)
+    with pytest.raises(ValueError):
+        TeachMotion(**kwargs, gravity_scale=float("nan"))
