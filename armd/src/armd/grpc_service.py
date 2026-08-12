@@ -217,6 +217,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         policy_asset_allow_list: PolicyAssetAllowList | None = None,
         allow_unverified_teach: bool | None = None,
         teach_gravity_scale: float | np.ndarray = 1.0,
+        teach_gravity_scale_high: float | np.ndarray | None = None,
+        teach_gravity_breakpoint: float | np.ndarray | None = None,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
@@ -227,6 +229,16 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         self._allow_unverified_teach = allow_unverified_teach
         scale = np.asarray(teach_gravity_scale, dtype=np.float64)
         self._teach_gravity_scale = float(scale) if scale.shape == () else scale.copy()
+        if teach_gravity_scale_high is not None:
+            high = np.asarray(teach_gravity_scale_high, dtype=np.float64)
+            self._teach_gravity_scale_high = float(high) if high.shape == () else high.copy()
+        else:
+            self._teach_gravity_scale_high = None
+        if teach_gravity_breakpoint is not None:
+            bp = np.asarray(teach_gravity_breakpoint, dtype=np.float64)
+            self._teach_gravity_breakpoint = float(bp) if bp.shape == () else bp.copy()
+        else:
+            self._teach_gravity_breakpoint = None
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
@@ -1416,7 +1428,15 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             kd = finite_vector(request.kd, name="kd") if request.kd else np.zeros(6)
             fc = finite_vector(request.fc, name="fc") if request.fc else DEFAULT_FRICTION_FC.copy()
             fv = finite_vector(request.fv, name="fv") if request.fv else DEFAULT_FRICTION_FV.copy()
-            motion = TeachMotion(kp=kp, kd=kd, fc=fc, fv=fv, gravity_scale=self._teach_gravity_scale)
+            motion = TeachMotion(
+                kp=kp,
+                kd=kd,
+                fc=fc,
+                fv=fv,
+                gravity_scale=self._teach_gravity_scale,
+                gravity_scale_high=self._teach_gravity_scale_high,
+                gravity_breakpoint=self._teach_gravity_breakpoint,
+            )
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
@@ -1582,6 +1602,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 gripper_kp=gripper_kp,
                 gripper_kd=gripper_kd,
                 gravity_scale=self._teach_gravity_scale,
+                gravity_scale_high=self._teach_gravity_scale_high,
+                gravity_breakpoint=self._teach_gravity_breakpoint,
             )
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))

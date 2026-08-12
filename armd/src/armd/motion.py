@@ -39,6 +39,37 @@ GRIPPER_POSITION_MAX_KP = 5.0
 GRIPPER_POSITION_MAX_KD = 0.5
 
 
+def _gravity_params(
+    scale: float | np.ndarray,
+    high: float | np.ndarray | None,
+    breakpoint: float | np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """解析重力补偿分段参数：低区 scale、高区 scale（默认=低区）、断点（默认 inf）。"""
+    low = np.asarray(scale, dtype=np.float64)
+    if low.shape == ():
+        low = np.full(6, float(low))
+    if low.shape != (6,) or not np.all(np.isfinite(low)) or np.any(low <= 0):
+        raise ValueError("gravity_scale 必须是正有限标量或 6 个正有限数值")
+    if high is None:
+        high_array = low.copy()
+    else:
+        high_array = np.asarray(high, dtype=np.float64)
+        if high_array.shape == ():
+            high_array = np.full(6, float(high_array))
+        if high_array.shape != (6,) or not np.all(np.isfinite(high_array)) or np.any(high_array <= 0):
+            raise ValueError("gravity_scale_high 必须是正有限标量或 6 个正有限数值")
+    if breakpoint is None:
+        breakpoint_array = np.full(6, np.inf)
+    else:
+        breakpoint_array = np.asarray(breakpoint, dtype=np.float64)
+        if breakpoint_array.shape == ():
+            breakpoint_array = np.full(6, float(breakpoint_array))
+        finite = breakpoint_array[np.isfinite(breakpoint_array)]
+        if breakpoint_array.shape != (6,) or np.any(finite <= 0):
+            raise ValueError("gravity_breakpoint 必须是正值或 inf（inf 表示不分段）")
+    return low.copy(), high_array.copy(), breakpoint_array.copy()
+
+
 def position_frame(
     backend: Backend,
     *,
@@ -644,6 +675,8 @@ class TeachMotion:
         tau_limit: np.ndarray = TEACH_TAU_LIMIT,
         vel_threshold: float = TEACH_VEL_THRESHOLD_S,
         gravity_scale: float | np.ndarray = 1.0,
+        gravity_scale_high: float | np.ndarray | None = None,
+        gravity_breakpoint: float | np.ndarray | None = None,
     ) -> None:
         self.kp = np.asarray(kp, dtype=np.float64).copy()
         self.kd = np.asarray(kd, dtype=np.float64).copy()
@@ -657,13 +690,10 @@ class TeachMotion:
             raise ValueError("示教 kp/kd 不得为负，tau_limit 必须为正")
         if vel_threshold < 0 or not np.isfinite(vel_threshold):
             raise ValueError("vel_threshold 必须是非负有限数值")
-        scale = np.asarray(gravity_scale, dtype=np.float64)
-        if scale.shape == ():
-            scale = np.full(6, float(scale))
-        if scale.shape != (6,) or not np.all(np.isfinite(scale)) or np.any(scale <= 0):
-            raise ValueError("gravity_scale 必须是正有限标量或 6 个正有限数值")
+        self.gravity_scale, self.gravity_scale_high, self.gravity_breakpoint = _gravity_params(
+            gravity_scale, gravity_scale_high, gravity_breakpoint
+        )
         self.vel_threshold = float(vel_threshold)
-        self.gravity_scale = scale.copy()
         self.reject_reason = ""
         self._cancel_reason: CancelReason | None = None
         self._lock = threading.Lock()
@@ -699,6 +729,8 @@ class TeachMotion:
             self.fv,
             self.vel_threshold,
             self.gravity_scale,
+            self.gravity_scale_high,
+            self.gravity_breakpoint,
         )
         torque = np.clip(torque, -self.tau_limit, self.tau_limit)
         backend.write_frame(
@@ -744,6 +776,8 @@ class TeachPlaybackMotion:
         start_timeout_s: float = 30.0,
         settle_timeout_s: float = 2.0,
         gravity_scale: float | np.ndarray = 1.0,
+        gravity_scale_high: float | np.ndarray | None = None,
+        gravity_breakpoint: float | np.ndarray | None = None,
     ) -> None:
         if not frames:
             raise ValueError("示教回放帧不能为空")
@@ -769,7 +803,9 @@ class TeachPlaybackMotion:
         if scale.shape != (6,) or not np.all(np.isfinite(scale)) or np.any(scale <= 0):
             raise ValueError("gravity_scale 必须是正有限标量或 6 个正有限数值")
         self.vel_threshold = float(vel_threshold)
-        self.gravity_scale = scale.copy()
+        self.gravity_scale, self.gravity_scale_high, self.gravity_breakpoint = _gravity_params(
+            gravity_scale, gravity_scale_high, gravity_breakpoint
+        )
         self.gripper_kp = float(gripper_kp)
         self.gripper_kd = float(gripper_kd)
         self.start_timeout_s = start_timeout_s
@@ -912,6 +948,8 @@ class TeachPlaybackMotion:
             self.fv,
             self.vel_threshold,
             self.gravity_scale,
+            self.gravity_scale_high,
+            self.gravity_breakpoint,
         )
         torque = np.clip(torque, -self.tau_limit, self.tau_limit)
         backend.write_frame(

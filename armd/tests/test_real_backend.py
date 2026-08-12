@@ -245,7 +245,9 @@ def test_teach_clamps_out_of_range_measured_gripper_before_real_frame_validation
     robot = FakeRobot()
     robot.motors[6].state.position = -0.008168
     backend = make_backend(robot)
-    backend.compensation_torque = lambda q, v, fc, fv, vel_threshold, gravity_scale=1.0: np.zeros(6)
+    backend.compensation_torque = (
+        lambda q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None: np.zeros(6)
+    )
     motion = TeachMotion(
         kp=np.zeros(6),
         kd=np.zeros(6),

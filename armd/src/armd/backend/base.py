@@ -357,11 +357,17 @@ class Backend(Protocol):
         fv: np.ndarray,
         vel_threshold: float,
         gravity_scale: float | np.ndarray = 1.0,
+        gravity_scale_high: float | np.ndarray | None = None,
+        gravity_breakpoint: float | np.ndarray | None = None,
     ) -> np.ndarray:
         """计算重力与摩擦补偿；只允许在 HardwareLoop 线程调用。
 
         gravity_scale 用于现场标定：URDF 惯性参数与实物偏差时，重力项按
         比例缩放（摩擦项不缩放）。接受标量（全部关节）或 6 元素向量（逐关节）。
+
+        分区补偿：q_i > gravity_breakpoint_i 时该关节改用 gravity_scale_high_i
+        （默认与低区相同=不分段）。用途：质心越过关节轴（如 J2≈69°）后
+        模型补偿变号、误差放大，需要独立标定高区系数。
         默认 1.0；标定方法见 docs/JOINT_CONTROL.md。
         """
 

@@ -362,7 +362,9 @@ def test_teach_passes_gravity_scale_to_compensation() -> None:
             super().__init__()
             self.captured_scale: float | None = None
 
-        def compensation_torque(self, q, v, fc, fv, vel_threshold, gravity_scale=1.0):
+        def compensation_torque(
+            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+        ):
             self.captured_scale = gravity_scale
             return np.zeros(6)
 
@@ -386,3 +388,41 @@ def test_teach_rejects_invalid_gravity_scale() -> None:
         TeachMotion(**kwargs, gravity_scale=-1.0)
     with pytest.raises(ValueError):
         TeachMotion(**kwargs, gravity_scale=float("nan"))
+
+
+def test_teach_passes_segmented_gravity_scale_to_compensation() -> None:
+    class SegmentedBackend(SimBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.captured: tuple | None = None
+
+        def compensation_torque(
+            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+        ):
+            self.captured = (gravity_scale, gravity_scale_high, gravity_breakpoint)
+            return np.zeros(6)
+
+    backend = SegmentedBackend()
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        gravity_scale=0.85,
+        gravity_scale_high=np.array([1.7] * 6),
+        gravity_breakpoint=np.array([1.2, np.inf, np.inf, np.inf, np.inf, np.inf]),
+    )
+    assert motion.step(backend, 0.0) is MotionStepResult.RUNNING
+    scale, high, breakpoint = backend.captured
+    assert scale == pytest.approx(0.85)
+    assert np.all(high == pytest.approx(1.7))
+    assert breakpoint[0] == pytest.approx(1.2)
+    assert np.isinf(breakpoint[1])
+
+
+def test_teach_rejects_invalid_segmented_gravity_scale() -> None:
+    kwargs = {"kp": np.zeros(6), "kd": np.zeros(6), "fc": np.zeros(6), "fv": np.zeros(6)}
+    with pytest.raises(ValueError):
+        TeachMotion(**kwargs, gravity_scale_high=np.zeros(6))
+    with pytest.raises(ValueError):
+        TeachMotion(**kwargs, gravity_breakpoint=np.array([-1.0] * 6))

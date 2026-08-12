@@ -276,6 +276,8 @@ class RealBackend:
         fv: np.ndarray,
         vel_threshold: float,
         gravity_scale: float | np.ndarray = 1.0,
+        gravity_scale_high: float | np.ndarray | None = None,
+        gravity_breakpoint: float | np.ndarray | None = None,
     ) -> np.ndarray:
         """在硬件线程内调用官方 SDK 的重力与摩擦补偿实现。"""
         self._require_open()
@@ -287,11 +289,13 @@ class RealBackend:
             raise ValueError("补偿向量长度必须为 6")
         if vel_threshold < 0 or not np.isfinite(vel_threshold):
             raise ValueError("vel_threshold 必须是非负有限数值")
-        scale = np.asarray(gravity_scale, dtype=np.float64)
-        if scale.shape == ():
-            scale = np.full(6, float(scale))
-        if scale.shape != (6,) or not np.all(np.isfinite(scale)) or np.any(scale <= 0):
-            raise ValueError("gravity_scale 必须是正有限标量或 6 个正有限数值")
+        scale = _scale_vector(gravity_scale, name="gravity_scale")
+        high = (
+            _scale_vector(gravity_scale_high, name="gravity_scale_high")
+            if gravity_scale_high is not None
+            else scale.copy()
+        )
+        breakpoint = _breakpoint_vector(gravity_breakpoint) if gravity_breakpoint is not None else np.full(6, np.inf)
         robot = self._require_robot()
         gravity = np.asarray(robot.get_Gravity(positions), dtype=np.float64)
         friction = np.asarray(
@@ -305,7 +309,8 @@ class RealBackend:
         )
         if gravity.shape != (6,) or friction.shape != (6,):
             raise BackendError("SDK 补偿力矩返回长度不是 6")
-        return gravity * scale + friction
+        effective = np.where(positions > breakpoint, high, scale)
+        return gravity * effective + friction
 
     def maintain_idle(self) -> None:
         self._require_open()
@@ -496,6 +501,26 @@ def _limits_from_robot(robot: Any) -> BackendLimits:
         )
     except (AttributeError, KeyError, TypeError, ValueError):
         return DEFAULT_LIMITS
+
+
+def _scale_vector(value: float | np.ndarray, *, name: str) -> np.ndarray:
+    array = np.asarray(value, dtype=np.float64)
+    if array.shape == ():
+        array = np.full(6, float(array))
+    if array.shape != (6,) or not np.all(np.isfinite(array)) or np.any(array <= 0):
+        raise ValueError(f"{name} 必须是正有限标量或 6 个正有限数值")
+    return array
+
+
+def _breakpoint_vector(value: float | np.ndarray) -> np.ndarray:
+    """分段断点：允许 inf（=该关节不分段），其余必须为正有限。"""
+    array = np.asarray(value, dtype=np.float64)
+    if array.shape == ():
+        array = np.full(6, float(array))
+    finite_part = array[np.isfinite(array)]
+    if array.shape != (6,) or np.any(finite_part <= 0):
+        raise ValueError("gravity_breakpoint 必须是正标量或 6 个正值（inf 表示不分段）")
+    return array
 
 
 def _motor_version(motor: Any) -> tuple[int, int, int]:

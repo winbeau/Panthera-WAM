@@ -42,6 +42,8 @@ class ArmdServer:
         policy_asset_allow_list: PolicyAssetAllowList | None = None,
         allow_unverified_teach: bool | None = None,
         teach_gravity_scale: float | np.ndarray = 1.0,
+        teach_gravity_scale_high: float | np.ndarray | None = None,
+        teach_gravity_breakpoint: float | np.ndarray | None = None,
     ) -> None:
         if camera_worker is not None and camera_endpoint is not None:
             raise ValueError("camera_worker 与 camera_endpoint 不能同时设置")
@@ -71,6 +73,8 @@ class ArmdServer:
             policy_asset_allow_list=policy_asset_allow_list,
             allow_unverified_teach=allow_unverified_teach,
             teach_gravity_scale=teach_gravity_scale,
+            teach_gravity_scale_high=teach_gravity_scale_high,
+            teach_gravity_breakpoint=teach_gravity_breakpoint,
         )
         arm_pb2_grpc.add_ArmServiceServicer_to_server(
             self.arm_service,

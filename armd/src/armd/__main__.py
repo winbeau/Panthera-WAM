@@ -192,6 +192,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=parse_gravity_scale(os.environ.get("PANTHERA_TEACH_GRAVITY_SCALE", "1.0")),
         help="示教重力补偿标定系数：1 个值（全部关节）或逗号分隔 6 个值（逐关节）；见 docs/JOINT_CONTROL.md",
     )
+    parser.add_argument(
+        "--teach-gravity-scale-high",
+        type=parse_gravity_scale,
+        default=(
+            parse_gravity_scale(os.environ["PANTHERA_TEACH_GRAVITY_SCALE_HIGH"])
+            if os.environ.get("PANTHERA_TEACH_GRAVITY_SCALE_HIGH")
+            else None
+        ),
+        help="示教重力补偿高区系数（q>断点后使用；默认=低区=不分段）",
+    )
+    parser.add_argument(
+        "--teach-gravity-breakpoint",
+        type=parse_gravity_scale,
+        default=(
+            parse_gravity_scale(os.environ["PANTHERA_TEACH_GRAVITY_BREAKPOINT"])
+            if os.environ.get("PANTHERA_TEACH_GRAVITY_BREAKPOINT")
+            else None
+        ),
+        help="示教重力补偿分段断点（rad；q_i>断点用高区系数；默认 inf=不分段）",
+    )
     parser.add_argument("--check", action="store_true", help="启动后通过 gRPC 做一次仿真自检并退出")
     return parser
 
@@ -281,6 +301,8 @@ async def run(args: argparse.Namespace) -> None:
         policy_asset_allow_list=policy_asset_allow_list,
         allow_unverified_teach=args.allow_unverified_teach,
         teach_gravity_scale=args.teach_gravity_scale,
+        teach_gravity_scale_high=args.teach_gravity_scale_high,
+        teach_gravity_breakpoint=args.teach_gravity_breakpoint,
     )
     loop.start()
     try:
