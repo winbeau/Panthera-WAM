@@ -5,7 +5,8 @@
 #   ~/Panthera-WAM/deploy/teach-cal.sh 0.85 0.85 1.0 0.7 0.85 0.85   # J1..J6 六个标定系数
 #   ~/Panthera-WAM/deploy/teach-cal.sh "0.85,0.85,1.0,0.7,0.85,0.85"  # 或逗号分隔
 #   ~/Panthera-WAM/deploy/teach-cal.sh 0.85 0.85 1.0 0.7 0.85 0.85 \
-#       --fc "0.05,0.15,0.15,0.15,0.02,0.02" --fv "0.02,0.06,0.06,0.03,0.01,0.01"
+#       --fc "0.05,0.15,0.15,0.15,0.02,0.02" --fv "0.02,0.06,0.06,0.03,0.01,0.01" \
+#       --kp "0,0,0,0,0,0" --kd "0,0,0,0,0,0"   # kp/kd 默认零刚度，可覆盖
 #   ~/Panthera-WAM/deploy/teach-cal.sh                               # 沿用 env 中现有值
 #
 # 脚本动作：停残留 heartbeat → 写入 env → 重启 armd（解锁 0x0B）→
@@ -18,8 +19,14 @@ env_file="$HOME/.config/panthera-wam/armd.env"
 # 推动关节持续转动；J2/J3/J4 承重轴保持 SDK 默认。用 --fc/--fv 覆盖。
 FC_DEFAULT="0.05,0.15,0.15,0.15,0.02,0.02"
 FV_DEFAULT="0.02,0.06,0.06,0.03,0.01,0.01"
+# 刚度/阻尼标定基线：默认零刚度纯拖拽（kp=kd=0）；拖拽手感收尾不稳时
+# 加少量 kd 让放手后更快停住，或用小 kp 稳定位形。用 --kp/--kd 覆盖。
+KP_DEFAULT="0,0,0,0,0,0"
+KD_DEFAULT="0,0,0,0,0,0"
 fc_arg="--fc $FC_DEFAULT"
 fv_arg="--fv $FV_DEFAULT"
+kp_arg="--kp $KP_DEFAULT"
+kd_arg="--kd $KD_DEFAULT"
 scale_args=()
 
 while [ $# -gt 0 ]; do
@@ -28,6 +35,10 @@ while [ $# -gt 0 ]; do
             fc_arg="--fc $2"; shift 2 ;;
         --fv)
             fv_arg="--fv $2"; shift 2 ;;
+        --kp)
+            kp_arg="--kp $2"; shift 2 ;;
+        --kd)
+            kd_arg="--kd $2"; shift 2 ;;
         *)
             scale_args+=("$1"); shift ;;
     esac
@@ -57,6 +68,6 @@ cd "$HOME/Panthera-WAM"
 uv run --no-sync --package panthera-cli panthera control acquire --client-id teach-cal 2>&1 | grep -v "incompatible\|Warning" | tail -1
 nohup uv run --no-sync --package panthera-cli panthera control heartbeat >/tmp/hb.log 2>&1 &
 sleep 4
-uv run --no-sync --package panthera-cli panthera teach start $fc_arg $fv_arg 2>&1 | grep -v "incompatible\|Warning" | tail -1
+uv run --no-sync --package panthera-cli panthera teach start $kp_arg $kd_arg $fc_arg $fv_arg 2>&1 | grep -v "incompatible\|Warning" | tail -1
 timeout 20 uv run --no-sync --package panthera-cli panthera state get 2>&1 | grep -v "incompatible\|Warning" | sed -n '4,9p'
 echo "==> teach 运行中（scale=$scale）。拖动测试后如需停止：pkill -f \"control heartbeat\""
