@@ -1,58 +1,94 @@
 #!/usr/bin/env bash
-# 真机示教重力补偿逐关节标定脚本（现场手调工具）。
+# 真机示教参数标定脚本（现场手调工具）。
 #
-# 用法（在 Pi 5 上，任意目录）：
-#   ~/Panthera-WAM/deploy/teach-cal.sh 0.85 0.85 1.0 0.7 0.85 0.85   # J1..J6 六个标定系数
-#   ~/Panthera-WAM/deploy/teach-cal.sh "0.85,0.85,1.0,0.7,0.85,0.85"  # 或逗号分隔
-#   ~/Panthera-WAM/deploy/teach-cal.sh 0.85 0.85 1.0 0.7 0.85 0.85 \
-#       --fc "0.05,0.15,0.15,0.15,0.02,0.02" --fv "0.02,0.06,0.06,0.03,0.01,0.01" \
-#       --kp "0,0,0,0,0,0" --kd "0,0,0,0,0,0"   # kp/kd 默认零刚度，可覆盖
-#   ~/Panthera-WAM/deploy/teach-cal.sh                               # 沿用 env 中现有值
+# 每关节 5 个参数（顺序固定）：kp, kd, fc, fv, gravity_scale
 #
-# 脚本动作：停残留 heartbeat → 写入 env → 重启 armd（解锁 0x0B）→
-# acquire + 后台 heartbeat + teach start（零刚度，补偿激活）。
+# 用法（在 Pi 5 上）：
+#   teach-cal.sh                        # 用当前基线拉起 teach
+#   teach-cal.sh --J1 "0,0.1,-0.02,0,0" # J1 增量微调：kd+0.1、fc-0.02，其余不变
+#   teach-cal.sh --J3 ".,.,.,.,-0.05"   # J3 仅 scale-0.05
+#   teach-cal.sh --show                 # 显示当前 6 关节参数
+#   teach-cal.sh --reset                # 恢复出厂基线
+#
+# 增量规则：逗号分隔 5 个值（顺序 kp,kd,fc,fv,scale）；"." = 不修改；
+# 数字 = 当前值 + 增量（可正可负）。scale 必须保持 >0。
+#
+# 脚本动作：停残留 heartbeat → 写 env(scale) → 重启 armd（解锁 0x0B）→
+# acquire + 后台 heartbeat + teach start（kp/kd/fc/fv 从状态读取）。
 # teach 保持运行直到 `pkill -f "control heartbeat"`（watchdog 随后自动停 teach）。
 set -euo pipefail
 
 env_file="$HOME/.config/panthera-wam/armd.env"
-# 摩擦补偿标定基线（现场实测）：J1/J5/J6 竖直/旋转轴摩擦小，库伦补偿过强会
-# 推动关节持续转动；J2/J3/J4 承重轴保持 SDK 默认。用 --fc/--fv 覆盖。
-FC_DEFAULT="0.05,0.15,0.15,0.15,0.02,0.02"
-FV_DEFAULT="0.02,0.06,0.06,0.03,0.01,0.01"
-# 刚度/阻尼标定基线：默认零刚度纯拖拽（kp=kd=0）；拖拽手感收尾不稳时
-# 加少量 kd 让放手后更快停住，或用小 kp 稳定位形。用 --kp/--kd 覆盖。
-KP_DEFAULT="0,0,0,0,0,0"
-KD_DEFAULT="0,0,0,0,0,0"
-fc_arg="--fc $FC_DEFAULT"
-fv_arg="--fv $FV_DEFAULT"
-kp_arg="--kp $KP_DEFAULT"
-kd_arg="--kd $KD_DEFAULT"
-scale_args=()
+state_file="$HOME/.config/panthera-wam/teach-cal.json"
 
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --fc)
-            fc_arg="--fc $2"; shift 2 ;;
-        --fv)
-            fv_arg="--fv $2"; shift 2 ;;
-        --kp)
-            kp_arg="--kp $2"; shift 2 ;;
-        --kd)
-            kd_arg="--kd $2"; shift 2 ;;
-        *)
-            scale_args+=("$1"); shift ;;
-    esac
-done
+out="$(python3 - "$state_file" "$@" <<'PY'
+import json
+import os
+import sys
 
-if [ ${#scale_args[@]} -eq 1 ] && [[ "${scale_args[0]}" == *,* ]]; then
-    scale="${scale_args[0]}"
-elif [ ${#scale_args[@]} -eq 6 ]; then
-    scale="$(IFS=,; echo "${scale_args[*]}")"
-else
-    scale="$(grep -oP '(?<=^PANTHERA_TEACH_GRAVITY_SCALE=).*' "$env_file" 2>/dev/null || echo '0.85,0.85,1.0,0.7,0.85,0.85')"
-fi
+state_file = sys.argv[1]
+args = sys.argv[2:]
+# 出厂基线（2026-08-12 现场标定）：旋转轴稍带阻尼松手即停、承重轴防跳
+defaults = {
+    "J1": [0, 0.2, 0.05, 0.02, 0.85],
+    "J2": [0, 0.25, 0.15, 0.06, 0.85],
+    "J3": [0, 0.25, 0.15, 0.06, 1.0],
+    "J4": [0, 0.2, 0.15, 0.03, 0.7],
+    "J5": [0, 0.15, 0.02, 0.01, 0.85],
+    "J6": [0, 0.15, 0.02, 0.01, 0.85],
+}
+names = ("kp", "kd", "fc", "fv", "scale")
+state = json.load(open(state_file)) if os.path.exists(state_file) else defaults
 
-echo "==> scale = $scale"
+i = 0
+while i < len(args):
+    arg = args[i]
+    if arg == "--reset":
+        state = defaults
+        i += 1
+    elif arg == "--show":
+        i += 1
+    elif arg.startswith("--J") and len(arg) == 4 and arg[2] in "123456":
+        joint = arg[2:]
+        if i + 1 >= len(args):
+            raise SystemExit(f"error: {arg} 需要 5 个增量值（kp,kd,fc,fv,scale，. 表示不变）")
+        deltas = [part.strip() for part in args[i + 1].split(",")]
+        if len(deltas) != 5:
+            raise SystemExit(f"error: {arg} 需要 5 个值，收到 {len(deltas)} 个")
+        values = list(state[joint])
+        for idx, delta in enumerate(deltas):
+            if delta == ".":
+                continue
+            try:
+                values[idx] += float(delta)
+            except ValueError:
+                raise SystemExit(f"error: {arg} 第 {idx + 1} 个值非法: {delta!r}") from None
+        if values[4] <= 0:
+            raise SystemExit(f"error: {joint} scale 必须 > 0，当前 {values[4]}")
+        if any(values[idx] < 0 for idx in range(4)):
+            raise SystemExit(f"error: {joint} kp/kd/fc/fv 不得为负")
+        state[joint] = values
+        i += 2
+    else:
+        raise SystemExit(f"error: 未知参数 {arg!r}（支持 --J1..--J6 增量、--show、--reset）")
+
+json.dump(state, open(state_file, "w"), indent=1)
+print("STATE_JSON=" + json.dumps(state, separators=(",", ":")))
+for joint in ("J1", "J2", "J3", "J4", "J5", "J6"):
+    v = state[joint]
+    print(f"{joint}: " + "  ".join(f"{n}={val:g}" for n, val in zip(names, v)))
+PY
+)"
+
+echo "$out"
+state_json="$(printf '%s\n' "$out" | sed -n 's/^STATE_JSON=//p')"
+kp="$(printf '%s' "$state_json" | python3 -c 'import json,sys; s=json.load(sys.stdin); print(",".join(str(s[f"J{i}"][0]) for i in range(1,7)))')"
+kd="$(printf '%s' "$state_json" | python3 -c 'import json,sys; s=json.load(sys.stdin); print(",".join(str(s[f"J{i}"][1]) for i in range(1,7)))')"
+fc="$(printf '%s' "$state_json" | python3 -c 'import json,sys; s=json.load(sys.stdin); print(",".join(str(s[f"J{i}"][2]) for i in range(1,7)))')"
+fv="$(printf '%s' "$state_json" | python3 -c 'import json,sys; s=json.load(sys.stdin); print(",".join(str(s[f"J{i}"][3]) for i in range(1,7)))')"
+scale="$(printf '%s' "$state_json" | python3 -c 'import json,sys; s=json.load(sys.stdin); print(",".join(str(s[f"J{i}"][4]) for i in range(1,7)))')"
+
+echo "==> scale=$scale kp=$kp kd=$kd fc=$fc fv=$fv"
 pkill -f "control heartbeat" 2>/dev/null || true
 if grep -q '^PANTHERA_TEACH_GRAVITY_SCALE=' "$env_file"; then
     sed -i "s|^PANTHERA_TEACH_GRAVITY_SCALE=.*|PANTHERA_TEACH_GRAVITY_SCALE=$scale|" "$env_file"
@@ -68,6 +104,6 @@ cd "$HOME/Panthera-WAM"
 uv run --no-sync --package panthera-cli panthera control acquire --client-id teach-cal 2>&1 | grep -v "incompatible\|Warning" | tail -1
 nohup uv run --no-sync --package panthera-cli panthera control heartbeat >/tmp/hb.log 2>&1 &
 sleep 4
-uv run --no-sync --package panthera-cli panthera teach start $kp_arg $kd_arg $fc_arg $fv_arg 2>&1 | grep -v "incompatible\|Warning" | tail -1
+uv run --no-sync --package panthera-cli panthera teach start --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" 2>&1 | grep -v "incompatible\|Warning" | tail -1
 timeout 20 uv run --no-sync --package panthera-cli panthera state get 2>&1 | grep -v "incompatible\|Warning" | sed -n '4,9p'
-echo "==> teach 运行中（scale=$scale）。拖动测试后如需停止：pkill -f \"control heartbeat\""
+echo "==> teach 运行中。拖动测试后停止：pkill -f \"control heartbeat\""
