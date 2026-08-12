@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import grpc
+import numpy as np
 from panthera_arm import arm_pb2_grpc, camera_pb2_grpc, dataset_pb2_grpc
 
 from .camera.backend import CameraWorker
@@ -40,7 +41,7 @@ class ArmdServer:
         policy_confirmation_socket: str | None = None,
         policy_asset_allow_list: PolicyAssetAllowList | None = None,
         allow_unverified_teach: bool | None = None,
-        teach_gravity_scale: float = 1.0,
+        teach_gravity_scale: float | np.ndarray = 1.0,
     ) -> None:
         if camera_worker is not None and camera_endpoint is not None:
             raise ValueError("camera_worker 与 camera_endpoint 不能同时设置")

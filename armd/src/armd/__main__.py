@@ -10,6 +10,7 @@ from functools import partial
 from pathlib import Path
 
 import grpc
+import numpy as np
 from panthera_arm import arm_pb2, arm_pb2_grpc, camera_pb2, camera_pb2_grpc
 
 from .backend import DEFAULT_MOTOR_TIMEOUT_MS, RealBackend, SimBackend
@@ -30,6 +31,22 @@ def default_sdk_root() -> str:
     if repository_vendor.is_dir():
         return str(repository_vendor)
     return str(Path.home() / "Panthera-HT_SDK")
+
+
+def parse_gravity_scale(value: str) -> np.ndarray | float:
+    """解析 1 个标量或逗号分隔 6 个值的重力补偿标定系数。"""
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    if not parts:
+        raise argparse.ArgumentTypeError("teach-gravity-scale 不能为空")
+    try:
+        values = [float(part) for part in parts]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"teach-gravity-scale 含非法数值: {value}") from exc
+    if len(values) == 1:
+        return float(values[0])
+    if len(values) != 6:
+        raise argparse.ArgumentTypeError("teach-gravity-scale 必须为 1 个或 6 个数值")
+    return np.asarray(values, dtype=np.float64)
 
 
 def parse_policy_camera_boxes(
@@ -171,9 +188,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--teach-gravity-scale",
-        type=float,
-        default=float(os.environ.get("PANTHERA_TEACH_GRAVITY_SCALE", "1.0")),
-        help="示教重力补偿标定系数（默认 1.0；真机标定见 docs/JOINT_CONTROL.md）",
+        type=parse_gravity_scale,
+        default=parse_gravity_scale(os.environ.get("PANTHERA_TEACH_GRAVITY_SCALE", "1.0")),
+        help="示教重力补偿标定系数：1 个值（全部关节）或逗号分隔 6 个值（逐关节）；见 docs/JOINT_CONTROL.md",
     )
     parser.add_argument("--check", action="store_true", help="启动后通过 gRPC 做一次仿真自检并退出")
     return parser

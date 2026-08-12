@@ -356,12 +356,13 @@ class Backend(Protocol):
         fc: np.ndarray,
         fv: np.ndarray,
         vel_threshold: float,
-        gravity_scale: float = 1.0,
+        gravity_scale: float | np.ndarray = 1.0,
     ) -> np.ndarray:
         """计算重力与摩擦补偿；只允许在 HardwareLoop 线程调用。
 
         gravity_scale 用于现场标定：URDF 惯性参数与实物偏差时，重力项按
-        比例缩放（摩擦项不缩放）。默认 1.0；标定方法见 docs/JOINT_CONTROL.md。
+        比例缩放（摩擦项不缩放）。接受标量（全部关节）或 6 元素向量（逐关节）。
+        默认 1.0；标定方法见 docs/JOINT_CONTROL.md。
         """
 
     def maintain_idle(self) -> None:

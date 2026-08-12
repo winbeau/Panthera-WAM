@@ -216,7 +216,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         policy_confirmations: PolicyConfirmationManager | None = None,
         policy_asset_allow_list: PolicyAssetAllowList | None = None,
         allow_unverified_teach: bool | None = None,
-        teach_gravity_scale: float = 1.0,
+        teach_gravity_scale: float | np.ndarray = 1.0,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
@@ -225,7 +225,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         # None=自动（仿真放行/真机拒绝）；False=一律拒绝 MIT；True=一律放行 MIT。
         # POS-VEL 回放不使用重力前馈，始终不受本门控影响。
         self._allow_unverified_teach = allow_unverified_teach
-        self._teach_gravity_scale = float(teach_gravity_scale)
+        scale = np.asarray(teach_gravity_scale, dtype=np.float64)
+        self._teach_gravity_scale = float(scale) if scale.shape == () else scale.copy()
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
