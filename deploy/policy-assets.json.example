@@ -1,0 +1,9 @@
+{
+  "allowed_assets": [
+    {
+      "checkpoint_sha256": "replace-with-lowercase-checkpoint-sha256",
+      "stats_sha256": "replace-with-lowercase-stats-sha256",
+      "schema_sha256": "replace-with-lowercase-schema-sha256"
+    }
+  ]
+}

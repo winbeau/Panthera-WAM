@@ -6,10 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from armd.policy_assets import PolicyAssetAllowList, PolicyAssetIdentity
 from armd.policy_gateway import (
     GatewayMode,
     PolicyGateway,
     PolicyGatewayError,
+    PolicyHTTPClient,
     PolicyInferenceResponse,
     PolicyObservation,
 )
@@ -28,8 +30,8 @@ def observation(*, request_id: str = "request-1", deadline_ns: int | None = None
         state_stream_instance_id="stream-1",
         deadline_pi_monotonic_ns=(time.monotonic_ns() + 500_000_000 if deadline_ns is None else deadline_ns),
         state_position=(0.0,) * 7,
-        overhead_rgb_jpeg=b"overhead",
-        wrist_rgb_jpeg=b"wrist",
+        overhead_rgb_jpeg=b"\xff\xd8overhead\xff\xd9",
+        wrist_rgb_jpeg=b"\xff\xd8wrist\xff\xd9",
         overhead_capture_monotonic_ns=time.monotonic_ns() - 2_000_000,
         wrist_capture_monotonic_ns=time.monotonic_ns() - 2_000_000,
     )
@@ -165,3 +167,41 @@ async def test_gateway_drops_overlapping_inference_instead_of_queueing():
         )
     release.set()
     assert (await first).accepted
+
+
+def test_http_client_rejects_credentials_and_builds_single_infer_url():
+    with pytest.raises(ValueError, match="credentials"):
+        PolicyHTTPClient("http://user:password@127.0.0.1:8080")
+    client = PolicyHTTPClient("http://127.0.0.1:8080/base/")
+    assert client.infer_url == "http://127.0.0.1:8080/base/v1/infer"
+
+
+def test_http_response_parser_rejects_coerced_numbers_and_asset_mismatch():
+    value = observation()
+    payload = {
+        "request_id": value.request_id,
+        "session_id": value.session_id,
+        "observation_sequence": value.state_sequence,
+        "observation_sampled_monotonic_ns": value.state_sampled_monotonic_ns,
+        "state_stream_instance_id": value.state_stream_instance_id,
+        "deadline_pi_monotonic_ns": value.deadline_pi_monotonic_ns,
+        "waypoint_positions": [[0.0] * 7],
+        "step_offsets_ns": [100_000_000],
+        "checkpoint_sha256": HASH,
+        "stats_sha256": HASH,
+        "schema_sha256": HASH,
+        "server_elapsed_ns": 1,
+    }
+    parsed = PolicyInferenceResponse.from_mapping(payload)
+    assert parsed.waypoint_positions == ((0.0,) * 7,)
+    payload["step_offsets_ns"] = [1.5]
+    with pytest.raises(PolicyGatewayError, match="JSON integers"):
+        PolicyInferenceResponse.from_mapping(payload)
+
+
+def test_gateway_rejects_response_outside_asset_allow_list():
+    value = observation()
+    response = response_for(value)
+    allow_list = PolicyAssetAllowList((PolicyAssetIdentity("a" * 64, "b" * 64, "d" * 64),))
+    with pytest.raises(PolicyGatewayError, match="allow-list"):
+        response.validate_for(value, asset_allow_list=allow_list)

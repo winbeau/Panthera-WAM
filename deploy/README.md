@@ -106,6 +106,37 @@ PANTHERA_OVERHEAD_CAMERA_ENDPOINT=127.0.0.1:50053 \
   uv run panthera camera snapshot --source overhead --out /tmp/c920e.jpg
 ```
 
+### FastWAM shadow/preview gateway
+
+`panthera-policy-gateway` 只读取 `StreamMeasuredState` 和两路 `CameraService`，向
+FastWAM 发出一次 HTTP 请求，然后保存/打印候选 waypoint。部署入口仅接受
+`--mode shadow|preview`，不会获取 lease，也不会调用 `AcquireControl` 或
+`ApplyPolicyChunk`。HTTP client 明确禁用环境代理、无重试、无重定向、按 Pi deadline
+设置单次超时；响应必须匹配 request/session/state identity 和部署 asset allow-list。
+
+先复制并填写精确哈希：
+
+```bash
+cp deploy/policy-assets.json.example deploy/policy-assets.json
+# 编辑 deploy/policy-assets.json，并在 ~/.config/panthera-wam/armd.env 中填写
+# task id、canonical task text、FastWAM URL 与 evidence JSONL 路径。
+```
+
+手工执行一次只读 shadow：
+
+```bash
+uv run --no-sync --package panthera-armd panthera-policy-gateway \
+  --mode shadow \
+  --task-id "$PANTHERA_POLICY_TASK_ID" \
+  --canonical-prompt "$PANTHERA_POLICY_CANONICAL_PROMPT" \
+  --asset-allow-list deploy/policy-assets.json \
+  --evidence-jsonl artifacts/policy-evidence.jsonl
+```
+
+`policy-gateway.service` 是 `oneshot`，安装脚本只写入 unit，故意不 enable/启动。
+它的成功只表示只读 observation、HTTP 推理和响应身份校验通过，不表示动作安全、
+真机执行或完整碰撞检测通过。
+
 ## WSL 部署（兼容回退）
 
 `armd` 与 `camerad` 以 systemd user service 运行。两者都在同一 Linux

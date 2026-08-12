@@ -1,0 +1,16 @@
+[Unit]
+Description=Panthera read-only FastWAM policy shadow/preview gateway
+After=armd.service camerad.service overhead-camera.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO_ROOT@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/panthera-wam/armd.env
+UnsetEnvironment=http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy grpc_proxy GRPC_PROXY
+ExecStart=/usr/bin/env uv run --no-sync --package panthera-armd panthera-policy-gateway --mode shadow --task-id ${PANTHERA_POLICY_TASK_ID} --canonical-prompt ${PANTHERA_POLICY_CANONICAL_PROMPT} --policy-endpoint ${PANTHERA_FASTWAM_ENDPOINT} --arm-endpoint 127.0.0.1:50051 --wrist-endpoint 127.0.0.1:50052 --overhead-endpoint 127.0.0.1:50053 --asset-allow-list ${PANTHERA_POLICY_GATEWAY_ASSET_ALLOW_LIST} --evidence-jsonl ${PANTHERA_POLICY_EVIDENCE_JSONL}
+RemainAfterExit=no
+
+[Install]
+WantedBy=default.target

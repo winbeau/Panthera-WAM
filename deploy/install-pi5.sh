@@ -109,6 +109,8 @@ sed "s|@REPO_ROOT@|$escaped_repo_root|g" \
     "$repo_root/deploy/camerad.service.in" > "$systemd_dir/camerad.service"
 sed "s|@REPO_ROOT@|$escaped_repo_root|g" \
     "$repo_root/deploy/overhead-camera.service.in" > "$systemd_dir/overhead-camera.service"
+sed "s|@REPO_ROOT@|$escaped_repo_root|g" \
+    "$repo_root/deploy/policy-gateway.service.in" > "$systemd_dir/policy-gateway.service"
 systemctl --user daemon-reload
 systemctl --user enable overhead-camera.service camerad.service armd.service
 
@@ -121,6 +123,8 @@ echo "WPF arm endpoint:    http://$bind_address:50051"
 echo "WPF camera endpoint: http://$bind_address:50052"
 echo "WPF overhead endpoint: http://$bind_address:50053"
 echo "Services were enabled but not started; real hardware remains untouched."
+echo "policy-gateway.service was installed but intentionally not enabled; run it manually for one shadow request after configuring task/assets."
+echo "Copy deploy/policy-assets.json.example to deploy/policy-assets.json and replace all placeholder hashes before running the gateway."
 echo "Install udev rules once, then ask the operator for explicit confirmation before starting armd:"
 echo "  sudo install -m 0644 '$repo_root/deploy/99-panthera-ht.rules' /etc/udev/rules.d/"
 echo "  sudo install -m 0644 '$repo_root/vendor/librealsense/config/99-realsense-libusb.rules' /etc/udev/rules.d/"
