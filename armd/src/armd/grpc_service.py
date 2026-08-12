@@ -31,6 +31,7 @@ from .motion import (
     TEACH_TAU_LIMIT,
     TeachMotion,
     TeachPlaybackMotion,
+    AutoHoldConfig,
 )
 from .policy import (
     PolicyChunkMotion,
@@ -219,6 +220,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         teach_gravity_scale: float | np.ndarray = 1.0,
         teach_gravity_scale_high: float | np.ndarray | None = None,
         teach_gravity_breakpoint: float | np.ndarray | None = None,
+        auto_hold_enabled: bool = True,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
@@ -239,6 +241,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             self._teach_gravity_breakpoint = float(bp) if bp.shape == () else bp.copy()
         else:
             self._teach_gravity_breakpoint = None
+        self._auto_hold_enabled = bool(auto_hold_enabled)
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
@@ -1436,6 +1439,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 gravity_scale=self._teach_gravity_scale,
                 gravity_scale_high=self._teach_gravity_scale_high,
                 gravity_breakpoint=self._teach_gravity_breakpoint,
+                auto_hold=AutoHoldConfig() if self._auto_hold_enabled else AutoHoldConfig(enabled=False),
             )
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))

@@ -212,6 +212,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         help="示教重力补偿分段断点（rad；q_i>断点用高区系数；默认 inf=不分段）",
     )
+    parser.add_argument(
+        "--teach-auto-hold",
+        action="store_true",
+        default=os.environ.get("PANTHERA_TEACH_AUTO_HOLD", "1") == "1",
+        help="示教 Auto-Hold 静止自动锁位（默认启用；关闭用 --no-teach-auto-hold）",
+    )
+    parser.add_argument(
+        "--no-teach-auto-hold",
+        action="store_false",
+        dest="teach_auto_hold",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--check", action="store_true", help="启动后通过 gRPC 做一次仿真自检并退出")
     return parser
 
@@ -303,6 +315,7 @@ async def run(args: argparse.Namespace) -> None:
         teach_gravity_scale=args.teach_gravity_scale,
         teach_gravity_scale_high=args.teach_gravity_scale_high,
         teach_gravity_breakpoint=args.teach_gravity_breakpoint,
+        auto_hold_enabled=args.teach_auto_hold,
     )
     loop.start()
     try:

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import enum
+import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -19,6 +22,8 @@ from .backend import (
 )
 from .hardware_loop import CancelReason, MotionStepResult
 from .teach import PlaybackFrame
+
+logger = logging.getLogger(__name__)
 
 POSITION_HOLD_SPEED = 0.1
 JOG_FRESHNESS_S = 0.25
@@ -37,6 +42,62 @@ TEACH_TAU_LIMIT = np.array([15.0, 30.0, 30.0, 15.0, 5.0, 5.0], dtype=np.float64)
 GRIPPER_POSITION_TORQUE_FRACTION = 0.8
 GRIPPER_POSITION_MAX_KP = 5.0
 GRIPPER_POSITION_MAX_KD = 0.5
+
+
+class AutoHoldState(str, enum.Enum):
+    DRAG = "drag"
+    STILL_DETECT = "still_detect"
+    HOLD = "hold"
+    RELEASE = "release"
+
+
+@dataclass(frozen=True, slots=True)
+class AutoHoldConfig:
+    """Auto-Hold（静止自动锁位）配置：松手检测 + 位置保持 + 平滑退出。
+
+    重力补偿负责「拖动轻」，Auto-Hold 只负责「松手停住」——不依赖
+    重力残差为零。所有 kp/kd 切换均用 smoothstep 渐变，禁止瞬间跳变。
+    """
+
+    enabled: bool = True
+    still_velocity_threshold: float = 0.02  # rad/s，全部关节低于此值视为静止
+    release_velocity_threshold: float = 0.04  # rad/s，任一关节超过此值视为重新拖动
+    still_duration: float = 0.20  # s，静止持续时长确认松手
+    hold_ramp_time: float = 0.40  # s，kp 从 0 渐变到 kp_hold
+    release_ramp_time: float = 0.20  # s，kp 从 kp_hold 渐变回 0
+    kp_hold: tuple[float, ...] = (1.0, 2.0, 2.0, 1.0, 0.8, 0.8)  # 逐关节保持刚度
+    kd_drag: tuple[float, ...] | None = None  # 拖动阻尼；None=沿用 TeachMotion.kd
+    kd_hold: tuple[float, ...] = (0.4, 0.8, 0.8, 0.4, 0.2, 0.2)  # 逐关节保持阻尼
+    velocity_filter_tau_s: float = 0.03  # 速度判定用低通时间常数
+
+    def __post_init__(self) -> None:
+        for name in (
+            "still_velocity_threshold",
+            "release_velocity_threshold",
+            "still_duration",
+            "hold_ramp_time",
+            "release_ramp_time",
+        ):
+            value = getattr(self, name)
+            if value <= 0 or not np.isfinite(value):
+                raise ValueError(f"auto-hold {name} 必须为正有限数值")
+        if self.release_velocity_threshold <= self.still_velocity_threshold:
+            raise ValueError("release_velocity_threshold 必须大于 still_velocity_threshold")
+        for name in ("kp_hold", "kd_hold"):
+            values = np.asarray(getattr(self, name), dtype=np.float64)
+            if values.shape != (6,) or not np.all(np.isfinite(values)) or np.any(values < 0):
+                raise ValueError(f"auto-hold {name} 必须为 6 个非负有限数值")
+        if self.kd_drag is not None:
+            values = np.asarray(self.kd_drag, dtype=np.float64)
+            if values.shape != (6,) or not np.all(np.isfinite(values)) or np.any(values < 0):
+                raise ValueError("auto-hold kd_drag 必须为 6 个非负有限数值")
+        if self.velocity_filter_tau_s <= 0 or not np.isfinite(self.velocity_filter_tau_s):
+            raise ValueError("auto-hold velocity_filter_tau_s 必须为正有限数值")
+
+
+def _smoothstep(x: float) -> float:
+    x = min(max(x, 0.0), 1.0)
+    return x * x * (3.0 - 2.0 * x)
 
 
 def _gravity_params(
@@ -663,7 +724,7 @@ class CartesianTrajectoryMotion:
 
 
 class TeachMotion:
-    """重力/摩擦前馈的连续拖动示教模式。"""
+    """重力/摩擦前馈的连续拖动示教模式（含 Auto-Hold 静止自动锁位）。"""
 
     def __init__(
         self,
@@ -677,6 +738,7 @@ class TeachMotion:
         gravity_scale: float | np.ndarray = 1.0,
         gravity_scale_high: float | np.ndarray | None = None,
         gravity_breakpoint: float | np.ndarray | None = None,
+        auto_hold: AutoHoldConfig | None = None,
     ) -> None:
         self.kp = np.asarray(kp, dtype=np.float64).copy()
         self.kd = np.asarray(kd, dtype=np.float64).copy()
@@ -698,6 +760,32 @@ class TeachMotion:
         self._cancel_reason: CancelReason | None = None
         self._lock = threading.Lock()
 
+        # ---- Auto-Hold 状态机（None=默认启用；enabled=False 禁用并回退原行为）----
+        self.auto_hold_cfg = auto_hold if auto_hold is not None else AutoHoldConfig()
+        self._hold_state = AutoHoldState.DRAG
+        self._state_since: float | None = None
+        self._still_since: float | None = None
+        self._q_hold: np.ndarray | None = None
+        self._kp_now = np.zeros(6, dtype=np.float64)
+        if self.auto_hold_cfg.kd_drag is None:
+            self._kd_drag_now = self.kd.copy()
+        else:
+            self._kd_drag_now = np.asarray(self.auto_hold_cfg.kd_drag, dtype=np.float64).copy()
+        self._filtered_velocity = np.zeros(6, dtype=np.float64)
+        self._velocity_filter_updated_at: float | None = None
+
+    @property
+    def auto_hold_state(self) -> AutoHoldState:
+        return self._hold_state
+
+    @property
+    def hold_position(self) -> np.ndarray | None:
+        return None if self._q_hold is None else self._q_hold.copy()
+
+    @property
+    def hold_kp(self) -> np.ndarray:
+        return self._kp_now.copy()
+
     @property
     def fraction(self) -> float:
         return 0.0
@@ -707,7 +795,6 @@ class TeachMotion:
             self._cancel_reason = reason
 
     def step(self, backend: Backend, now: float) -> MotionStepResult:
-        del now
         states = backend.read_all()
         if len(states) != 7 or not all(state.valid for state in states):
             backend.stop()
@@ -733,14 +820,20 @@ class TeachMotion:
             self.gravity_breakpoint,
         )
         torque = np.clip(torque, -self.tau_limit, self.tau_limit)
+
+        if self.auto_hold_cfg.enabled:
+            kp, kd, cmd_positions, cmd_velocities = self._auto_hold_step(positions, velocities, now)
+        else:
+            kp, kd, cmd_positions, cmd_velocities = self.kp, self.kd, positions, np.zeros(6)
+
         backend.write_frame(
             JointFrame(
                 mode=FrameMode.POS_VEL_TQE_KP_KD,
-                arm_position=positions,
-                arm_velocity=np.zeros(6),
+                arm_position=cmd_positions,
+                arm_velocity=cmd_velocities,
                 arm_torque=torque,
-                arm_kp=self.kp,
-                arm_kd=self.kd,
+                arm_kp=kp,
+                arm_kd=kd,
                 gripper_position=float(
                     np.clip(
                         states[6].position,
@@ -755,6 +848,85 @@ class TeachMotion:
             )
         )
         return MotionStepResult.RUNNING
+
+    def _enter_state(self, state: AutoHoldState, now: float, label: str) -> None:
+        self._hold_state = state
+        self._state_since = now
+        logger.info("teach auto-hold: %s", label)
+
+    def _auto_hold_step(
+        self,
+        q: np.ndarray,
+        v: np.ndarray,
+        now: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Auto-Hold 状态机推进；返回 (kp, kd, pos_cmd, vel_cmd)。
+
+        状态流：DRAG → STILL_DETECT → HOLD → RELEASE → DRAG。
+        只依赖关节速度判定，不依赖力矩/外力估计。
+        """
+        cfg = self.auto_hold_cfg
+        # 轻量低通速度（仅用于判定，tau 很小不引入明显延迟）
+        if self._velocity_filter_updated_at is None:
+            self._filtered_velocity = v.copy()
+        else:
+            dt = max(0.0, now - self._velocity_filter_updated_at)
+            alpha = 1.0 - float(np.exp(-dt / cfg.velocity_filter_tau_s)) if dt > 0 else 1.0
+            self._filtered_velocity = self._filtered_velocity + alpha * (v - self._filtered_velocity)
+        self._velocity_filter_updated_at = now
+        filtered = self._filtered_velocity
+        all_still = bool(np.all(np.abs(filtered) < cfg.still_velocity_threshold))
+        any_moving = bool(np.any(np.abs(filtered) > cfg.release_velocity_threshold))
+        kd_hold = np.asarray(cfg.kd_hold, dtype=np.float64)
+        kp_hold = np.asarray(cfg.kp_hold, dtype=np.float64)
+        zero_vel = np.zeros(6)
+
+        state = self._hold_state
+        if state is AutoHoldState.DRAG:
+            if all_still:
+                self._enter_state(
+                    AutoHoldState.STILL_DETECT,
+                    now,
+                    f"DRAG -> STILL_DETECT (|v|<{cfg.still_velocity_threshold:g} rad/s)",
+                )
+                self._still_since = now
+            self._kp_now.fill(0.0)
+            return self._kp_now, self._kd_drag_now, q, zero_vel
+
+        if state is AutoHoldState.STILL_DETECT:
+            if not all_still:
+                self._enter_state(AutoHoldState.DRAG, now, "STILL_DETECT -> DRAG (速度回升)")
+                self._still_since = None
+                self._kp_now.fill(0.0)
+                return self._kp_now, self._kd_drag_now, q, zero_vel
+            if now - self._still_since >= cfg.still_duration:
+                self._q_hold = q.copy()
+                self._kp_now.fill(0.0)
+                self._enter_state(AutoHoldState.HOLD, now, "STILL_DETECT -> HOLD (自动锁位)")
+                return self._kp_now, kd_hold, self._q_hold, zero_vel
+            self._kp_now.fill(0.0)
+            return self._kp_now, self._kd_drag_now, q, zero_vel
+
+        if state is AutoHoldState.HOLD:
+            assert self._q_hold is not None
+            elapsed = max(0.0, now - self._state_since)
+            self._kp_now = kp_hold * _smoothstep(elapsed / cfg.hold_ramp_time)
+            if any_moving:
+                self._enter_state(AutoHoldState.RELEASE, now, "HOLD -> RELEASE (检测到重新拖动)")
+            return self._kp_now, kd_hold, self._q_hold, zero_vel
+
+        # RELEASE：kp/kd 平滑降回拖动值，完成后回 DRAG
+        assert self._state_since is not None
+        elapsed = max(0.0, now - self._state_since)
+        s = _smoothstep(elapsed / cfg.release_ramp_time)
+        self._kp_now = kp_hold * (1.0 - s)
+        kd_now = self._kd_drag_now + (kd_hold - self._kd_drag_now) * (1.0 - s)
+        if elapsed >= cfg.release_ramp_time:
+            self._kp_now.fill(0.0)
+            self._q_hold = None
+            self._enter_state(AutoHoldState.DRAG, now, "RELEASE -> DRAG")
+        cmd = q if self._q_hold is None else self._q_hold
+        return self._kp_now, kd_now, cmd, zero_vel
 
 
 class TeachPlaybackMotion:

@@ -8,6 +8,8 @@ import pytest
 from armd.backend import FrameMode, SimBackend
 from armd.hardware_loop import CancelReason, MotionStepResult
 from armd.motion import (
+    AutoHoldConfig,
+    AutoHoldState,
     CartesianTrajectoryMotion,
     JOG_FRESHNESS_S,
     JOG_TARGET_LOOKAHEAD_S,
@@ -426,3 +428,157 @@ def test_teach_rejects_invalid_segmented_gravity_scale() -> None:
         TeachMotion(**kwargs, gravity_scale_high=np.zeros(6))
     with pytest.raises(ValueError):
         TeachMotion(**kwargs, gravity_breakpoint=np.array([-1.0] * 6))
+
+
+def _drag_until_still_holds(clock, backend, motion, *, drag_steps: int = 5) -> None:
+    """模拟拖动 drag_steps 步后松手，推进 0.21s 进入 HOLD。
+
+    注意 SimBackend 的 MIT 积分会在 refresh_state/write_frame 时改写速度，
+    因此「拖动」必须在 refresh_state 之后、motion.step 之前设置反馈速度。
+    """
+    for _ in range(drag_steps):
+        clock.advance(0.005)
+        backend.refresh_state()
+        backend._velocities[:6] = 0.1
+        assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    for _ in range(60):  # 60 x 5ms = 0.3s：~10 步滤波衰减 + 0.2s 静止窗口
+        clock.advance(0.005)
+        backend.refresh_state()
+        backend._velocities[:6] = 0.0
+        assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+
+
+def test_auto_hold_locks_position_after_still() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        auto_hold=AutoHoldConfig(),
+    )
+    assert motion.auto_hold_state is AutoHoldState.DRAG
+    _drag_until_still_holds(clock, backend, motion)
+
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+    assert motion.hold_position is not None
+    assert np.allclose(motion.hold_position, backend._positions[:6])
+    # HOLD 帧：位置指令 = 锁定位，kp 从 0 起步且仍很小（渐变初期）
+    frame = backend.frames[-1]
+    assert np.allclose(frame.arm_position, motion.hold_position)
+    assert np.all(frame.arm_kp < 0.1)
+
+
+def test_auto_hold_kp_ramps_smoothly_to_kp_hold() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    cfg = AutoHoldConfig(hold_ramp_time=0.4)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        auto_hold=cfg,
+    )
+    _drag_until_still_holds(clock, backend, motion)
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+
+    previous = None
+    for _ in range(80):  # 80 x 5ms = 0.4s
+        clock.advance(0.005)
+        backend.refresh_state()
+        motion.step(backend, clock.now)
+        kp = backend.frames[-1].arm_kp
+        assert np.all(kp >= 0.0)
+        if previous is not None:
+            # 单调非降（smoothstep），无瞬间跳变
+            assert np.all(kp >= previous - 1e-9)
+        previous = kp
+    assert np.allclose(backend.frames[-1].arm_kp, cfg.kp_hold, atol=0.05)
+
+
+def test_auto_hold_release_on_redrag_and_returns_to_drag() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    cfg = AutoHoldConfig(release_ramp_time=0.2)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        auto_hold=cfg,
+    )
+    _drag_until_still_holds(clock, backend, motion)
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+
+    # 重新拖动：速度 > release_velocity_threshold（低通滤波需几步爬升）
+    for _ in range(10):
+        clock.advance(0.005)
+        backend.refresh_state()
+        backend._velocities[:6] = 0.1
+        motion.step(backend, clock.now)
+        if motion.auto_hold_state is AutoHoldState.RELEASE:
+            break
+    assert motion.auto_hold_state is AutoHoldState.RELEASE
+
+    kp_before = motion.hold_kp.copy()
+    previous = None
+    for _ in range(44):  # 0.22s > release_ramp_time
+        clock.advance(0.005)
+        backend.refresh_state()
+        backend._velocities[:6] = 0.1
+        motion.step(backend, clock.now)
+        kp = backend.frames[-1].arm_kp
+        if previous is not None:
+            assert np.all(kp <= previous + 1e-9)  # 平滑单调降
+        previous = kp
+    assert motion.auto_hold_state is AutoHoldState.DRAG
+    assert np.allclose(backend.frames[-1].arm_kp, 0.0, atol=1e-6)
+    assert kp_before.max() > 0.0
+
+
+def test_auto_hold_hold_does_not_depend_on_zero_gravity_residual() -> None:
+    class ResidualBackend(RecordingSimBackend):
+        def compensation_torque(
+            self,
+            q,
+            v,
+            fc,
+            fv,
+            vel_threshold,
+            gravity_scale=1.0,
+            gravity_scale_high=None,
+            gravity_breakpoint=None,
+        ):
+            # J1 存在固定 0.1 Nm 的重力残差（模型不精确）
+            return np.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    clock = FakeClock()
+    backend = ResidualBackend(clock=clock)
+    cfg = AutoHoldConfig(kp_hold=(1.0, 2.0, 2.0, 1.0, 0.8, 0.8))
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        auto_hold=cfg,
+    )
+    _drag_until_still_holds(clock, backend, motion)
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+    hold = motion.hold_position
+
+    # HOLD 帧：重力残差仍在前馈中，kp 提供位置刚度抵消残差
+    frame = backend.frames[-1]
+    assert frame.arm_torque[0] == pytest.approx(0.1)
+    assert frame.arm_kp[0] > 0.0
+
+    # 推进 0.6s：kp 渐变完成 + Sim 积分收敛，位置保持在小偏移内
+    for _ in range(120):
+        clock.advance(0.005)
+        backend.refresh_state()
+        motion.step(backend, clock.now)
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+    drift = np.abs(backend._positions[:6] - hold)
+    # 残差 0.1 Nm 由 kp=1.0 抵消，稳态偏移约 0.02 rad（Sim MIT 增益 0.05）
+    assert np.all(drift < 0.05)
