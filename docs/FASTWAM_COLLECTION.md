@@ -50,6 +50,26 @@ uv run --package panthera-armd collectord \
 
 Default endpoints are Pi-local ports 50051/50052/50053. Camera roles and configured serials are checked before recording.
 
+## Upload each complete episode to Hugging Face
+
+The fixed interchange repository is the Hugging Face **dataset** repo
+`winbeau/fastwam-lerobot`. Upload only an atomically published episode containing
+`COMPLETE`; failed or temporary staging directories are rejected. The command creates one
+portable tar archive plus SHA-256 and JSON manifests below
+`staging/episodes/<episode_id>.*`:
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com \
+uv run --no-sync --package panthera-armd panthera-hf-upload-episode \
+  /mnt/panthera-ssd/episodes/color-block-000001
+```
+
+Use `--kind smoke` for non-training diagnostics. The output reports the Hub revision; record
+that 40-character revision with the experiment so AutoDL downloads immutable bytes. The
+command uses the existing `hf auth login` credential without printing or copying the token.
+Pi 5 currently requires the verified mirror endpoint because direct routing to
+`huggingface.co:443` is unavailable.
+
 ## Hardware policy experiment tolerances
 
 Hardware acceptance uses a 3 cm tool-point endpoint tolerance (`PANTHERA_POLICY_ENDPOINT_TOLERANCE_M=0.03`). Test moves must be large enough for the Panthera actuators and cameras to resolve: prefer a conservatively planned Cartesian displacement around 10 cm, or at least 10 degrees on a safely selected joint, rather than millimetre-scale or few-degree probes. The larger test stimulus does not relax commanded waypoint soft limits, table/base/camera exclusion geometry, velocity/acceleration/jerk gates, tracking cancellation, or E-Stop. `GetPolicyAcceptance` reports the terminal tool-point Euclidean error and the configured 3 cm threshold for each policy execution. Hardware policy remains disabled until `PANTHERA_POLICY_CAMERA_BOXES_JSON` contains at least one field-calibrated camera/support exclusion box; provisional empty geometry is not accepted.
