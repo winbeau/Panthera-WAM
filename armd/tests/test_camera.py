@@ -361,6 +361,7 @@ async def test_camera_collection_stream_surfaces_ring_data_loss() -> None:
         with pytest.raises(grpc.aio.AioRpcError) as error:
             await call.read()
         assert error.value.code() is grpc.StatusCode.DATA_LOSS
+        assert "wrist-color-camera tap data loss" in error.value.details()
     finally:
         await channel.close()
         await camera_server.stop(0)

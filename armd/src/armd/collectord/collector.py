@@ -93,32 +93,54 @@ def _state_sample(message: arm_pb2.MeasuredStateSample, overflow_baseline: int) 
 
 
 def _write_camera_payload(frame: camera_pb2.CameraFrame, path: Path) -> None:
+    """Spool one frame without capture-time image compression."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_JPEG:
         if not frame.data.startswith(b"\xff\xd8") or not frame.data.endswith(b"\xff\xd9"):
             raise ValueError("invalid JPEG camera frame")
-        path.write_bytes(frame.data)
-        return
-    if frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_RGB8:
-        row_bytes = frame.width * 3
-        stride = frame.stride or row_bytes
-        raw = np.frombuffer(frame.data, dtype=np.uint8)
-        if raw.size != stride * frame.height:
+    elif frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_RGB8:
+        stride = frame.stride or frame.width * 3
+        if len(frame.data) != stride * frame.height:
             raise ValueError("RGB8 payload size does not match stride and dimensions")
-        image = raw.reshape(frame.height, stride)[:, :row_bytes].reshape(frame.height, frame.width, 3)
-        Image.fromarray(image).save(path, format="PNG")
-        return
-    if frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_Z16:
-        row_bytes = frame.width * 2
-        stride = frame.stride or row_bytes
-        raw = np.frombuffer(frame.data, dtype=np.uint8)
-        if raw.size != stride * frame.height:
+    elif frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_Z16:
+        stride = frame.stride or frame.width * 2
+        if len(frame.data) != stride * frame.height:
             raise ValueError("Z16 payload size does not match stride and dimensions")
-        packed = raw.reshape(frame.height, stride)[:, :row_bytes].copy()
-        image = packed.view("<u2").reshape(frame.height, frame.width)
-        Image.fromarray(image).save(path, format="PNG")
+    else:
+        raise ValueError(f"unsupported camera pixel format: {frame.pixel_format}")
+    path.write_bytes(frame.data)
+
+
+def _materialize_camera_sample(sample: CameraSample, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if sample.pixel_format == "jpeg":
+        os.link(sample.path, destination)
         return
-    raise ValueError(f"unsupported camera pixel format: {frame.pixel_format}")
+    payload = sample.path.read_bytes()
+    if sample.pixel_format == "rgb8":
+        row_bytes = sample.width * 3
+        stride = len(payload) // sample.height
+        if stride < row_bytes or len(payload) != stride * sample.height:
+            raise ValueError("spooled RGB8 payload does not match dimensions")
+        raw = np.frombuffer(payload, dtype=np.uint8)
+        image = raw.reshape(sample.height, stride)[:, :row_bytes].reshape(
+            sample.height,
+            sample.width,
+            3,
+        )
+        Image.fromarray(image).save(destination, format="PNG")
+        return
+    if sample.pixel_format == "z16":
+        row_bytes = sample.width * 2
+        stride = len(payload) // sample.height
+        if stride < row_bytes or len(payload) != stride * sample.height:
+            raise ValueError("spooled Z16 payload does not match dimensions")
+        raw = np.frombuffer(payload, dtype=np.uint8)
+        packed = raw.reshape(sample.height, stride)[:, :row_bytes].copy()
+        image = packed.view("<u2").reshape(sample.height, sample.width)
+        Image.fromarray(image).save(destination, format="PNG")
+        return
+    raise ValueError(f"unsupported spooled camera pixel format: {sample.pixel_format}")
 
 
 def _camera_sample(
@@ -184,11 +206,10 @@ def _camera_sample(
 def _camera_extension(pixel_format: int) -> str:
     if pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_JPEG:
         return ".jpg"
-    if pixel_format in (
-        camera_pb2.CAMERA_PIXEL_FORMAT_RGB8,
-        camera_pb2.CAMERA_PIXEL_FORMAT_Z16,
-    ):
-        return ".png"
+    if pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_RGB8:
+        return ".rgb8"
+    if pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_Z16:
+        return ".z16"
     raise ValueError(f"unsupported camera pixel format: {pixel_format}")
 
 
@@ -477,11 +498,6 @@ async def _camera_status(
     return status
 
 
-def _link_selected(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    os.link(source, destination)
-
-
 def _staging_rows(writer: AtomicEpisodeWriter, aligned: list[AlignedSample]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for sample in aligned:
@@ -492,11 +508,11 @@ def _staging_rows(writer: AtomicEpisodeWriter, aligned: list[AlignedSample]) -> 
             or sample.wrist_rgb is None
         ):
             raise ValueError(f"cannot stage invalid aligned sample {sample.tick_index}")
-        overhead_suffix = sample.overhead_rgb.path.suffix.lower()
+        overhead_suffix = ".jpg" if sample.overhead_rgb.pixel_format == "jpeg" else ".png"
         overhead_relative = f"overhead/{sample.tick_index:06d}{overhead_suffix}"
         wrist_relative = f"wrist_rgb/{sample.tick_index:06d}.png"
-        _link_selected(sample.overhead_rgb.path, writer.path(overhead_relative))
-        _link_selected(sample.wrist_rgb.path, writer.path(wrist_relative))
+        _materialize_camera_sample(sample.overhead_rgb, writer.path(overhead_relative))
+        _materialize_camera_sample(sample.wrist_rgb, writer.path(wrist_relative))
         row = {
             "tick_index": sample.tick_index,
             "tick_monotonic_ns": sample.tick_monotonic_ns,
@@ -521,7 +537,7 @@ def _staging_rows(writer: AtomicEpisodeWriter, aligned: list[AlignedSample]) -> 
         }
         if sample.wrist_depth is not None:
             depth_relative = f"wrist_depth/{sample.tick_index:06d}.png"
-            _link_selected(sample.wrist_depth.path, writer.path(depth_relative))
+            _materialize_camera_sample(sample.wrist_depth, writer.path(depth_relative))
             row["wrist_depth"] = {
                 **sample.wrist_depth.staging_record(
                     tick_monotonic_ns=sample.tick_monotonic_ns,

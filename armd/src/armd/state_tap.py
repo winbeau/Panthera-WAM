@@ -27,13 +27,19 @@ class StateTapStats:
 
 
 class StateTapDataLoss(RuntimeError):
-    def __init__(self, *, requested_sequence: int, oldest_available_sequence: int) -> None:
+    def __init__(
+        self,
+        *,
+        requested_sequence: int,
+        oldest_available_sequence: int,
+        source: str = "measured-state",
+    ) -> None:
         self.requested_sequence = requested_sequence
         self.oldest_available_sequence = oldest_available_sequence
+        self.source = source
         super().__init__(
-            "measured-state tap data loss: "
-            f"requested sequence {requested_sequence}, oldest available "
-            f"{oldest_available_sequence}"
+            f"{source} tap data loss: requested sequence {requested_sequence}, "
+            f"oldest available {oldest_available_sequence}"
         )
 
 

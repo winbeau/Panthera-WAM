@@ -19,6 +19,7 @@ from armd.collectord.collector import (
     CollectorConfig,
     _camera_worker,
     _CaptureWorker,
+    _materialize_camera_sample,
     _run_capture_workers,
     _state_worker,
     collect_episode,
@@ -207,7 +208,58 @@ async def test_capture_workers_drain_real_200hz_state_during_large_camera_io(
     assert sequences == list(range(sequences[0], sequences[0] + len(sequences)))
     assert all(sample.tap_oldest_available_sequence <= sample.sequence for sample in result.states)
     assert result.overhead_rgb
+    assert all(sample.path.suffix == ".jpg" for sample in result.overhead_rgb)
     assert not any(worker._thread.is_alive() for worker in workers)
+
+
+def test_materialize_camera_sample_converts_raw_rgb_and_depth_after_capture(tmp_path: Path) -> None:
+    from armd.collectord.schema import CameraSample
+
+    common = {
+        "sequence": 1,
+        "stream_instance_id": "camera",
+        "width": 2,
+        "height": 1,
+        "device_timestamp_raw": 1.0,
+        "device_timestamp_unit": "milliseconds",
+        "device_clock_domain": "test",
+        "host_receive_monotonic_ns": 1,
+        "host_publish_monotonic_ns": 2,
+        "estimated_capture_monotonic_ns": 1,
+        "timestamp_source": "test",
+        "timestamp_quality": "test",
+    }
+    rgb_raw = tmp_path / "rgb.rgb8"
+    rgb_raw.write_bytes(bytes((255, 0, 0, 0, 255, 0)))
+    rgb = CameraSample(
+        stream_name="wrist_rgb",
+        path=rgb_raw,
+        pixel_format="rgb8",
+        **common,
+    )
+    depth_raw = tmp_path / "depth.z16"
+    depth_raw.write_bytes((1000).to_bytes(2, "little") + (2000).to_bytes(2, "little"))
+    depth = CameraSample(
+        stream_name="wrist_depth",
+        path=depth_raw,
+        pixel_format="z16",
+        depth_scale=0.001,
+        **common,
+    )
+
+    rgb_png = tmp_path / "rgb.png"
+    depth_png = tmp_path / "depth.png"
+    _materialize_camera_sample(rgb, rgb_png)
+    _materialize_camera_sample(depth, depth_png)
+
+    from PIL import Image
+
+    with Image.open(rgb_png) as image:
+        assert image.mode == "RGB"
+        assert list(image.getdata()) == [(255, 0, 0), (0, 255, 0)]
+    with Image.open(depth_png) as image:
+        assert image.mode in ("I;16", "I")
+        assert list(image.getdata()) == [1000, 2000]
 
 
 def test_collector_grpc_limits_cover_full_resolution_depth_frames() -> None:

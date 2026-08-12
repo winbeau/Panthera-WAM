@@ -252,7 +252,16 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
                         0.5,
                     )
                 except StateTapDataLoss as exc:
-                    await context.abort(grpc.StatusCode.DATA_LOSS, str(exc))
+                    await context.abort(
+                        grpc.StatusCode.DATA_LOSS,
+                        str(
+                            StateTapDataLoss(
+                                requested_sequence=exc.requested_sequence,
+                                oldest_available_sequence=exc.oldest_available_sequence,
+                                source=f"{worker.role.value}-{stream.value}-camera",
+                            )
+                        ),
+                    )
                 if frame is None:
                     status = worker.status()
                     if not status.available:
