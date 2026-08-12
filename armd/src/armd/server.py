@@ -15,6 +15,9 @@ from .execution import ExecutionRegistry
 from .grpc_service import ArmService, SafetyInterceptor
 from .hardware_loop import CancelReason, HardwareLoop
 from .kinematics import KinematicsWorker
+from .policy import PolicySafetyConfig
+from .policy_assets import PolicyAssetAllowList
+from .policy_confirmation import PolicyConfirmationManager, PolicyConfirmationSocket
 from .safety import apply_watchdog_stop
 
 
@@ -31,6 +34,11 @@ class ArmdServer:
         camera_worker: CameraWorker | None = None,
         camera_endpoint: str | None = None,
         additional_binds: tuple[str, ...] = (),
+        policy_config: PolicySafetyConfig | None = None,
+        policy_path_validator=None,
+        policy_confirmations: PolicyConfirmationManager | None = None,
+        policy_confirmation_socket: str | None = None,
+        policy_asset_allow_list: PolicyAssetAllowList | None = None,
     ) -> None:
         if camera_worker is not None and camera_endpoint is not None:
             raise ValueError("camera_worker 与 camera_endpoint 不能同时设置")
@@ -43,11 +51,21 @@ class ArmdServer:
         self.camera_proxy = CameraProxyService(camera_endpoint) if camera_endpoint else None
         self._watchdog_poll_s = watchdog_poll_s
         self._server = grpc.aio.server(interceptors=[SafetyInterceptor(self.leases, hardware_loop)])
+        confirmations = policy_confirmations or PolicyConfirmationManager()
+        self.policy_confirmation_socket = (
+            PolicyConfirmationSocket(confirmations, policy_confirmation_socket)
+            if policy_confirmation_socket
+            else None
+        )
         self.arm_service = ArmService(
             hardware_loop,
             self.leases,
             self.kinematics,
             self.executions,
+            policy_config=policy_config,
+            policy_path_validator=policy_path_validator,
+            policy_confirmations=confirmations,
+            policy_asset_allow_list=policy_asset_allow_list,
         )
         arm_pb2_grpc.add_ArmServiceServicer_to_server(
             self.arm_service,
@@ -76,6 +94,8 @@ class ArmdServer:
     async def start(self) -> None:
         if self.camera_worker is not None:
             self.camera_worker.start()
+        if self.policy_confirmation_socket is not None:
+            self.policy_confirmation_socket.start()
         await self._server.start()
         self._watchdog_task = asyncio.create_task(self._watchdog_loop(), name="panthera-watchdog")
 
@@ -89,6 +109,8 @@ class ArmdServer:
                 pass
             self._watchdog_task = None
         await self._server.stop(grace)
+        if self.policy_confirmation_socket is not None:
+            self.policy_confirmation_socket.close()
         await self.arm_service.close()
         await self.dataset_jobs.close()
         if self.camera_worker is not None:
@@ -106,6 +128,7 @@ class ArmdServer:
             expired = self.leases.expire_if_stale()
             if expired is None:
                 continue
+            self.arm_service._reset_policy_session()
             if self.hardware_loop.has_active_motion:
                 self.hardware_loop.request_cancel(CancelReason.WATCHDOG)
                 deadline = asyncio.get_running_loop().time() + 0.5

@@ -8,7 +8,18 @@ import time
 import grpc
 from panthera_arm import camera_pb2, camera_pb2_grpc
 
-from .backend import CameraFrameSnapshot, CameraPixelFormat, CameraRole, CameraStream, CameraWorker
+from ..state_tap import StateTapDataLoss
+from .backend import (
+    CameraClockDomain,
+    CameraFrameSnapshot,
+    CameraPixelFormat,
+    CameraRole,
+    CameraStream,
+    CameraTimestampQuality,
+    CameraTimestampSource,
+    CameraTimestampUnit,
+    CameraWorker,
+)
 
 
 def camera_stream(value: int, *, default: CameraStream = CameraStream.DEPTH) -> CameraStream:
@@ -43,11 +54,50 @@ def role_message(role: CameraRole) -> int:
     }[role]
 
 
+def timestamp_unit_message(unit: CameraTimestampUnit) -> int:
+    return {
+        CameraTimestampUnit.UNSPECIFIED: camera_pb2.CAMERA_TIMESTAMP_UNIT_UNSPECIFIED,
+        CameraTimestampUnit.MILLISECONDS: camera_pb2.CAMERA_TIMESTAMP_UNIT_MILLISECONDS,
+        CameraTimestampUnit.NANOSECONDS: camera_pb2.CAMERA_TIMESTAMP_UNIT_NANOSECONDS,
+    }[unit]
+
+
+def clock_domain_message(domain: CameraClockDomain) -> int:
+    return {
+        CameraClockDomain.UNSPECIFIED: camera_pb2.CAMERA_CLOCK_DOMAIN_UNSPECIFIED,
+        CameraClockDomain.REALSENSE_HARDWARE: camera_pb2.CAMERA_CLOCK_DOMAIN_REALSENSE_HARDWARE,
+        CameraClockDomain.REALSENSE_SYSTEM_TIME: camera_pb2.CAMERA_CLOCK_DOMAIN_REALSENSE_SYSTEM_TIME,
+        CameraClockDomain.HOST_MONOTONIC: camera_pb2.CAMERA_CLOCK_DOMAIN_HOST_MONOTONIC,
+        CameraClockDomain.SIMULATED: camera_pb2.CAMERA_CLOCK_DOMAIN_SIMULATED,
+    }[domain]
+
+
+def timestamp_source_message(source: CameraTimestampSource) -> int:
+    return {
+        CameraTimestampSource.UNSPECIFIED: camera_pb2.CAMERA_TIMESTAMP_SOURCE_UNSPECIFIED,
+        CameraTimestampSource.DEVICE: camera_pb2.CAMERA_TIMESTAMP_SOURCE_DEVICE,
+        CameraTimestampSource.V4L2_BUFFER: camera_pb2.CAMERA_TIMESTAMP_SOURCE_V4L2_BUFFER,
+        CameraTimestampSource.HOST_RECEIVE: camera_pb2.CAMERA_TIMESTAMP_SOURCE_HOST_RECEIVE,
+        CameraTimestampSource.DEVICE_TO_HOST_ESTIMATE: camera_pb2.CAMERA_TIMESTAMP_SOURCE_DEVICE_TO_HOST_ESTIMATE,
+    }[source]
+
+
+def timestamp_quality_message(quality: CameraTimestampQuality) -> int:
+    return {
+        CameraTimestampQuality.UNSPECIFIED: camera_pb2.CAMERA_TIMESTAMP_QUALITY_UNSPECIFIED,
+        CameraTimestampQuality.DEVICE_NATIVE: camera_pb2.CAMERA_TIMESTAMP_QUALITY_DEVICE_NATIVE,
+        CameraTimestampQuality.DRIVER_REPORTED: camera_pb2.CAMERA_TIMESTAMP_QUALITY_DRIVER_REPORTED,
+        CameraTimestampQuality.ESTIMATED: camera_pb2.CAMERA_TIMESTAMP_QUALITY_ESTIMATED,
+        CameraTimestampQuality.HOST_OBSERVED: camera_pb2.CAMERA_TIMESTAMP_QUALITY_HOST_OBSERVED,
+        CameraTimestampQuality.SIMULATED: camera_pb2.CAMERA_TIMESTAMP_QUALITY_SIMULATED,
+    }[quality]
+
+
 def frame_message(frame: CameraFrameSnapshot) -> camera_pb2.CameraFrame:
     data = frame.data
     if frame.native_frame is not None:
         data = bytes(frame.native_frame.get_data())
-    return camera_pb2.CameraFrame(
+    response = camera_pb2.CameraFrame(
         stream=stream_message(frame.stream),
         pixel_format=pixel_format_message(frame.pixel_format),
         sequence=frame.sequence,
@@ -60,7 +110,20 @@ def frame_message(frame: CameraFrameSnapshot) -> camera_pb2.CameraFrame:
         data=data,
         role=role_message(frame.role),
         captured_monotonic_ns=frame.captured_monotonic_ns,
+        device_timestamp_raw=frame.device_timestamp_raw,
+        device_timestamp_unit=timestamp_unit_message(frame.device_timestamp_unit),
+        device_clock_domain=clock_domain_message(frame.device_clock_domain),
+        host_receive_monotonic_ns=frame.host_receive_monotonic_ns,
+        host_publish_monotonic_ns=frame.host_publish_monotonic_ns,
+        timestamp_source=timestamp_source_message(frame.timestamp_source),
+        timestamp_quality=timestamp_quality_message(frame.timestamp_quality),
+        device_frame_number=frame.device_frame_number,
+        frameset_sequence=frame.frameset_sequence,
+        stream_instance_id=frame.stream_instance_id,
     )
+    if frame.estimated_capture_monotonic_ns is not None:
+        response.estimated_capture_monotonic_ns = frame.estimated_capture_monotonic_ns
+    return response
 
 
 class CameraService(camera_pb2_grpc.CameraServiceServicer):
@@ -163,6 +226,52 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
         except asyncio.CancelledError:
             return
 
+    async def StreamCollectedFrames(self, request, context):
+        worker = await self._require_worker(context)
+        try:
+            stream = camera_stream(
+                request.stream,
+                default=(CameraStream.COLOR if worker.role is CameraRole.OVERHEAD else CameraStream.DEPTH),
+            )
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        if request.max_frames < 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "max_frames 不能为负数")
+
+        tap = worker.collection_tap(stream)
+        after_sequence = int(request.after_sequence)
+        if request.start_at_latest:
+            after_sequence = tap.stats().newest_sequence
+        sent = 0
+        try:
+            while request.max_frames == 0 or sent < request.max_frames:
+                try:
+                    frame = await asyncio.to_thread(
+                        tap.read_after,
+                        after_sequence,
+                        0.5,
+                    )
+                except StateTapDataLoss as exc:
+                    await context.abort(grpc.StatusCode.DATA_LOSS, str(exc))
+                if frame is None:
+                    status = worker.status()
+                    if not status.available:
+                        await context.abort(
+                            grpc.StatusCode.UNAVAILABLE,
+                            status.error or f"{worker.role.value} 相机当前不可用",
+                        )
+                    continue
+                stats = tap.stats()
+                yield camera_pb2.CollectedCameraFrame(
+                    frame=frame_message(frame),
+                    oldest_available_sequence=stats.oldest_sequence,
+                    overwritten_samples_total=stats.overwritten_samples_total,
+                )
+                after_sequence = frame.sequence
+                sent += 1
+        except asyncio.CancelledError:
+            return
+
     async def _require_worker(self, context) -> CameraWorker:
         if self._worker is None:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "相机采集未启用")
@@ -204,6 +313,13 @@ class CameraProxyService(camera_pb2_grpc.CameraServiceServicer):
     async def StreamFrames(self, request, context):
         try:
             async for frame in self._stub.StreamFrames(request):
+                yield frame
+        except grpc.aio.AioRpcError as exc:
+            await context.abort(exc.code(), exc.details())
+
+    async def StreamCollectedFrames(self, request, context):
+        try:
+            async for frame in self._stub.StreamCollectedFrames(request):
                 yield frame
         except grpc.aio.AioRpcError as exc:
             await context.abort(exc.code(), exc.details())

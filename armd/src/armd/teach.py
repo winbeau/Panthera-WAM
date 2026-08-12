@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from .hardware_loop import CachedRobotState
+from .state_tap import StateTap, StateTapDataLoss
 
 DEFAULT_TEACH_DIR = Path("~/.local/share/panthera/teach")
 _CLOSE = object()
@@ -115,6 +116,61 @@ class TrajectoryRecorder:
             self._writer_error = exc
         finally:
             self._fd.close()
+
+
+class TapTrajectoryRecorder:
+    """Drain the HardwareLoop state tap off-thread into a trajectory writer."""
+
+    def __init__(
+        self,
+        path: Path,
+        state_tap: StateTap[CachedRobotState],
+        *,
+        flush_interval: float = 0.2,
+    ) -> None:
+        self._state_tap = state_tap
+        self._recorder = TrajectoryRecorder(path, flush_interval=flush_interval)
+        self._stop = threading.Event()
+        self._error: BaseException | None = None
+        self._after_sequence = state_tap.stats().newest_sequence
+        self._thread = threading.Thread(
+            target=self._drain_loop,
+            name="panthera-teach-tap-reader",
+            daemon=True,
+        )
+        self._thread.start()
+
+    @property
+    def path(self) -> Path:
+        return self._recorder.path
+
+    @property
+    def frame_count(self) -> int:
+        return self._recorder.frame_count
+
+    def close(self) -> int:
+        self._stop.set()
+        self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            raise TimeoutError("示教状态 tap reader 停止超时")
+        frame_count = self._recorder.close()
+        if self._error is not None:
+            raise RuntimeError("示教状态 tap 读取失败") from self._error
+        return frame_count
+
+    def _drain_loop(self) -> None:
+        try:
+            while not self._stop.is_set():
+                state = self._state_tap.read_after(self._after_sequence, timeout=0.1)
+                if state is None:
+                    if self._state_tap.stats().closed:
+                        return
+                    continue
+                self._recorder.record(state)
+                self._after_sequence = state.sequence
+        except (RuntimeError, StateTapDataLoss) as exc:
+            self._error = exc
+            self._stop.set()
 
 
 class TeachStore:

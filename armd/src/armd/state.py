@@ -63,6 +63,9 @@ def robot_state_message(
     response = arm_pb2.RobotState(
         age_ms=round(cached.age_s(time.monotonic() if now is None else now) * 1000),
         estop_engaged=estop_engaged,
+        sampled_monotonic_ns=cached.sampled_monotonic_ns,
+        sequence=cached.sequence,
+        stream_instance_id=cached.stream_instance_id,
     )
     if include_joints:
         response.joint.CopyFrom(joint_state_message(cached, timestamp_ms=timestamp_ms))

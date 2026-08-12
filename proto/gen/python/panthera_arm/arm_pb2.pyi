@@ -249,16 +249,22 @@ class GripperState(_message.Message):
     def __init__(self, state: _Optional[_Union[MotorState, _Mapping]] = ..., timestamp_ms: _Optional[int] = ...) -> None: ...
 
 class RobotState(_message.Message):
-    __slots__ = ("joint", "gripper", "age_ms", "estop_engaged")
+    __slots__ = ("joint", "gripper", "age_ms", "estop_engaged", "sampled_monotonic_ns", "sequence", "stream_instance_id")
     JOINT_FIELD_NUMBER: _ClassVar[int]
     GRIPPER_FIELD_NUMBER: _ClassVar[int]
     AGE_MS_FIELD_NUMBER: _ClassVar[int]
     ESTOP_ENGAGED_FIELD_NUMBER: _ClassVar[int]
+    SAMPLED_MONOTONIC_NS_FIELD_NUMBER: _ClassVar[int]
+    SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    STREAM_INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     joint: JointState
     gripper: GripperState
     age_ms: int
     estop_engaged: bool
-    def __init__(self, joint: _Optional[_Union[JointState, _Mapping]] = ..., gripper: _Optional[_Union[GripperState, _Mapping]] = ..., age_ms: _Optional[int] = ..., estop_engaged: _Optional[bool] = ...) -> None: ...
+    sampled_monotonic_ns: int
+    sequence: int
+    stream_instance_id: str
+    def __init__(self, joint: _Optional[_Union[JointState, _Mapping]] = ..., gripper: _Optional[_Union[GripperState, _Mapping]] = ..., age_ms: _Optional[int] = ..., estop_engaged: _Optional[bool] = ..., sampled_monotonic_ns: _Optional[int] = ..., sequence: _Optional[int] = ..., stream_instance_id: _Optional[str] = ...) -> None: ...
 
 class StreamStateRequest(_message.Message):
     __slots__ = ("rate_hz", "joints", "gripper")
@@ -269,6 +275,26 @@ class StreamStateRequest(_message.Message):
     joints: bool
     gripper: bool
     def __init__(self, rate_hz: _Optional[float] = ..., joints: _Optional[bool] = ..., gripper: _Optional[bool] = ...) -> None: ...
+
+class StreamMeasuredStateRequest(_message.Message):
+    __slots__ = ("after_sequence", "start_at_latest")
+    AFTER_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    START_AT_LATEST_FIELD_NUMBER: _ClassVar[int]
+    after_sequence: int
+    start_at_latest: bool
+    def __init__(self, after_sequence: _Optional[int] = ..., start_at_latest: _Optional[bool] = ...) -> None: ...
+
+class MeasuredStateSample(_message.Message):
+    __slots__ = ("state", "stream_instance_id", "oldest_available_sequence", "overwritten_samples_total")
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    STREAM_INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    OLDEST_AVAILABLE_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    OVERWRITTEN_SAMPLES_TOTAL_FIELD_NUMBER: _ClassVar[int]
+    state: RobotState
+    stream_instance_id: str
+    oldest_available_sequence: int
+    overwritten_samples_total: int
+    def __init__(self, state: _Optional[_Union[RobotState, _Mapping]] = ..., stream_instance_id: _Optional[str] = ..., oldest_available_sequence: _Optional[int] = ..., overwritten_samples_total: _Optional[int] = ...) -> None: ...
 
 class CheckReachedRequest(_message.Message):
     __slots__ = ("target_positions", "tolerance")
@@ -637,6 +663,62 @@ class RunJointTrajectoryRequest(_message.Message):
     waypoints: _containers.RepeatedCompositeFieldContainer[WaypointSpec]
     durations: _containers.RepeatedScalarFieldContainer[float]
     def __init__(self, waypoints: _Optional[_Iterable[_Union[WaypointSpec, _Mapping]]] = ..., durations: _Optional[_Iterable[float]] = ...) -> None: ...
+
+class PolicyWaypoint(_message.Message):
+    __slots__ = ("positions", "step_offset_ns")
+    POSITIONS_FIELD_NUMBER: _ClassVar[int]
+    STEP_OFFSET_NS_FIELD_NUMBER: _ClassVar[int]
+    positions: _containers.RepeatedScalarFieldContainer[float]
+    step_offset_ns: int
+    def __init__(self, positions: _Optional[_Iterable[float]] = ..., step_offset_ns: _Optional[int] = ...) -> None: ...
+
+class PolicyActionChunk(_message.Message):
+    __slots__ = ("request_id", "session_id", "observation_sequence", "observation_sampled_monotonic_ns", "state_stream_instance_id", "deadline_pi_monotonic_ns", "waypoints", "checkpoint_sha256", "stats_sha256", "schema_sha256", "server_elapsed_ns", "operator_confirmation_id")
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    OBSERVATION_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    OBSERVATION_SAMPLED_MONOTONIC_NS_FIELD_NUMBER: _ClassVar[int]
+    STATE_STREAM_INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    DEADLINE_PI_MONOTONIC_NS_FIELD_NUMBER: _ClassVar[int]
+    WAYPOINTS_FIELD_NUMBER: _ClassVar[int]
+    CHECKPOINT_SHA256_FIELD_NUMBER: _ClassVar[int]
+    STATS_SHA256_FIELD_NUMBER: _ClassVar[int]
+    SCHEMA_SHA256_FIELD_NUMBER: _ClassVar[int]
+    SERVER_ELAPSED_NS_FIELD_NUMBER: _ClassVar[int]
+    OPERATOR_CONFIRMATION_ID_FIELD_NUMBER: _ClassVar[int]
+    request_id: str
+    session_id: str
+    observation_sequence: int
+    observation_sampled_monotonic_ns: int
+    state_stream_instance_id: str
+    deadline_pi_monotonic_ns: int
+    waypoints: _containers.RepeatedCompositeFieldContainer[PolicyWaypoint]
+    checkpoint_sha256: str
+    stats_sha256: str
+    schema_sha256: str
+    server_elapsed_ns: int
+    operator_confirmation_id: str
+    def __init__(self, request_id: _Optional[str] = ..., session_id: _Optional[str] = ..., observation_sequence: _Optional[int] = ..., observation_sampled_monotonic_ns: _Optional[int] = ..., state_stream_instance_id: _Optional[str] = ..., deadline_pi_monotonic_ns: _Optional[int] = ..., waypoints: _Optional[_Iterable[_Union[PolicyWaypoint, _Mapping]]] = ..., checkpoint_sha256: _Optional[str] = ..., stats_sha256: _Optional[str] = ..., schema_sha256: _Optional[str] = ..., server_elapsed_ns: _Optional[int] = ..., operator_confirmation_id: _Optional[str] = ...) -> None: ...
+
+class ApplyPolicyChunkResponse(_message.Message):
+    __slots__ = ("accepted", "execution_id", "reject_reason", "max_joint_delta", "max_gripper_delta", "sampled_max_velocity", "sampled_max_acceleration", "sampled_max_jerk")
+    ACCEPTED_FIELD_NUMBER: _ClassVar[int]
+    EXECUTION_ID_FIELD_NUMBER: _ClassVar[int]
+    REJECT_REASON_FIELD_NUMBER: _ClassVar[int]
+    MAX_JOINT_DELTA_FIELD_NUMBER: _ClassVar[int]
+    MAX_GRIPPER_DELTA_FIELD_NUMBER: _ClassVar[int]
+    SAMPLED_MAX_VELOCITY_FIELD_NUMBER: _ClassVar[int]
+    SAMPLED_MAX_ACCELERATION_FIELD_NUMBER: _ClassVar[int]
+    SAMPLED_MAX_JERK_FIELD_NUMBER: _ClassVar[int]
+    accepted: bool
+    execution_id: str
+    reject_reason: str
+    max_joint_delta: float
+    max_gripper_delta: float
+    sampled_max_velocity: float
+    sampled_max_acceleration: float
+    sampled_max_jerk: float
+    def __init__(self, accepted: _Optional[bool] = ..., execution_id: _Optional[str] = ..., reject_reason: _Optional[str] = ..., max_joint_delta: _Optional[float] = ..., max_gripper_delta: _Optional[float] = ..., sampled_max_velocity: _Optional[float] = ..., sampled_max_acceleration: _Optional[float] = ..., sampled_max_jerk: _Optional[float] = ...) -> None: ...
 
 class TeachStartRequest(_message.Message):
     __slots__ = ("kp", "kd", "fc", "fv")

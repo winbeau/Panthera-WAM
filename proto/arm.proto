@@ -158,12 +158,31 @@ message RobotState {
   // 缓存新鲜度（G14b）。SDK 自身以 0.1s 作为新鲜阈值，客户端可据此降级显示。
   int64 age_ms = 3;
   bool estop_engaged = 4;
+  // HardwareLoop 在完成同一周期 7 电机 read_all 后生成；Pi monotonic 时钟域。
+  int64 sampled_monotonic_ns = 5;
+  // 同一 armd 进程实例内，从 1 开始、每个 measured snapshot 严格递增。
+  uint64 sequence = 6;
+  string stream_instance_id = 7;
 }
 
 message StreamStateRequest {
   optional double rate_hz = 1;      // 未设 → 10
   bool joints = 2;
   bool gripper = 3;
+}
+
+message StreamMeasuredStateRequest {
+  // 返回 after_sequence 之后的下一条；0 表示从当前 ring 最老可用样本开始。
+  uint64 after_sequence = 1;
+  // true 时忽略 after_sequence，从订阅建立后的下一条样本开始。
+  bool start_at_latest = 2;
+}
+
+message MeasuredStateSample {
+  RobotState state = 1;
+  string stream_instance_id = 2;
+  uint64 oldest_available_sequence = 3;
+  uint64 overwritten_samples_total = 4;
 }
 
 // check_position_reached 只比较关节，**不含夹爪**（核实结论；G12）。
@@ -410,6 +429,41 @@ message RunJointTrajectoryRequest {
 }
 
 // ============================================================
+// Policy chunk（FastWAM / 学生策略共用）
+// ============================================================
+
+message PolicyWaypoint {
+  repeated double positions = 1;        // len=7，30 Hz 绝对位置 waypoint
+  int64 step_offset_ns = 2;             // 相对执行起点，严格递增
+}
+
+message PolicyActionChunk {
+  string request_id = 1;
+  string session_id = 2;
+  uint64 observation_sequence = 3;
+  int64 observation_sampled_monotonic_ns = 4;
+  string state_stream_instance_id = 5;
+  int64 deadline_pi_monotonic_ns = 6;   // 由 Pi 创建，策略服务只原样回显
+  repeated PolicyWaypoint waypoints = 7;
+  string checkpoint_sha256 = 8;
+  string stats_sha256 = 9;
+  string schema_sha256 = 10;
+  int64 server_elapsed_ns = 11;         // 仅性能日志，不参与 Pi deadline 比较
+  string operator_confirmation_id = 12; // 真机使用 Pi 签发、与 request/session 绑定的一次性短期 token
+}
+
+message ApplyPolicyChunkResponse {
+  bool accepted = 1;
+  string execution_id = 2;
+  string reject_reason = 3;
+  double max_joint_delta = 4;
+  double max_gripper_delta = 5;
+  double sampled_max_velocity = 6;
+  double sampled_max_acceleration = 7;
+  double sampled_max_jerk = 8;
+}
+
+// ============================================================
 // 示教录制回放（v2）
 // ============================================================
 
@@ -498,6 +552,7 @@ service ArmService {
   rpc GetGripperState(Empty) returns (GripperState);
   rpc GetRobotState(Empty) returns (RobotState);
   rpc StreamState(StreamStateRequest) returns (stream RobotState);
+  rpc StreamMeasuredState(StreamMeasuredStateRequest) returns (stream MeasuredStateSample);
   rpc CheckReached(CheckReachedRequest) returns (CheckReachedResponse);
   rpc GetDaemonStatus(Empty) returns (DaemonStatus);
 
@@ -531,6 +586,7 @@ service ArmService {
 
   // ---------- 多点轨迹（需 lease，v2）----------
   rpc RunJointTrajectory(RunJointTrajectoryRequest) returns (ExecutionAccepted);
+  rpc ApplyPolicyChunk(PolicyActionChunk) returns (ApplyPolicyChunkResponse);    // 需 lease；真机 token 仅由 Pi 本地工具签发
 
   // ---------- 示教录制回放（v2）----------
   rpc TeachStart(TeachStartRequest) returns (TeachStartResponse);               // 需 lease

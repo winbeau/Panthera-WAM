@@ -23,6 +23,37 @@ enum CameraPixelFormat {
   CAMERA_PIXEL_FORMAT_JPEG = 3;
 }
 
+enum CameraTimestampUnit {
+  CAMERA_TIMESTAMP_UNIT_UNSPECIFIED = 0;
+  CAMERA_TIMESTAMP_UNIT_MILLISECONDS = 1;
+  CAMERA_TIMESTAMP_UNIT_NANOSECONDS = 2;
+}
+
+enum CameraClockDomain {
+  CAMERA_CLOCK_DOMAIN_UNSPECIFIED = 0;
+  CAMERA_CLOCK_DOMAIN_REALSENSE_HARDWARE = 1;
+  CAMERA_CLOCK_DOMAIN_REALSENSE_SYSTEM_TIME = 2;
+  CAMERA_CLOCK_DOMAIN_HOST_MONOTONIC = 3;
+  CAMERA_CLOCK_DOMAIN_SIMULATED = 4;
+}
+
+enum CameraTimestampSource {
+  CAMERA_TIMESTAMP_SOURCE_UNSPECIFIED = 0;
+  CAMERA_TIMESTAMP_SOURCE_DEVICE = 1;
+  CAMERA_TIMESTAMP_SOURCE_V4L2_BUFFER = 2;
+  CAMERA_TIMESTAMP_SOURCE_HOST_RECEIVE = 3;
+  CAMERA_TIMESTAMP_SOURCE_DEVICE_TO_HOST_ESTIMATE = 4;
+}
+
+enum CameraTimestampQuality {
+  CAMERA_TIMESTAMP_QUALITY_UNSPECIFIED = 0;
+  CAMERA_TIMESTAMP_QUALITY_DEVICE_NATIVE = 1;
+  CAMERA_TIMESTAMP_QUALITY_DRIVER_REPORTED = 2;
+  CAMERA_TIMESTAMP_QUALITY_ESTIMATED = 3;
+  CAMERA_TIMESTAMP_QUALITY_HOST_OBSERVED = 4;
+  CAMERA_TIMESTAMP_QUALITY_SIMULATED = 5;
+}
+
 message CameraStatusRequest {}
 
 message CameraProfile {
@@ -60,6 +91,13 @@ message StreamFramesRequest {
   int32 max_frames = 3;
 }
 
+message StreamCollectedFramesRequest {
+  CameraStreamType stream = 1;
+  uint64 after_sequence = 2;
+  bool start_at_latest = 3;
+  int32 max_frames = 4;
+}
+
 message CameraFrame {
   CameraStreamType stream = 1;
   CameraPixelFormat pixel_format = 2;
@@ -73,10 +111,28 @@ message CameraFrame {
   bytes data = 10;
   CameraDeviceRole role = 11;
   int64 captured_monotonic_ns = 12;
+  double device_timestamp_raw = 13;
+  CameraTimestampUnit device_timestamp_unit = 14;
+  CameraClockDomain device_clock_domain = 15;
+  int64 host_receive_monotonic_ns = 16;
+  int64 host_publish_monotonic_ns = 17;
+  optional int64 estimated_capture_monotonic_ns = 18;
+  CameraTimestampSource timestamp_source = 19;
+  CameraTimestampQuality timestamp_quality = 20;
+  uint64 device_frame_number = 21;
+  uint64 frameset_sequence = 22;
+  string stream_instance_id = 23;
+}
+
+message CollectedCameraFrame {
+  CameraFrame frame = 1;
+  uint64 oldest_available_sequence = 2;
+  uint64 overwritten_samples_total = 3;
 }
 
 service CameraService {
   rpc GetStatus(CameraStatusRequest) returns (CameraStatus);
   rpc CaptureFrame(CaptureFrameRequest) returns (CameraFrame);
   rpc StreamFrames(StreamFramesRequest) returns (stream CameraFrame);
+  rpc StreamCollectedFrames(StreamCollectedFramesRequest) returns (stream CollectedCameraFrame);
 }

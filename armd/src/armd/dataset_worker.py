@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 from pathlib import Path
 
@@ -11,6 +12,13 @@ import numpy as np
 from .teach import load_raw_frames
 
 AXES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "gripper"]
+
+
+def lerobot_version() -> str:
+    try:
+        return importlib.metadata.version("lerobot")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def feature_spec() -> dict[str, dict]:
@@ -43,7 +51,8 @@ def lerobot_frame(frame: dict, task: str) -> dict:
     return {
         "observation.state": state,
         "observation.velocity": velocity,
-        # 示教记录没有另一条控制目标流；位置/速度示范本身就是监督 action。
+        # Legacy diagnostic export only. This same-frame copy is explicitly not
+        # the q[t+1] action semantics required by the FastWAM training contract.
         "action": state.copy(),
         "action.velocity": velocity.copy(),
         "panthera.timestamp": np.asarray([frame["t"]], dtype=np.float32),
@@ -89,11 +98,19 @@ def export_dataset(
         json.dumps(
             {
                 "format": "LeRobotDataset v3.0",
+                "lerobot_version": lerobot_version(),
                 "source_trajectory": str(trajectory),
                 "task": task,
+                "training_compatible_with_fastwam": False,
+                "action_semantics": "legacy_same_frame_state_copy",
+                "incompatibilities": [
+                    "missing observation.images.overhead_rgb",
+                    "missing observation.images.wrist_rgb",
+                    "action is copied from same-frame observation.state instead of q[t+1]",
+                ],
                 "mapping": {
-                    "pos + gripper_pos": "observation.state / action",
-                    "vel + gripper_vel": "observation.velocity / action.velocity",
+                    "pos + gripper_pos": "observation.state / legacy same-frame action",
+                    "vel + gripper_vel": "observation.velocity / legacy same-frame action.velocity",
                     "t": "panthera.timestamp",
                 },
             },

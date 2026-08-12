@@ -93,6 +93,13 @@ if [[ ! -f "$config_dir/armd.env" ]] || $force_config; then
     install -m 0600 "$rendered_env" "$config_dir/armd.env"
 else
     echo "preserving existing $config_dir/armd.env (use --force-config to replace it)"
+    configured_bind=$(awk -F= '$1 == "PANTHERA_ARM_BIND" {print $2}' "$config_dir/armd.env")
+    configured_address=${configured_bind%:*}
+    if [[ -z "$configured_address" ]] || ! ip -4 -o address show | awk '{print $4}' | cut -d/ -f1 | grep -Fxq "$configured_address"; then
+        echo "existing armd.env uses an address not assigned on this host: ${configured_address:-<missing>}" >&2
+        echo "rerun with: $0 --bind-address '$bind_address' --force-config" >&2
+        exit 1
+    fi
 fi
 
 escaped_repo_root=${repo_root//&/\\&}

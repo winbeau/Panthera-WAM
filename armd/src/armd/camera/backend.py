@@ -9,6 +9,7 @@ import stat
 import subprocess
 import threading
 import time
+import uuid
 from base64 import b64decode
 from collections import deque
 from collections.abc import Callable
@@ -16,8 +17,13 @@ from dataclasses import dataclass
 from enum import Enum
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
+from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Protocol
+
+from PIL import Image
+
+from ..state_tap import StateTap
 
 
 class CameraStream(str, Enum):
@@ -34,6 +40,37 @@ class CameraPixelFormat(str, Enum):
     Z16 = "z16"
     RGB8 = "rgb8"
     JPEG = "jpeg"
+
+
+class CameraTimestampUnit(str, Enum):
+    UNSPECIFIED = "unspecified"
+    MILLISECONDS = "milliseconds"
+    NANOSECONDS = "nanoseconds"
+
+
+class CameraClockDomain(str, Enum):
+    UNSPECIFIED = "unspecified"
+    REALSENSE_HARDWARE = "realsense_hardware"
+    REALSENSE_SYSTEM_TIME = "realsense_system_time"
+    HOST_MONOTONIC = "host_monotonic"
+    SIMULATED = "simulated"
+
+
+class CameraTimestampSource(str, Enum):
+    UNSPECIFIED = "unspecified"
+    DEVICE = "device"
+    V4L2_BUFFER = "v4l2_buffer"
+    HOST_RECEIVE = "host_receive"
+    DEVICE_TO_HOST_ESTIMATE = "device_to_host_estimate"
+
+
+class CameraTimestampQuality(str, Enum):
+    UNSPECIFIED = "unspecified"
+    DEVICE_NATIVE = "device_native"
+    DRIVER_REPORTED = "driver_reported"
+    ESTIMATED = "estimated"
+    HOST_OBSERVED = "host_observed"
+    SIMULATED = "simulated"
 
 
 class CameraUnavailableError(RuntimeError):
@@ -71,6 +108,15 @@ class RawCameraFrame:
     depth_scale: float
     data: bytes
     native_frame: object | None = None
+    device_timestamp_raw: float = 0.0
+    device_timestamp_unit: CameraTimestampUnit = CameraTimestampUnit.UNSPECIFIED
+    device_clock_domain: CameraClockDomain = CameraClockDomain.UNSPECIFIED
+    host_receive_monotonic_ns: int = 0
+    estimated_capture_monotonic_ns: int | None = None
+    timestamp_source: CameraTimestampSource = CameraTimestampSource.UNSPECIFIED
+    timestamp_quality: CameraTimestampQuality = CameraTimestampQuality.UNSPECIFIED
+    device_frame_number: int = 0
+    frameset_sequence: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +134,17 @@ class CameraFrameSnapshot:
     native_frame: object | None = None
     role: CameraRole = CameraRole.WRIST
     captured_monotonic_ns: int = 0
+    device_timestamp_raw: float = 0.0
+    device_timestamp_unit: CameraTimestampUnit = CameraTimestampUnit.UNSPECIFIED
+    device_clock_domain: CameraClockDomain = CameraClockDomain.UNSPECIFIED
+    host_receive_monotonic_ns: int = 0
+    host_publish_monotonic_ns: int = 0
+    estimated_capture_monotonic_ns: int | None = None
+    timestamp_source: CameraTimestampSource = CameraTimestampSource.UNSPECIFIED
+    timestamp_quality: CameraTimestampQuality = CameraTimestampQuality.UNSPECIFIED
+    device_frame_number: int = 0
+    frameset_sequence: int = 0
+    stream_instance_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,9 +196,11 @@ class RealSenseCameraBackend:
         self._pipeline_lock = threading.Lock()
         self._interrupt = threading.Event()
         self._depth_scale = 0.0
+        self._frameset_sequence = 0
 
     def open(self) -> CameraDeviceInfo:
         self._interrupt.clear()
+        self._frameset_sequence = 0
         try:
             import pyrealsense2 as rs
         except ImportError as exc:
@@ -225,13 +284,32 @@ class RealSenseCameraBackend:
             raise CameraUnavailableError("D405 采集已中断")
         if not frames:
             raise CameraUnavailableError(f"D405 在 {self.timeout_ms}ms 内未返回新帧")
+        host_receive_monotonic_ns = time.monotonic_ns()
+        self._frameset_sequence += 1
+        frameset_sequence = self._frameset_sequence
         output: list[RawCameraFrame] = []
         depth = frames.get_depth_frame()
         if depth:
-            output.append(self._copy_frame(depth, CameraStream.DEPTH, CameraPixelFormat.Z16))
+            output.append(
+                self._copy_frame(
+                    depth,
+                    CameraStream.DEPTH,
+                    CameraPixelFormat.Z16,
+                    host_receive_monotonic_ns=host_receive_monotonic_ns,
+                    frameset_sequence=frameset_sequence,
+                )
+            )
         color = frames.get_color_frame()
         if color:
-            output.append(self._copy_frame(color, CameraStream.COLOR, CameraPixelFormat.RGB8))
+            output.append(
+                self._copy_frame(
+                    color,
+                    CameraStream.COLOR,
+                    CameraPixelFormat.RGB8,
+                    host_receive_monotonic_ns=host_receive_monotonic_ns,
+                    frameset_sequence=frameset_sequence,
+                )
+            )
         if not output:
             raise CameraUnavailableError("D405 返回了空 frameset")
         return tuple(output)
@@ -254,18 +332,42 @@ class RealSenseCameraBackend:
         frame,
         stream: CameraStream,
         pixel_format: CameraPixelFormat,
+        *,
+        host_receive_monotonic_ns: int,
+        frameset_sequence: int,
     ) -> RawCameraFrame:
+        device_timestamp_raw = float(frame.get_timestamp())
         return RawCameraFrame(
             stream=stream,
             pixel_format=pixel_format,
-            device_timestamp_ms=float(frame.get_timestamp()),
+            device_timestamp_ms=device_timestamp_raw,
             width=int(frame.get_width()),
             height=int(frame.get_height()),
             stride=int(frame.get_stride_in_bytes()),
             depth_scale=self._depth_scale if stream is CameraStream.DEPTH else 0.0,
             data=b"",
             native_frame=frame,
+            device_timestamp_raw=device_timestamp_raw,
+            device_timestamp_unit=CameraTimestampUnit.MILLISECONDS,
+            device_clock_domain=self._timestamp_domain(frame),
+            host_receive_monotonic_ns=host_receive_monotonic_ns,
+            timestamp_source=CameraTimestampSource.DEVICE,
+            timestamp_quality=CameraTimestampQuality.DEVICE_NATIVE,
+            device_frame_number=int(frame.get_frame_number()),
+            frameset_sequence=frameset_sequence,
         )
+
+    @staticmethod
+    def _timestamp_domain(frame) -> CameraClockDomain:
+        try:
+            value = str(frame.get_frame_timestamp_domain()).lower()
+        except Exception:
+            return CameraClockDomain.UNSPECIFIED
+        if "hardware" in value:
+            return CameraClockDomain.REALSENSE_HARDWARE
+        if "system" in value:
+            return CameraClockDomain.REALSENSE_SYSTEM_TIME
+        return CameraClockDomain.UNSPECIFIED
 
     @staticmethod
     def _get_info(device, key) -> str:
@@ -399,16 +501,21 @@ class V4L2MjpegCameraBackend:
         while not self._interrupt.is_set() and time.monotonic() < deadline:
             frame = self._extract_jpeg()
             if frame is not None:
+                host_receive_monotonic_ns = time.monotonic_ns()
                 return (
                     RawCameraFrame(
                         stream=CameraStream.COLOR,
                         pixel_format=CameraPixelFormat.JPEG,
-                        device_timestamp_ms=time.monotonic() * 1000.0,
+                        device_timestamp_ms=0.0,
                         width=self.width,
                         height=self.height,
                         stride=0,
                         depth_scale=0.0,
                         data=frame,
+                        host_receive_monotonic_ns=host_receive_monotonic_ns,
+                        device_clock_domain=CameraClockDomain.HOST_MONOTONIC,
+                        timestamp_source=CameraTimestampSource.HOST_RECEIVE,
+                        timestamp_quality=CameraTimestampQuality.HOST_OBSERVED,
                     ),
                 )
 
@@ -549,27 +656,46 @@ class SimCameraBackend:
             (self._frame_index % 256, (self._frame_index * 3) % 256, (self._frame_index * 7) % 256)
         )
         color = color_pixel * (self.width * self.height)
-        timestamp_ms = time.monotonic() * 1000.0
+        host_receive_monotonic_ns = time.monotonic_ns()
+        timestamp_ms = host_receive_monotonic_ns / 1_000_000
         return (
             RawCameraFrame(
-                CameraStream.DEPTH,
-                CameraPixelFormat.Z16,
-                timestamp_ms,
-                self.width,
-                self.height,
-                self.width * 2,
-                0.001,
-                depth,
+                stream=CameraStream.DEPTH,
+                pixel_format=CameraPixelFormat.Z16,
+                device_timestamp_ms=timestamp_ms,
+                width=self.width,
+                height=self.height,
+                stride=self.width * 2,
+                depth_scale=0.001,
+                data=depth,
+                device_timestamp_raw=timestamp_ms,
+                device_timestamp_unit=CameraTimestampUnit.MILLISECONDS,
+                device_clock_domain=CameraClockDomain.SIMULATED,
+                host_receive_monotonic_ns=host_receive_monotonic_ns,
+                estimated_capture_monotonic_ns=host_receive_monotonic_ns,
+                timestamp_source=CameraTimestampSource.DEVICE_TO_HOST_ESTIMATE,
+                timestamp_quality=CameraTimestampQuality.SIMULATED,
+                device_frame_number=self._frame_index,
+                frameset_sequence=self._frame_index,
             ),
             RawCameraFrame(
-                CameraStream.COLOR,
-                CameraPixelFormat.RGB8,
-                timestamp_ms,
-                self.width,
-                self.height,
-                self.width * 3,
-                0.0,
-                color,
+                stream=CameraStream.COLOR,
+                pixel_format=CameraPixelFormat.RGB8,
+                device_timestamp_ms=timestamp_ms,
+                width=self.width,
+                height=self.height,
+                stride=self.width * 3,
+                depth_scale=0.0,
+                data=color,
+                device_timestamp_raw=timestamp_ms,
+                device_timestamp_unit=CameraTimestampUnit.MILLISECONDS,
+                device_clock_domain=CameraClockDomain.SIMULATED,
+                host_receive_monotonic_ns=host_receive_monotonic_ns,
+                estimated_capture_monotonic_ns=host_receive_monotonic_ns,
+                timestamp_source=CameraTimestampSource.DEVICE_TO_HOST_ESTIMATE,
+                timestamp_quality=CameraTimestampQuality.SIMULATED,
+                device_frame_number=self._frame_index,
+                frameset_sequence=self._frame_index,
             ),
         )
 
@@ -605,6 +731,13 @@ class SimOverheadCameraBackend:
         self._next_frame_at = 0.0
         self._frame_index = 0
         self._interrupt = threading.Event()
+        jpeg = BytesIO()
+        Image.new("RGB", (self.width, self.height), (32, 96, 192)).save(
+            jpeg,
+            format="JPEG",
+            quality=90,
+        )
+        self._jpeg = jpeg.getvalue()
 
     def open(self) -> CameraDeviceInfo:
         self._interrupt.clear()
@@ -635,16 +768,24 @@ class SimOverheadCameraBackend:
             raise CameraUnavailableError("C920e 仿真采集已中断")
         self._next_frame_at = max(self._next_frame_at + 1.0 / self.fps, time.monotonic())
         self._frame_index += 1
+        host_receive_monotonic_ns = time.monotonic_ns()
         return (
             RawCameraFrame(
                 stream=CameraStream.COLOR,
                 pixel_format=CameraPixelFormat.JPEG,
-                device_timestamp_ms=time.monotonic() * 1000.0,
+                device_timestamp_ms=0.0,
                 width=self.width,
                 height=self.height,
                 stride=0,
                 depth_scale=0.0,
-                data=self._JPEG_8X6,
+                data=self._jpeg,
+                device_clock_domain=CameraClockDomain.HOST_MONOTONIC,
+                host_receive_monotonic_ns=host_receive_monotonic_ns,
+                estimated_capture_monotonic_ns=host_receive_monotonic_ns,
+                timestamp_source=CameraTimestampSource.HOST_RECEIVE,
+                timestamp_quality=CameraTimestampQuality.SIMULATED,
+                device_frame_number=self._frame_index,
+                frameset_sequence=self._frame_index,
             ),
         )
 
@@ -664,6 +805,7 @@ class CameraWorker:
         *,
         role: CameraRole = CameraRole.WRIST,
         reconnect_delay_s: float = 1.0,
+        collection_capacity: int = 64,
     ) -> None:
         self._backend_factory = backend_factory
         self.role = role
@@ -674,6 +816,11 @@ class CameraWorker:
         self._active_backend: CameraBackend | None = None
         self._frames: dict[CameraStream, CameraFrameSnapshot] = {}
         self._sequences = {CameraStream.DEPTH: 0, CameraStream.COLOR: 0}
+        self._collection_taps = {
+            CameraStream.DEPTH: StateTap[CameraFrameSnapshot](collection_capacity),
+            CameraStream.COLOR: StateTap[CameraFrameSnapshot](collection_capacity),
+        }
+        self._stream_instance_id = uuid.uuid4().hex
         self._frame_times: deque[float] = deque(maxlen=60)
         self._last_frame_at = 0.0
         self._status = CameraStatusSnapshot(
@@ -740,6 +887,9 @@ class CameraWorker:
                 role=status.role,
             )
 
+    def collection_tap(self, stream: CameraStream) -> StateTap[CameraFrameSnapshot]:
+        return self._collection_taps[stream]
+
     def wait_for_frame(
         self,
         stream: CameraStream,
@@ -766,6 +916,7 @@ class CameraWorker:
                 self._active_backend = backend
             try:
                 info = backend.open()
+                self._stream_instance_id = uuid.uuid4().hex
                 if info.role is not self.role:
                     raise CameraUnavailableError(
                         f"相机角色不匹配：服务={self.role.value}，设备={info.role.value}"
@@ -805,12 +956,19 @@ class CameraWorker:
 
     def _publish(self, frames: tuple[RawCameraFrame, ...]) -> None:
         captured_at_ns = time.time_ns()
-        captured_monotonic_ns = time.monotonic_ns()
-        now = captured_monotonic_ns / 1_000_000_000
+        host_publish_monotonic_ns = time.monotonic_ns()
+        now = host_publish_monotonic_ns / 1_000_000_000
+        copied_frames = []
+        for frame in frames:
+            data = frame.data
+            if frame.native_frame is not None:
+                data = bytes(frame.native_frame.get_data())
+            copied_frames.append((frame, data))
         with self._condition:
-            for frame in frames:
+            for frame, data in copied_frames:
                 self._sequences[frame.stream] += 1
-                self._frames[frame.stream] = CameraFrameSnapshot(
+                host_receive_monotonic_ns = frame.host_receive_monotonic_ns or host_publish_monotonic_ns
+                snapshot = CameraFrameSnapshot(
                     stream=frame.stream,
                     pixel_format=frame.pixel_format,
                     sequence=self._sequences[frame.stream],
@@ -820,11 +978,24 @@ class CameraWorker:
                     height=frame.height,
                     stride=frame.stride,
                     depth_scale=frame.depth_scale,
-                    data=frame.data,
-                    native_frame=frame.native_frame,
+                    data=data,
+                    native_frame=None,
                     role=self.role,
-                    captured_monotonic_ns=captured_monotonic_ns,
+                    captured_monotonic_ns=host_publish_monotonic_ns,
+                    device_timestamp_raw=frame.device_timestamp_raw,
+                    device_timestamp_unit=frame.device_timestamp_unit,
+                    device_clock_domain=frame.device_clock_domain,
+                    host_receive_monotonic_ns=host_receive_monotonic_ns,
+                    host_publish_monotonic_ns=host_publish_monotonic_ns,
+                    estimated_capture_monotonic_ns=frame.estimated_capture_monotonic_ns,
+                    timestamp_source=frame.timestamp_source,
+                    timestamp_quality=frame.timestamp_quality,
+                    device_frame_number=frame.device_frame_number,
+                    frameset_sequence=frame.frameset_sequence,
+                    stream_instance_id=self._stream_instance_id,
                 )
+                self._frames[frame.stream] = snapshot
+                self._collection_taps[frame.stream].publish(snapshot)
             self._last_frame_at = now
             self._frame_times.append(now)
             status = self._status

@@ -32,9 +32,18 @@ from .motion import (
     TeachMotion,
     TeachPlaybackMotion,
 )
+from .policy import (
+    PolicyChunkMotion,
+    PolicySafetyConfig,
+    PolicyValidationError,
+    validate_policy_chunk,
+)
+from .policy_assets import PolicyAssetAllowList
+from .policy_confirmation import PolicyConfirmationManager
 from .safety import apply_watchdog_stop
 from .state import gripper_state_message, joint_state_message, robot_state_message
-from .teach import TeachStore, TrajectoryRecorder, load_raw_frames, prepare_playback_frames
+from .state_tap import StateTapDataLoss
+from .teach import TapTrajectoryRecorder, TeachStore, load_raw_frames, prepare_playback_frames
 
 SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
 DEFAULT_FRICTION_FC = np.array([0.20, 0.15, 0.15, 0.15, 0.04, 0.04], dtype=np.float64)
@@ -57,6 +66,7 @@ LEASE_PROTECTED_METHODS = {
     "MoveL",
     "CartesianJog",
     "RunJointTrajectory",
+    "ApplyPolicyChunk",
     "TeachStart",
     "TeachStop",
     "TeachRecordStart",
@@ -192,6 +202,10 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         leases: LeaseManager,
         kinematics: KinematicsWorker,
         executions: ExecutionRegistry,
+        policy_config: PolicySafetyConfig | None = None,
+        policy_path_validator=None,
+        policy_confirmations: PolicyConfirmationManager | None = None,
+        policy_asset_allow_list: PolicyAssetAllowList | None = None,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
@@ -205,8 +219,22 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         self._teach_motion: TeachMotion | None = None
         self._teach_completion = None
         self._teach_monitor_task: asyncio.Task[None] | None = None
-        self._recorder: TrajectoryRecorder | None = None
+        self._recorder: TapTrajectoryRecorder | None = None
         self._recorder_lock = asyncio.Lock()
+        self._policy_config = policy_config or PolicySafetyConfig()
+        self._policy_path_validator = policy_path_validator
+        self._policy_confirmations = policy_confirmations or PolicyConfirmationManager()
+        self._policy_asset_allow_list = policy_asset_allow_list
+        self._policy_lock = asyncio.Lock()
+        self._policy_session_id = ""
+        self._policy_last_request_id = ""
+        self._policy_last_observation_sequence = 0
+
+    def _reset_policy_session(self) -> None:
+        self._policy_session_id = ""
+        self._policy_last_request_id = ""
+        self._policy_last_observation_sequence = 0
+        self._policy_confirmations.revoke_all()
 
     async def AcquireControl(self, request, context):
         try:
@@ -214,6 +242,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         if result.replaced_holder:
+            self._reset_policy_session()
             cancelled = await self._cancel_active_motion_and_wait(CancelReason.FORCE_ACQUIRE)
             if cancelled:
                 await asyncio.wrap_future(self._hardware_loop.submit(apply_watchdog_stop))
@@ -228,6 +257,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
         if not self._leases.release(token):
             await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        self._reset_policy_session()
         cancelled = await self._cancel_active_motion_and_wait(CancelReason.CLIENT)
         if cancelled:
             await asyncio.wrap_future(
@@ -283,6 +313,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
 
     async def EStop(self, request, context):
         del request
+        self._reset_policy_session()
         self._hardware_loop.request_estop()
         deadline = time.monotonic() + 0.2
         while not self._hardware_loop.estop_applied and time.monotonic() < deadline:
@@ -407,6 +438,43 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     include_gripper=include_gripper,
                 )
                 await asyncio.sleep(period_s)
+        except asyncio.CancelledError:
+            return
+
+    async def StreamMeasuredState(
+        self,
+        request,
+        context,
+    ) -> AsyncIterator[arm_pb2.MeasuredStateSample]:
+        tap = self._hardware_loop.state_tap
+        after_sequence = int(request.after_sequence)
+        if request.start_at_latest:
+            after_sequence = tap.stats().newest_sequence
+        try:
+            while True:
+                try:
+                    cached = await asyncio.to_thread(
+                        tap.read_after,
+                        after_sequence,
+                        0.5,
+                    )
+                except StateTapDataLoss as exc:
+                    await context.abort(grpc.StatusCode.DATA_LOSS, str(exc))
+                if cached is None:
+                    if tap.stats().closed:
+                        return
+                    continue
+                stats = tap.stats()
+                yield arm_pb2.MeasuredStateSample(
+                    state=robot_state_message(
+                        cached,
+                        estop_engaged=self._hardware_loop.estop_engaged,
+                    ),
+                    stream_instance_id=cached.stream_instance_id,
+                    oldest_available_sequence=stats.oldest_sequence,
+                    overwritten_samples_total=stats.overwritten_samples_total,
+                )
+                after_sequence = cached.sequence
         except asyncio.CancelledError:
             return
 
@@ -1150,6 +1218,122 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         execution_id = self._executions.register(motion, completion)
         return arm_pb2.ExecutionAccepted(execution_id=execution_id)
 
+    async def ApplyPolicyChunk(self, request, context):
+        async with self._policy_lock:
+            if self._hardware_loop.has_active_motion:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="已有运动正在执行",
+                )
+            if self._policy_session_id and request.session_id != self._policy_session_id:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="policy session_id 不匹配",
+                )
+            if request.request_id == self._policy_last_request_id:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="policy request_id 重复",
+                )
+            if request.observation_sequence <= self._policy_last_observation_sequence:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="policy observation_sequence 未递增",
+                )
+            if request.server_elapsed_ns < 0:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="server_elapsed_ns 不得为负数",
+                )
+            cached = self._hardware_loop.latest_state()
+            if cached is None:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="尚无电机状态缓存",
+                )
+            limits, is_sim = await asyncio.wrap_future(
+                self._hardware_loop.submit(lambda backend: (backend.limits, backend.is_sim))
+            )
+            if not is_sim and self._policy_path_validator is None:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="真机 policy swept-path validator 尚未配置",
+                )
+            if not is_sim and self._policy_asset_allow_list is None:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="真机 policy asset allow-list 尚未配置",
+                )
+            if not is_sim and not self._policy_asset_allow_list.allows(
+                checkpoint_sha256=request.checkpoint_sha256,
+                stats_sha256=request.stats_sha256,
+                schema_sha256=request.schema_sha256,
+            ):
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="policy checkpoint/stats/schema identity 不在部署 allow-list",
+                )
+            if not is_sim and not self._policy_confirmations.consume(
+                request.operator_confirmation_id,
+                request_id=request.request_id,
+                session_id=request.session_id,
+            ):
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason="真机 policy confirmation 无效、过期、已使用或与 request/session 不匹配",
+                )
+            try:
+                chunk = validate_policy_chunk(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    observation_sequence=int(request.observation_sequence),
+                    observation_sampled_monotonic_ns=int(request.observation_sampled_monotonic_ns),
+                    state_stream_instance_id=request.state_stream_instance_id,
+                    deadline_pi_monotonic_ns=int(request.deadline_pi_monotonic_ns),
+                    waypoint_positions=[waypoint.positions for waypoint in request.waypoints],
+                    step_offsets_ns=[waypoint.step_offset_ns for waypoint in request.waypoints],
+                    checkpoint_sha256=request.checkpoint_sha256,
+                    stats_sha256=request.stats_sha256,
+                    schema_sha256=request.schema_sha256,
+                    cached_state=cached,
+                    observation_state=self._hardware_loop.state_tap.get(int(request.observation_sequence)),
+                    limits=limits,
+                    now_monotonic_ns=time.monotonic_ns(),
+                    config=self._policy_config,
+                    path_validator=self._policy_path_validator,
+                )
+            except PolicyValidationError as exc:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason=str(exc),
+                )
+            token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+            if not self._leases.heartbeat(token):
+                await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+            motion = PolicyChunkMotion(chunk)
+            accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+            try:
+                await asyncio.wrap_future(accepted)
+            except RuntimeError as exc:
+                return arm_pb2.ApplyPolicyChunkResponse(
+                    accepted=False,
+                    reject_reason=str(exc),
+                )
+            self._policy_session_id = request.session_id
+            self._policy_last_request_id = request.request_id
+            self._policy_last_observation_sequence = int(request.observation_sequence)
+            execution_id = self._executions.register(motion, completion)
+            metrics = chunk.metrics
+            return arm_pb2.ApplyPolicyChunkResponse(
+                accepted=True,
+                execution_id=execution_id,
+                max_joint_delta=metrics.max_joint_delta,
+                max_gripper_delta=metrics.max_gripper_delta,
+                sampled_max_velocity=metrics.sampled_max_velocity,
+                sampled_max_acceleration=metrics.sampled_max_acceleration,
+                sampled_max_jerk=metrics.sampled_max_jerk,
+            )
+
     async def TeachStart(self, request, context):
         await self._refresh_teach_motion()
         if self._hardware_loop.has_active_motion:
@@ -1229,11 +1413,14 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         flush_interval = optional_double(request, "flush_interval", 0.2)
         try:
             path = self._teach_store.recording_path(request.path)
-            recorder = TrajectoryRecorder(path, flush_interval=flush_interval)
+            recorder = TapTrajectoryRecorder(
+                path,
+                self._hardware_loop.state_tap,
+                flush_interval=flush_interval,
+            )
         except (OSError, ValueError) as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         self._recorder = recorder
-        self._hardware_loop.set_record_sink(recorder.record)
         return arm_pb2.TeachRecordStartResponse(accepted=True, path=str(path))
 
     async def TeachRecordStop(self, request, context):
@@ -1456,7 +1643,6 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             recorder = self._recorder
             if recorder is None:
                 return None
-            self._hardware_loop.set_record_sink(None)
             self._recorder = None
             frame_count = await asyncio.to_thread(recorder.close)
             return str(recorder.path), frame_count

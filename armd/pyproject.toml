@@ -9,6 +9,8 @@ dependencies = [
     "grpcio>=1.82.1",
     "protobuf>=4.25",
     "numpy>=1.19,<2",     # 与 SDK whl 的 numpy<2 约束一致
+    "pillow==12.0.0",
+    "pyarrow==25.0.1",
     "pyyaml>=6.0,<7.0",
     "pin>=2.6.0",         # 注意 PyPI 包名是 pin，import 名是 pinocchio
     "scipy>=1.10,<2.0",
@@ -17,6 +19,8 @@ dependencies = [
 [project.scripts]
 armd = "armd.__main__:main"
 camerad = "armd.camera.__main__:main"
+collectord = "armd.collectord.__main__:main"
+panthera-policy-confirm = "armd.policy_confirmation_cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.6"]

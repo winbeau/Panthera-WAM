@@ -49,6 +49,11 @@ class CameraServiceStub:
                 request_serializer=camera__pb2.StreamFramesRequest.SerializeToString,
                 response_deserializer=camera__pb2.CameraFrame.FromString,
                 _registered_method=True)
+        self.StreamCollectedFrames = channel.unary_stream(
+                '/panthera.camera.v1.CameraService/StreamCollectedFrames',
+                request_serializer=camera__pb2.StreamCollectedFramesRequest.SerializeToString,
+                response_deserializer=camera__pb2.CollectedCameraFrame.FromString,
+                _registered_method=True)
 
 
 class CameraServiceServicer:
@@ -72,6 +77,12 @@ class CameraServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def StreamCollectedFrames(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CameraServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -89,6 +100,11 @@ def add_CameraServiceServicer_to_server(servicer, server):
                     servicer.StreamFrames,
                     request_deserializer=camera__pb2.StreamFramesRequest.FromString,
                     response_serializer=camera__pb2.CameraFrame.SerializeToString,
+            ),
+            'StreamCollectedFrames': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamCollectedFrames,
+                    request_deserializer=camera__pb2.StreamCollectedFramesRequest.FromString,
+                    response_serializer=camera__pb2.CollectedCameraFrame.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -172,6 +188,33 @@ class CameraService:
             '/panthera.camera.v1.CameraService/StreamFrames',
             camera__pb2.StreamFramesRequest.SerializeToString,
             camera__pb2.CameraFrame.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamCollectedFrames(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/panthera.camera.v1.CameraService/StreamCollectedFrames',
+            camera__pb2.StreamCollectedFramesRequest.SerializeToString,
+            camera__pb2.CollectedCameraFrame.FromString,
             options,
             channel_credentials,
             insecure,

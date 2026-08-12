@@ -103,6 +103,11 @@ class ArmServiceStub:
                 request_serializer=arm__pb2.StreamStateRequest.SerializeToString,
                 response_deserializer=arm__pb2.RobotState.FromString,
                 _registered_method=True)
+        self.StreamMeasuredState = channel.unary_stream(
+                '/panthera.arm.v1.ArmService/StreamMeasuredState',
+                request_serializer=arm__pb2.StreamMeasuredStateRequest.SerializeToString,
+                response_deserializer=arm__pb2.MeasuredStateSample.FromString,
+                _registered_method=True)
         self.CheckReached = channel.unary_unary(
                 '/panthera.arm.v1.ArmService/CheckReached',
                 request_serializer=arm__pb2.CheckReachedRequest.SerializeToString,
@@ -207,6 +212,11 @@ class ArmServiceStub:
                 '/panthera.arm.v1.ArmService/RunJointTrajectory',
                 request_serializer=arm__pb2.RunJointTrajectoryRequest.SerializeToString,
                 response_deserializer=arm__pb2.ExecutionAccepted.FromString,
+                _registered_method=True)
+        self.ApplyPolicyChunk = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/ApplyPolicyChunk',
+                request_serializer=arm__pb2.PolicyActionChunk.SerializeToString,
+                response_deserializer=arm__pb2.ApplyPolicyChunkResponse.FromString,
                 _registered_method=True)
         self.TeachStart = channel.unary_unary(
                 '/panthera.arm.v1.ArmService/TeachStart',
@@ -341,6 +351,12 @@ class ArmServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def StreamState(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamMeasuredState(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -483,6 +499,13 @@ class ArmServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ApplyPolicyChunk(self, request, context):
+        """需 lease；真机 token 仅由 Pi 本地工具签发
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def TeachStart(self, request, context):
         """---------- 示教录制回放（v2）----------
         需 lease
@@ -609,6 +632,11 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     request_deserializer=arm__pb2.StreamStateRequest.FromString,
                     response_serializer=arm__pb2.RobotState.SerializeToString,
             ),
+            'StreamMeasuredState': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamMeasuredState,
+                    request_deserializer=arm__pb2.StreamMeasuredStateRequest.FromString,
+                    response_serializer=arm__pb2.MeasuredStateSample.SerializeToString,
+            ),
             'CheckReached': grpc.unary_unary_rpc_method_handler(
                     servicer.CheckReached,
                     request_deserializer=arm__pb2.CheckReachedRequest.FromString,
@@ -713,6 +741,11 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     servicer.RunJointTrajectory,
                     request_deserializer=arm__pb2.RunJointTrajectoryRequest.FromString,
                     response_serializer=arm__pb2.ExecutionAccepted.SerializeToString,
+            ),
+            'ApplyPolicyChunk': grpc.unary_unary_rpc_method_handler(
+                    servicer.ApplyPolicyChunk,
+                    request_deserializer=arm__pb2.PolicyActionChunk.FromString,
+                    response_serializer=arm__pb2.ApplyPolicyChunkResponse.SerializeToString,
             ),
             'TeachStart': grpc.unary_unary_rpc_method_handler(
                     servicer.TeachStart,
@@ -1110,6 +1143,33 @@ class ArmService:
             '/panthera.arm.v1.ArmService/StreamState',
             arm__pb2.StreamStateRequest.SerializeToString,
             arm__pb2.RobotState.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamMeasuredState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/StreamMeasuredState',
+            arm__pb2.StreamMeasuredStateRequest.SerializeToString,
+            arm__pb2.MeasuredStateSample.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1677,6 +1737,33 @@ class ArmService:
             '/panthera.arm.v1.ArmService/RunJointTrajectory',
             arm__pb2.RunJointTrajectoryRequest.SerializeToString,
             arm__pb2.ExecutionAccepted.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ApplyPolicyChunk(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/ApplyPolicyChunk',
+            arm__pb2.PolicyActionChunk.SerializeToString,
+            arm__pb2.ApplyPolicyChunkResponse.FromString,
             options,
             channel_credentials,
             insecure,

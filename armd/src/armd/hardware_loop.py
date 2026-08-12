@@ -6,6 +6,7 @@ import enum
 import queue
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from typing import Generic, Protocol, TypeVar, runtime_checkable
 import numpy as np
 
 from .backend import Backend, MotorSnapshot, estop_recovery_frame
+from .state_tap import StateTap
 
 ResultT = TypeVar("ResultT")
 
@@ -53,6 +55,9 @@ class SteppableMotion(Protocol):
 class CachedRobotState:
     motors: tuple[MotorSnapshot, ...]
     refreshed_at: float
+    sampled_monotonic_ns: int
+    sequence: int
+    stream_instance_id: str
 
     def age_s(self, now: float) -> float:
         return max(0.0, now - self.refreshed_at)
@@ -94,6 +99,7 @@ class HardwareLoop:
         *,
         control_hz: float = 200.0,
         max_calls_per_cycle: int = 32,
+        state_tap_capacity: int = 4096,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -112,14 +118,15 @@ class HardwareLoop:
         self._started = threading.Event()
         self._stopped = threading.Event()
         self._state_lock = threading.Lock()
-        self._record_sink_lock = threading.Lock()
         self._estop_lock = threading.Lock()
         self._stats_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._thread_id: int | None = None
         self._failure: BaseException | None = None
         self._cached_state: CachedRobotState | None = None
-        self._record_sink: Callable[[CachedRobotState], None] | None = None
+        self._state_sequence = 0
+        self._stream_instance_id = uuid.uuid4().hex
+        self._state_tap: StateTap[CachedRobotState] = StateTap(state_tap_capacity)
         self._estop_engaged = False
         self._estop_applied = False
         self._estop_recovery_pending = False
@@ -233,10 +240,9 @@ class HardwareLoop:
         with self._state_lock:
             return self._cached_state
 
-    def set_record_sink(self, sink: Callable[[CachedRobotState], None] | None) -> None:
-        """安装轻量、非阻塞的状态记录回调。"""
-        with self._record_sink_lock:
-            self._record_sink = sink
+    @property
+    def state_tap(self) -> StateTap[CachedRobotState]:
+        return self._state_tap
 
     def stats(self) -> LoopStats:
         with self._stats_lock:
@@ -262,7 +268,7 @@ class HardwareLoop:
             backend = self._backend_factory()
             self._thread_id = threading.get_ident()
             backend.refresh_state()
-            self._cache_state(backend, self._clock())
+            self._cache_state(backend)
             started_at = self._clock()
             next_tick = started_at
             self._started.set()
@@ -274,7 +280,7 @@ class HardwareLoop:
                     self._apply_cancel_if_needed()
 
                 backend.refresh_state()
-                self._cache_state(backend, self._clock())
+                self._cache_state(backend)
 
                 if not estop:
                     recovered = self._apply_estop_recovery_if_needed(backend)
@@ -305,6 +311,7 @@ class HardwareLoop:
             if backend is not None:
                 self._shutdown_backend(backend)
             self._fail_pending_requests()
+            self._state_tap.close()
             self._stopped.set()
 
     def _apply_estop_if_needed(self, backend: Backend) -> bool:
@@ -314,6 +321,8 @@ class HardwareLoop:
         if not engaged:
             return False
         if not applied:
+            if self._active_motion is not None:
+                self._active_motion.request_cancel(CancelReason.ESTOP)
             backend.stop()
             self._finish_motion(MotionStepResult.CANCELLED)
             with self._estop_lock:
@@ -423,20 +432,20 @@ class HardwareLoop:
         if future is not None and not future.done():
             future.set_result(result)
 
-    def _cache_state(self, backend: Backend, refreshed_at: float) -> None:
-        state = CachedRobotState(tuple(backend.read_all()), refreshed_at)
+    def _cache_state(self, backend: Backend) -> None:
+        motors = tuple(backend.read_all())
+        refreshed_at = self._clock()
+        self._state_sequence += 1
+        state = CachedRobotState(
+            motors=motors,
+            refreshed_at=refreshed_at,
+            sampled_monotonic_ns=round(refreshed_at * 1_000_000_000),
+            sequence=self._state_sequence,
+            stream_instance_id=self._stream_instance_id,
+        )
         with self._state_lock:
             self._cached_state = state
-        with self._record_sink_lock:
-            sink = self._record_sink
-        if sink is not None:
-            try:
-                sink(state)
-            except Exception:
-                # 记录失败不能打断 200Hz 控制循环；服务层停止记录时可读取 writer 错误。
-                with self._record_sink_lock:
-                    if self._record_sink is sink:
-                        self._record_sink = None
+        self._state_tap.publish(state)
 
     def _shutdown_backend(self, backend: Backend) -> None:
         try:

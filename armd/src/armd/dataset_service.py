@@ -20,6 +20,7 @@ from panthera_arm import dataset_pb2, dataset_pb2_grpc
 from .teach import TeachStore, load_raw_frames
 
 DEFAULT_DATASET_DIR = Path("~/.local/share/panthera/datasets")
+LEROBOT_EXACT_VERSION = "0.4.4"
 
 
 @dataclass(slots=True)
@@ -177,14 +178,17 @@ class DatasetJobManager:
         uv = shutil.which("uv")
         project = Path(__file__).resolve().parents[2]
         if uv is None or not (project / "pyproject.toml").is_file():
-            raise RuntimeError("未安装 LeRobot；请安装 lerobot>=0.4,<0.5，或配置 PANTHERA_LEROBOT_RUNNER")
+            raise RuntimeError(
+                f"未安装 LeRobot；请使用隔离的 lerobot=={LEROBOT_EXACT_VERSION} 环境，"
+                "或配置 PANTHERA_LEROBOT_RUNNER"
+            )
         return [
             uv,
             "run",
             "--project",
             str(project),
             "--with",
-            "lerobot>=0.4,<0.5",
+            f"lerobot=={LEROBOT_EXACT_VERSION}",
             "python",
             "-m",
             "armd.dataset_worker",

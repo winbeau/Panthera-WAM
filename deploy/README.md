@@ -55,6 +55,21 @@ sudo apt-get install -y build-essential cmake libssl-dev libusb-1.0-0-dev pkg-co
 脚本会执行 `uv sync --frozen`，安装与当前 CPython 匹配的 vendored ARM64 SDK wheel，
 从 `vendor/librealsense` 构建 RSUSB Python 绑定，安装并 enable 三个 systemd user
 service，最后运行 armd/D405/C920e 仿真自检。它不会启动真实服务，也不会向机械臂发命令。
+若现有 `armd.env` 仍绑定已经离线的旧地址，脚本会停止并给出带 `--force-config` 的刷新命令，
+不会继续保留一个会让三个服务反复重启的无效地址。
+
+真机 policy 实验默认把末端 tool-point 到位误差 `<= 0.03 m` 视为通过，并允许启动读数在
+软限位边缘有至多 `0.01` 的测量偏差。两者分别由
+`PANTHERA_POLICY_ENDPOINT_TOLERANCE_M` 与
+`PANTHERA_POLICY_START_MEASUREMENT_TOLERANCE` 配置。启动偏差只能用于生成一条回到合法区间
+的轨迹；命令 waypoint 仍必须处于原始软限位内。实验激励应采用约 10 cm 的安全笛卡尔位移，
+或安全选定关节至少 10° 的位移，不使用毫米级或几度微动来判断电机能力。
+
+真机 policy 还要求 `PANTHERA_POLICY_ASSET_ALLOW_LIST` 指向部署 JSON，逐项精确匹配
+`checkpoint_sha256`、`stats_sha256` 和 `schema_sha256`。仅满足 64 位 SHA-256 格式不再足够；
+未配置或不匹配时 armd 会 fail-closed。每个真机 request 还必须由登录 Pi 的操作员在本地交互式
+TTY 运行 `panthera-policy-confirm --request-id <id> --session-id <id> --confirm` 获取一次性 token；
+gRPC/Tailscale 客户端不能自行签发。E-Stop、控制权释放/抢占和 watchdog 过期会撤销所有待用 token。
 
 首次安装 udev 规则：
 

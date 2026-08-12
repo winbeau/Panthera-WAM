@@ -17,6 +17,8 @@ from armd.backend import SimBackend
 from armd.camera.backend import (
     CameraDeviceInfo,
     CameraPixelFormat,
+    CameraTimestampQuality,
+    CameraTimestampSource,
     CameraProfileInfo,
     CameraRole,
     CameraStream,
@@ -52,6 +54,13 @@ def test_camera_worker_keeps_latest_depth_and_color_frames() -> None:
     assert status.model == "RealSense D405 Simulator"
     assert status.role is CameraRole.WRIST
     assert depth.captured_monotonic_ns > 0
+    assert depth.host_receive_monotonic_ns == color.host_receive_monotonic_ns
+    assert depth.host_publish_monotonic_ns == color.host_publish_monotonic_ns
+    assert depth.host_receive_monotonic_ns <= depth.host_publish_monotonic_ns
+    assert depth.frameset_sequence == color.frameset_sequence
+    assert depth.timestamp_source is CameraTimestampSource.DEVICE_TO_HOST_ESTIMATE
+    assert depth.timestamp_quality is CameraTimestampQuality.SIMULATED
+    assert depth.stream_instance_id == color.stream_instance_id
 
 
 def test_overhead_camera_worker_keeps_latest_jpeg_frame() -> None:
@@ -72,6 +81,10 @@ def test_overhead_camera_worker_keeps_latest_jpeg_frame() -> None:
     assert color.data.startswith(b"\xff\xd8")
     assert color.data.endswith(b"\xff\xd9")
     assert color.captured_monotonic_ns > 0
+    assert color.device_timestamp_ms == 0.0
+    assert color.host_receive_monotonic_ns <= color.host_publish_monotonic_ns
+    assert color.timestamp_source is CameraTimestampSource.HOST_RECEIVE
+    assert color.timestamp_quality is CameraTimestampQuality.SIMULATED
     assert status.available
     assert status.streaming
     assert status.role is CameraRole.OVERHEAD
@@ -275,6 +288,10 @@ async def test_camera_grpc_status_snapshot_and_finite_stream() -> None:
         assert len(depth.data) == 8 * 6 * 2
         assert depth.role == camera_pb2.CAMERA_DEVICE_ROLE_WRIST
         assert depth.captured_monotonic_ns > 0
+        assert depth.host_receive_monotonic_ns <= depth.host_publish_monotonic_ns
+        assert depth.timestamp_source == camera_pb2.CAMERA_TIMESTAMP_SOURCE_DEVICE_TO_HOST_ESTIMATE
+        assert depth.timestamp_quality == camera_pb2.CAMERA_TIMESTAMP_QUALITY_SIMULATED
+        assert depth.HasField("estimated_capture_monotonic_ns")
 
         frames = []
         async for frame in stub.StreamFrames(
@@ -288,10 +305,66 @@ async def test_camera_grpc_status_snapshot_and_finite_stream() -> None:
         assert len(frames) == 3
         assert [frame.sequence for frame in frames] == sorted(frame.sequence for frame in frames)
         assert all(frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_RGB8 for frame in frames)
+
+        collected = []
+        async for item in stub.StreamCollectedFrames(
+            camera_pb2.StreamCollectedFramesRequest(
+                stream=camera_pb2.CAMERA_STREAM_TYPE_COLOR,
+                start_at_latest=True,
+                max_frames=3,
+            )
+        ):
+            collected.append(item)
+        sequences = [item.frame.sequence for item in collected]
+        assert sequences == list(range(sequences[0], sequences[0] + 3))
+        assert all(item.overwritten_samples_total == 0 for item in collected)
+        assert len({item.frame.stream_instance_id for item in collected}) == 1
     finally:
         await channel.close()
         await server.stop()
         hardware_loop.stop()
+
+
+@pytest.mark.asyncio
+async def test_camera_collection_stream_surfaces_ring_data_loss() -> None:
+    camera_worker = CameraWorker(
+        lambda: SimCameraBackend(width=8, height=6, fps=120),
+        collection_capacity=2,
+    )
+    camera_server = grpc.aio.server()
+    camera_pb2_grpc.add_CameraServiceServicer_to_server(
+        CameraService(camera_worker),
+        camera_server,
+    )
+    camera_port = camera_server.add_insecure_port("127.0.0.1:0")
+    camera_worker.start()
+    await camera_server.start()
+    channel = grpc.aio.insecure_channel(
+        f"127.0.0.1:{camera_port}",
+        options=(("grpc.enable_http_proxy", 0),),
+    )
+    await channel.channel_ready()
+    stub = camera_pb2_grpc.CameraServiceStub(channel)
+    try:
+        deadline = time.monotonic() + 1.0
+        while (
+            camera_worker.collection_tap(CameraStream.COLOR).stats().newest_sequence < 5
+            and time.monotonic() < deadline
+        ):
+            await asyncio.sleep(0.01)
+        call = stub.StreamCollectedFrames(
+            camera_pb2.StreamCollectedFramesRequest(
+                stream=camera_pb2.CAMERA_STREAM_TYPE_COLOR,
+                after_sequence=0,
+            )
+        )
+        with pytest.raises(grpc.aio.AioRpcError) as error:
+            await call.read()
+        assert error.value.code() is grpc.StatusCode.DATA_LOSS
+    finally:
+        await channel.close()
+        await camera_server.stop(0)
+        camera_worker.stop()
 
 
 @pytest.mark.asyncio
@@ -369,6 +442,10 @@ async def test_overhead_camera_grpc_defaults_to_color_jpeg() -> None:
         assert frame.pixel_format == camera_pb2.CAMERA_PIXEL_FORMAT_JPEG
         assert frame.role == camera_pb2.CAMERA_DEVICE_ROLE_OVERHEAD
         assert frame.captured_monotonic_ns > 0
+        assert frame.device_timestamp_ms == 0.0
+        assert frame.timestamp_source == camera_pb2.CAMERA_TIMESTAMP_SOURCE_HOST_RECEIVE
+        assert frame.timestamp_quality == camera_pb2.CAMERA_TIMESTAMP_QUALITY_SIMULATED
+        assert frame.host_receive_monotonic_ns <= frame.host_publish_monotonic_ns
         assert frame.data.startswith(b"\xff\xd8")
     finally:
         await channel.close()

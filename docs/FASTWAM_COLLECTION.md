@@ -1,0 +1,94 @@
+# FastWAM collection contract
+
+## Ownership and safety
+
+- `HardwareLoop` remains the only owner of the robot backend and the only producer of measured-state sequence numbers.
+- Each cycle performs `refresh_state()` and one seven-motor `read_all()`, then creates one immutable sample with a Pi-monotonic timestamp.
+- `StateTap` is a bounded multi-reader ring. A reader within retention receives every sequence; overflow is explicit `DATA_LOSS` and invalidates the episode.
+- `StreamState` remains a 100 Hz latest-value UI stream. Collection uses `StreamMeasuredState` and never polls the latest cache.
+- Collection is read-only. `collectord` does not acquire a control lease and cannot send movement commands.
+
+Teach recording now drains the same state tap from a separate reader thread; arbitrary recorder callbacks no longer execute in the 200 Hz hardware loop.
+
+## Camera time and loss accounting
+
+`CameraFrame` retains the legacy fields for WPF compatibility and additionally records:
+
+- raw device timestamp, unit, and clock domain;
+- host receive and host publish monotonic timestamps;
+- optional estimated capture time in the Pi monotonic domain;
+- timestamp source and quality;
+- device frame number, frameset sequence, and stream instance ID.
+
+D405 color and depth from one frameset share host-receive time and frameset sequence. `collectord` fits an affine device-clock-to-Pi mapping when at least three native timestamps are available and records drift/residual metrics.
+
+The current C920e `v4l2-ctl` JPEG path does not expose `v4l2_buffer.timestamp`. It therefore reports `HOST_RECEIVE/HOST_OBSERVED` and does not fabricate a device timestamp. Exposure-offset thresholds remain disabled measurement candidates until a dequeue path provides the kernel buffer timestamp.
+
+Preview uses the latest frame. Collection uses `StreamCollectedFrames`, backed by a separate bounded per-stream ring with explicit overflow and sequence accounting.
+
+## Run collectord
+
+Production collection roots require an approval marker named `.panthera-usb3-ssd.json`:
+
+```json
+{"approved": true, "device_class": "usb3_ssd"}
+```
+
+The marker is created only after the target mount, sustained write throughput, fsync latency, free-space reserve, and thermal behavior have been measured. The `--sim-allow-unapproved-root` flag is for tests only.
+
+```bash
+uv run --package panthera-armd collectord \
+  --collection-root /mnt/panthera-ssd \
+  --episode-id color-block-000001 \
+  --task 'Move the red block from the start area to the target area.' \
+  --operator operator-id \
+  --panthera-commit <40-char-sha> \
+  --calibration calibration.json \
+  --identity dataset-identity.json \
+  --capture-depth
+```
+
+Default endpoints are Pi-local ports 50051/50052/50053. Camera roles and configured serials are checked before recording.
+
+## Hardware policy experiment tolerances
+
+Hardware acceptance uses a 3 cm tool-point endpoint tolerance (`PANTHERA_POLICY_ENDPOINT_TOLERANCE_M=0.03`). Test moves must be large enough for the Panthera actuators and cameras to resolve: prefer a conservatively planned Cartesian displacement around 10 cm, or at least 10 degrees on a safely selected joint, rather than millimetre-scale or few-degree probes. The larger test stimulus does not relax commanded waypoint soft limits, table/base/camera exclusion geometry, velocity/acceleration/jerk gates, tracking cancellation, or E-Stop. Hardware policy remains disabled until `PANTHERA_POLICY_CAMERA_BOXES_JSON` contains at least one field-calibrated camera/support exclusion box; provisional empty geometry is not accepted.
+
+A separate startup measurement tolerance (`PANTHERA_POLICY_START_MEASUREMENT_TOLERANCE=0.01`) may admit a measured anchor marginally outside a configured software bound, such as the observed gripper zero bias. Every commanded waypoint remains inside the original limits, and the sampled trajectory may only recover from that measured anchor toward the legal interval; it cannot move farther outside.
+
+Hardware execution also requires a deployment allow-list (`PANTHERA_POLICY_ASSET_ALLOW_LIST`) that exactly matches the checkpoint, normalization-statistics, and schema SHA-256 triple. Digest syntax alone is never an authorization. Each hardware request must additionally carry a Pi-issued confirmation token bound to that request/session; the token is short-lived and consumed once. The token is not available from gRPC/Tailscale: an operator logged into the Pi must run `panthera-policy-confirm --request-id <id> --session-id <id> --confirm` in a local interactive TTY. E-Stop, force/release, and watchdog lease expiry revoke every pending token.
+
+## Atomic staging
+
+A recording is first written below the same filesystem as:
+
+```text
+episodes/.<episode_id>.tmp-<uuid>/
+├── episode.json
+├── samples.parquet
+├── overhead/
+├── wrist_rgb/
+├── wrist_depth/          # optional
+├── sync_report.json
+├── timestamp_quality.json
+├── calibration.json
+└── COMPLETE              # written only after all gates pass
+```
+
+Canonical ticks are generated at rational 30 Hz without accumulated truncation. State is linearly interpolated from the 200 Hz tap. Camera frames are selected by estimated capture time, or explicitly degraded host receive time, without silent frame reuse. Camera/state motion correlation evaluates offsets `[-2,-1,0,1,2]`; insufficient motion produces a null offset rather than a fabricated zero.
+
+After validation, files and directories are fsynced, `COMPLETE` is written, and the temporary directory is atomically renamed. Failed capture or quality checks retain `FAILED.json` and never receive `COMPLETE`.
+
+## Frozen hard gates
+
+An episode is rejected when any of these are nonzero or incomplete:
+
+- timestamp regressions;
+- unexplained source sequence gaps;
+- duplicate canonical camera selections;
+- state/camera ring overflow;
+- missing required canonical state or RGB frame;
+- timestamp source/quality coverage below 100%;
+- malformed seven-axis state, image, depth, identity, calibration, or report totals.
+
+The 99% valid-tick target and state/camera p95/max offset targets are recorded as disabled candidates until real hardware timing evidence is collected.
