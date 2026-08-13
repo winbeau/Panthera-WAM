@@ -242,6 +242,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("PANTHERA_TEACH_MANUAL_CLUTCH", "0") == "1",
         help="启用 teach 显式 lock/drag 离合命令（默认关闭）",
     )
+    parser.add_argument(
+        "--teach-safe-hold-s",
+        type=float,
+        default=float(os.environ.get("PANTHERA_TEACH_SAFE_HOLD_S", "10.0")),
+        help="显式离合 teach 取消后的安全保持时长（秒；期间保持重力前馈与位置刚度）",
+    )
     parser.add_argument("--check", action="store_true", help="启动后通过 gRPC 做一次仿真自检并退出")
     return parser
 
@@ -337,6 +343,7 @@ async def run(args: argparse.Namespace) -> None:
         teach_gravity_residual=args.teach_gravity_residual,
         auto_hold_enabled=args.teach_auto_hold,
         teach_manual_clutch=args.teach_manual_clutch,
+        teach_safe_hold_s=args.teach_safe_hold_s,
     )
     loop.start()
     try:

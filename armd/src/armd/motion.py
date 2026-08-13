@@ -40,10 +40,13 @@ MIT_FRESHNESS_S = 0.12
 TEACH_VEL_THRESHOLD_S = 0.02
 TEACH_TAU_LIMIT = np.array([15.0, 30.0, 30.0, 15.0, 5.0, 5.0], dtype=np.float64)
 # 官方 SDK 的阻抗示例使用 K=[4,10,10,2,2,1]；显式 lock 是确定性
-# 位置保持，不应复用面向自动判定的保守 kp_hold。
-MANUAL_CLUTCH_KP_HOLD = np.array([4.0, 10.0, 10.0, 2.0, 2.0, 1.0], dtype=np.float64)
+# 位置保持，不应复用面向自动判定的保守 kp_hold。承重轴 J2/J3 再提升到 20，
+# 进一步压低残余误差导致的稳态偏移（偏移≈残差/kp）。
+MANUAL_CLUTCH_KP_HOLD = np.array([4.0, 20.0, 20.0, 2.0, 2.0, 1.0], dtype=np.float64)
 MANUAL_CLUTCH_HOLD_RAMP_TIME_S = 0.08
 MANUAL_CLUTCH_RELEASE_RAMP_TIME_S = 0.08
+# 显式 HOLD 阻尼下限：不低于拖动阻尼，并至少达到 kp*0.08 防止欠阻尼振荡。
+MANUAL_CLUTCH_KD_MIN_RATIO = 0.08
 GRIPPER_POSITION_TORQUE_FRACTION = 0.8
 GRIPPER_POSITION_MAX_KP = 5.0
 GRIPPER_POSITION_MAX_KD = 0.5
@@ -54,6 +57,7 @@ class AutoHoldState(str, enum.Enum):
     STILL_DETECT = "still_detect"
     HOLD = "hold"
     RELEASE = "release"
+    SAFE_HOLD = "safe_hold"
 
 
 class TeachClutchCommand(str, enum.Enum):
@@ -753,6 +757,7 @@ class TeachMotion:
         gravity_residual: float | np.ndarray = 0.0,
         auto_hold: AutoHoldConfig | None = None,
         manual_clutch: bool = False,
+        safe_hold_time_s: float = 10.0,
     ) -> None:
         self.kp = np.asarray(kp, dtype=np.float64).copy()
         self.kd = np.asarray(kd, dtype=np.float64).copy()
@@ -777,6 +782,9 @@ class TeachMotion:
             raise ValueError("gravity_residual 必须是有限标量或 6 个有限数值")
         self.gravity_residual = residual.copy()
         self.vel_threshold = float(vel_threshold)
+        if not np.isfinite(safe_hold_time_s) or safe_hold_time_s <= 0:
+            raise ValueError("safe_hold_time_s 必须为正有限数值")
+        self.safe_hold_time_s = float(safe_hold_time_s)
         self.reject_reason = ""
         self._cancel_reason: CancelReason | None = None
         self._lock = threading.Lock()
@@ -799,11 +807,15 @@ class TeachMotion:
             self._kd_drag_now = self.kd.copy()
         else:
             self._kd_drag_now = np.asarray(self.auto_hold_cfg.kd_drag, dtype=np.float64).copy()
-        # 显式 HOLD 的阻尼不得低于拖动阻尼，避免 lock 后阻尼反而变软。
-        self._manual_kd_hold = np.maximum(
-            np.asarray(self.auto_hold_cfg.kd_hold, dtype=np.float64),
-            self._kd_drag_now,
+        # 显式 HOLD 的阻尼不得低于拖动阻尼，并至少达到 kp*0.08 防止欠阻尼振荡。
+        self._manual_kd_hold = np.maximum.reduce(
+            [
+                np.asarray(self.auto_hold_cfg.kd_hold, dtype=np.float64),
+                self._kd_drag_now,
+                MANUAL_CLUTCH_KP_HOLD * MANUAL_CLUTCH_KD_MIN_RATIO,
+            ]
         )
+        self._safe_hold_until: float | None = None
         self._filtered_velocity = np.zeros(6, dtype=np.float64)
         self._velocity_filter_updated_at: float | None = None
 
@@ -818,6 +830,11 @@ class TeachMotion:
     @property
     def hold_kp(self) -> np.ndarray:
         return self._kp_now.copy()
+
+    @property
+    def safe_holding(self) -> bool:
+        """teach 取消后的安全保持阶段：重力前馈+位置保持仍在运行。"""
+        return self._hold_state is AutoHoldState.SAFE_HOLD
 
     @property
     def fraction(self) -> float:
@@ -846,20 +863,35 @@ class TeachMotion:
         positions = np.asarray([state.position for state in states[:6]], dtype=np.float64)
         velocities = np.asarray([state.velocity for state in states[:6]], dtype=np.float64)
         if cancel_reason is not None:
-            backend.write_frame(idle_damping_frame(backend.limits, positions, states[6].position))
-            self.reject_reason = f"示教已停止: {cancel_reason.value}"
-            return MotionStepResult.CANCELLED
+            if self.manual_clutch and self._hold_state is not AutoHoldState.SAFE_HOLD:
+                # 显式离合 teach 被取消（lease 过期/watchdog/客户端停止）时，
+                # 不立即切软：先锚定当前位形并保持重力前馈与位置刚度一段时间，
+                # 避免承重关节失去前馈后直接坠落。
+                self._q_hold = positions.copy()
+                self._still_since = None
+                self._hold_kp_start = np.zeros(6, dtype=np.float64)
+                self._safe_hold_until = now + self.safe_hold_time_s
+                self._enter_state(
+                    AutoHoldState.SAFE_HOLD,
+                    now,
+                    f"cancel -> SAFE_HOLD ({cancel_reason.value}, {self.safe_hold_time_s:g}s)",
+                )
+            if not (self._hold_state is AutoHoldState.SAFE_HOLD and now < (self._safe_hold_until or 0.0)):
+                backend.write_frame(idle_damping_frame(backend.limits, positions, states[6].position))
+                self.reject_reason = f"示教已停止: {cancel_reason.value}"
+                return MotionStepResult.CANCELLED
 
         if self.auto_hold_cfg.enabled:
             kp, kd, cmd_positions, cmd_velocities = self._auto_hold_step(positions, velocities, now)
         else:
             kp, kd, cmd_positions, cmd_velocities = self.kp, self.kd, positions, np.zeros(6)
 
-        # HOLD/RELEASE 的前馈锚定在锁定位形：重力项不能随漂移后的 q 追着走，
+        # HOLD/RELEASE/SAFE_HOLD 的前馈锚定在锁定位形：重力项不能随漂移后的 q 追着走，
         # 摩擦项也不能把当前漂移速度变成同方向助推。DRAG 仍使用实时 q/v。
         if self.manual_clutch and self._q_hold is not None and self._hold_state in {
             AutoHoldState.HOLD,
             AutoHoldState.RELEASE,
+            AutoHoldState.SAFE_HOLD,
         }:
             compensation_position = self._q_hold
             compensation_velocity = np.zeros(6, dtype=np.float64)
@@ -918,9 +950,13 @@ class TeachMotion:
         只依赖关节速度判定，不依赖力矩/外力估计。
         """
         cfg = self.auto_hold_cfg
-        with self._lock:
-            clutch_request = self._clutch_request
-            self._clutch_request = None
+        if self._hold_state is AutoHoldState.SAFE_HOLD:
+            # 安全保持期间忽略新的离合命令；只由超时退出。
+            clutch_request = None
+        else:
+            with self._lock:
+                clutch_request = self._clutch_request
+                self._clutch_request = None
         if clutch_request is TeachClutchCommand.LOCK:
             self._q_hold = q.copy()
             self._still_since = None
@@ -939,7 +975,7 @@ class TeachMotion:
 
         # 显式离合模式不再依据速度自动切换。
         if self.manual_clutch:
-            if self._hold_state is AutoHoldState.HOLD:
+            if self._hold_state in {AutoHoldState.HOLD, AutoHoldState.SAFE_HOLD}:
                 assert self._q_hold is not None
                 elapsed = max(0.0, now - (self._state_since or now))
                 s = _smoothstep(elapsed / MANUAL_CLUTCH_HOLD_RAMP_TIME_S)

@@ -21,7 +21,12 @@ async def v2_stack(tmp_path, monkeypatch):
     monkeypatch.setenv("PANTHERA_TEACH_DIR", str(tmp_path / "teach"))
     loop = HardwareLoop(SimBackend, control_hz=200.0)
     loop.start()
-    server = ArmdServer(loop, bind="127.0.0.1:0", lease_timeout_s=60.0)
+    server = ArmdServer(
+        loop,
+        bind="127.0.0.1:0",
+        lease_timeout_s=60.0,
+        teach_safe_hold_s=2.0,
+    )
     await server.start()
     channel = grpc.aio.insecure_channel(
         f"127.0.0.1:{server.port}",
@@ -240,7 +245,10 @@ async def test_m7_teach_manual_clutch_lock_and_drag(v2_stack) -> None:
     await asyncio.sleep(0.25)
     stopped = await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
     assert stopped.accepted
-    await asyncio.sleep(0.03)
+    # 显式离合 teach 停止后进入限时 SAFE_HOLD（2s），再自然结束
+    await asyncio.sleep(0.01)
+    assert loop.has_active_motion
+    await asyncio.sleep(2.2)
     assert not loop.has_active_motion
 
 

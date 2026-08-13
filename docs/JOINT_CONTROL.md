@@ -247,10 +247,21 @@ pkill -f "control heartbeat"            # 结束 teach
 ```
 
 `lock` 不依赖机械臂当前速度或重力残差；HOLD 使用 SDK 阻抗示例量级
-`kp=[4,10,10,2,2,1]`，约 80 ms 内按 smoothstep 建立，并确保 HOLD 阻尼不低于拖动阻尼。
-重力前馈固定按锁定位形计算，摩擦前馈使用零目标速度，避免漂移后继续同向助推。
-`drag` 通过约 80 ms RELEASE 平滑降刚度，避免突然跳变。录制 color-block 时，在每次放置
-或调整末端后执行 `lock`，拖到下一位置前执行 `drag`。
+`kp=[4,20,20,2,2,1]`，约 80 ms 内按 smoothstep 建立，并确保 HOLD 阻尼不低于拖动阻尼
+且至少为 `kp*0.08`。重力前馈固定按锁定位形计算，摩擦前馈使用零目标速度，避免漂移后
+继续同向助推。`drag` 通过约 80 ms RELEASE 平滑降刚度，避免突然跳变。录制 color-block 时，
+在每次放置或调整末端后执行 `lock`，拖到下一位置前执行 `drag`。
+
+### 停止 teach 的安全保持（SAFE_HOLD）
+
+显式离合 teach 被取消时（`teach stop`、lease 过期、`pkill -f "control heartbeat"`），
+不会立即切软：先锚定当前位形，以重力/摩擦前馈 + 强位置刚度保持约 10 秒
+（`PANTHERA_TEACH_SAFE_HOLD_S` 可调），之后才退出到零前馈柔顺阻尼。
+**10 秒窗口结束前请扶住机械臂**；高位停止时不要站在承重关节下。
+```bash
+./deploy/teach-cal.sh stop      # 优雅停止（含 SAFE_HOLD）
+pkill -f "control heartbeat"    # 等价：lease 过期同样进入 SAFE_HOLD
+```
 
 ## 4. 安全须知
 

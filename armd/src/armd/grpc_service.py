@@ -226,6 +226,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         teach_gravity_residual: float | np.ndarray = 0.0,
         auto_hold_enabled: bool = True,
         teach_manual_clutch: bool = False,
+        teach_safe_hold_s: float = 10.0,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
@@ -251,6 +252,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         self._teach_gravity_residual = float(residual) if residual.shape == () else residual.copy()
         self._auto_hold_enabled = bool(auto_hold_enabled)
         self._teach_manual_clutch = bool(teach_manual_clutch)
+        self._teach_safe_hold_s = float(teach_safe_hold_s)
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
@@ -334,6 +336,10 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         while self._hardware_loop.has_active_motion and time.monotonic() < deadline:
             await asyncio.sleep(min(self._hardware_loop.period_s, 0.01))
         if self._hardware_loop.has_active_motion:
+            teach = self.arm_service._teach_motion
+            if teach is not None and teach.safe_holding:
+                # 显式离合 teach 取消后的安全保持自行限时结束；不升级 EStop。
+                return True
             self._hardware_loop.request_estop()
             estop_deadline = time.monotonic() + 0.2
             while not self._hardware_loop.estop_applied and time.monotonic() < estop_deadline:
@@ -1452,6 +1458,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 gravity_residual=self._teach_gravity_residual,
                 auto_hold=AutoHoldConfig() if self._auto_hold_enabled else AutoHoldConfig(enabled=False),
                 manual_clutch=bool(request.manual_clutch) or self._teach_manual_clutch,
+                safe_hold_time_s=self._teach_safe_hold_s,
             )
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
@@ -1525,12 +1532,15 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             )
         except (TimeoutError, asyncio.TimeoutError, RuntimeError):
             pass
-        if self._teach_completion is completion:
+        # 显式离合 teach 取消后进入有限时长的 SAFE_HOLD：运动尚未结束。
+        # 此时保留引用，由 monitor 任务在 SAFE_HOLD 结束后统一清理，
+        # 否则 watchdog/ReleaseControl 会失去 safe_holding 判断依据。
+        if self._teach_completion is completion and completion.done():
             self._teach_motion = None
             self._teach_completion = None
-        if self._teach_monitor_task is monitor:
+        if self._teach_monitor_task is monitor and completion.done():
             self._teach_monitor_task = None
-        if monitor is not None and monitor is not asyncio.current_task():
+        if monitor is not None and monitor is not asyncio.current_task() and completion.done():
             monitor.cancel()
             try:
                 await monitor

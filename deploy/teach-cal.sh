@@ -12,6 +12,7 @@
 #   teach-cal.sh --reset                # 恢复出厂基线
 #   teach-cal.sh lock                   # 运行中的 teach 锁定当前位置
 #   teach-cal.sh drag                   # 运行中的 teach 恢复手拖
+#   teach-cal.sh stop                   # 优雅停止（进入约10秒 SAFE_HOLD，请扶住机械臂）
 #
 # 增量规则：逗号分隔 5 个值（顺序 kp,kd,fc,fv,scale）；0 = 不修改；
 # 数字 = 当前值 + 增量（可正可负）。scale 必须保持 >0。
@@ -29,6 +30,15 @@ if [[ ${1:-} == "lock" || ${1:-} == "drag" ]]; then
     cd "$HOME/Panthera-WAM"
     uv run --no-sync --package panthera-cli panthera teach clutch "$1" 2>&1 \
         | grep -v "incompatible\|Warning" | tail -1
+    exit ${PIPESTATUS[0]}
+fi
+
+if [[ ${1:-} == "stop" ]]; then
+    [[ $# -eq 1 ]] || { echo "error: stop 不接受额外参数" >&2; exit 2; }
+    cd "$HOME/Panthera-WAM"
+    uv run --no-sync --package panthera-cli panthera teach stop 2>&1 \
+        | grep -v "incompatible\|Warning" | tail -1
+    echo "==> teach 已停止；将保持当前位置约 10s（SAFE_HOLD），请扶住机械臂"
     exit ${PIPESTATUS[0]}
 fi
 
@@ -120,4 +130,4 @@ sleep 4
 uv run --no-sync --package panthera-cli panthera teach start --manual-clutch --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" 2>&1 | grep -v "incompatible\|Warning" | tail -1
 timeout 20 uv run --no-sync --package panthera-cli panthera state get 2>&1 | grep -v "incompatible\|Warning" | sed -n '4,9p'
 echo "==> teach 运行中（显式离合）：./deploy/teach-cal.sh lock 锁定；./deploy/teach-cal.sh drag 手拖"
-echo "==> 停止：pkill -f \"control heartbeat\""
+echo "==> 停止（会先 SAFE_HOLD 约10秒）：./deploy/teach-cal.sh stop 或 pkill -f \"control heartbeat\""

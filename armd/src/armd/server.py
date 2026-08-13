@@ -48,6 +48,7 @@ class ArmdServer:
         teach_gravity_residual: float | np.ndarray = 0.0,
         auto_hold_enabled: bool = True,
         teach_manual_clutch: bool = False,
+        teach_safe_hold_s: float = 10.0,
     ) -> None:
         if camera_worker is not None and camera_endpoint is not None:
             raise ValueError("camera_worker 与 camera_endpoint 不能同时设置")
@@ -83,6 +84,7 @@ class ArmdServer:
             teach_gravity_residual=teach_gravity_residual,
             auto_hold_enabled=auto_hold_enabled,
             teach_manual_clutch=teach_manual_clutch,
+            teach_safe_hold_s=teach_safe_hold_s,
         )
         arm_pb2_grpc.add_ArmServiceServicer_to_server(
             self.arm_service,
@@ -152,6 +154,10 @@ class ArmdServer:
                 while self.hardware_loop.has_active_motion and asyncio.get_running_loop().time() < deadline:
                     await asyncio.sleep(min(self.hardware_loop.period_s, 0.01))
                 if self.hardware_loop.has_active_motion:
+                    teach = self.arm_service._teach_motion
+                    if teach is not None and teach.safe_holding:
+                        # 显式离合 teach 的安全保持自行限时结束，等待即可，不升级 EStop。
+                        continue
                     self.hardware_loop.request_estop()
                     estop_deadline = asyncio.get_running_loop().time() + 0.2
                     while (

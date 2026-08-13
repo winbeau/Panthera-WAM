@@ -14,6 +14,7 @@ from armd.motion import (
     JOG_FRESHNESS_S,
     JOG_TARGET_LOOKAHEAD_S,
     MANUAL_CLUTCH_HOLD_RAMP_TIME_S,
+    MANUAL_CLUTCH_KD_MIN_RATIO,
     MANUAL_CLUTCH_KP_HOLD,
     JointJogMotion,
     JointPositionMotion,
@@ -566,7 +567,9 @@ def test_manual_clutch_lock_samples_current_position_and_ignores_velocity() -> N
         motion.step(backend, clock.now)
     assert motion.auto_hold_state is AutoHoldState.HOLD
     assert backend.frames[-1].arm_kp == pytest.approx(MANUAL_CLUTCH_KP_HOLD, abs=0.05)
-    assert backend.frames[-1].arm_kd == pytest.approx(np.maximum(cfg.kd_hold, motion.kd))
+    assert backend.frames[-1].arm_kd == pytest.approx(
+        np.maximum.reduce([np.asarray(cfg.kd_hold), motion.kd, MANUAL_CLUTCH_KP_HOLD * MANUAL_CLUTCH_KD_MIN_RATIO])
+    )
     assert 16 * 0.005 == pytest.approx(MANUAL_CLUTCH_HOLD_RAMP_TIME_S)
 
 
@@ -668,6 +671,112 @@ def test_manual_clutch_rejects_command_when_not_enabled() -> None:
     )
     with pytest.raises(ValueError, match="未启用显式 clutch"):
         motion.request_clutch(TeachClutchCommand.LOCK)
+
+
+def test_manual_clutch_cancel_enters_safe_hold_then_limps() -> None:
+    class CapturingBackend(RecordingSimBackend):
+        def compensation_torque(
+            self,
+            q,
+            v,
+            fc,
+            fv,
+            vel_threshold,
+            gravity_scale=1.0,
+            gravity_scale_high=None,
+            gravity_breakpoint=None,
+        ):
+            return np.asarray(q) + np.asarray(v)
+
+    clock = FakeClock()
+    backend = CapturingBackend(clock=clock)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.array([0.4, 2.0, 0.6, 0.4, 0.15, 0.08]),
+        fc=np.full(6, 0.15),
+        fv=np.full(6, 0.06),
+        manual_clutch=True,
+        safe_hold_time_s=0.2,
+    )
+    pose = np.array([0.1, 1.3, 0.2, -0.1, 0.05, -0.05])
+    backend._positions[:6] = pose
+    for _ in range(3):
+        clock.advance(0.005)
+        backend.refresh_state()
+        motion.step(backend, clock.now)
+
+    motion.request_cancel(CancelReason.WATCHDOG)
+    clock.advance(0.005)
+    backend.refresh_state()
+    backend._positions[:6] = pose  # 模拟保持期间的轻微外部扰动
+    result = motion.step(backend, clock.now)
+
+    assert result is MotionStepResult.RUNNING
+    assert motion.auto_hold_state is AutoHoldState.SAFE_HOLD
+    assert motion.safe_holding
+    assert motion.hold_position == pytest.approx(pose)
+    assert backend.frames[-1].arm_position == pytest.approx(pose)
+    # SAFE_HOLD 帧：锚定重力/摩擦前馈（q_hold、零速度）+ 强位置刚度
+    assert backend.frames[-1].arm_torque == pytest.approx(pose)
+
+    for _ in range(20):
+        clock.advance(0.005)
+        backend.refresh_state()
+        motion.step(backend, clock.now)
+    assert backend.frames[-1].arm_kp == pytest.approx(MANUAL_CLUTCH_KP_HOLD, abs=0.05)
+
+    for _ in range(32):
+        clock.advance(0.005)
+        backend.refresh_state()
+    result = motion.step(backend, clock.now)
+    assert result is MotionStepResult.CANCELLED
+    assert backend.frames[-1].mode is FrameMode.POS_VEL_TQE_KP_KD
+    assert backend.frames[-1].arm_kp == pytest.approx([0.0] * 6)
+    assert backend.frames[-1].arm_torque == pytest.approx([0.0] * 6)
+
+
+def test_manual_clutch_safe_hold_rejects_new_clutch_commands() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        manual_clutch=True,
+        safe_hold_time_s=0.2,
+    )
+    motion.request_cancel(CancelReason.CLIENT)
+    motion.step(backend, clock.now)
+    assert motion.safe_holding
+
+    motion.request_clutch(TeachClutchCommand.DRAG)
+    clock.advance(0.005)
+    backend.refresh_state()
+    motion.step(backend, clock.now)
+    # SAFE_HOLD 期间忽略离合命令
+    assert motion.auto_hold_state is AutoHoldState.SAFE_HOLD
+
+
+def test_manual_clutch_hold_kd_never_below_drag_or_kp_ratio() -> None:
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.array([0.4, 2.0, 0.6, 0.4, 0.15, 0.08]),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        manual_clutch=True,
+    )
+    expected = np.maximum.reduce(
+        [
+            np.asarray(motion.auto_hold_cfg.kd_hold),
+            motion.kd,
+            MANUAL_CLUTCH_KP_HOLD * MANUAL_CLUTCH_KD_MIN_RATIO,
+        ]
+    )
+    assert motion._manual_kd_hold == pytest.approx(expected)
+    # J2/J3 承重轴：kp=20 时 kd 至少 1.6
+    assert motion._manual_kd_hold[1] >= 1.6
+    assert motion._manual_kd_hold[2] >= 1.6
 
 
 def test_auto_hold_locks_position_after_still() -> None:
