@@ -228,6 +228,11 @@ class ArmServiceStub:
                 request_serializer=arm__pb2.TeachStartRequest.SerializeToString,
                 response_deserializer=arm__pb2.TeachStartResponse.FromString,
                 _registered_method=True)
+        self.TeachClutch = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/TeachClutch',
+                request_serializer=arm__pb2.TeachClutchRequest.SerializeToString,
+                response_deserializer=arm__pb2.TeachClutchResponse.FromString,
+                _registered_method=True)
         self.TeachStop = channel.unary_unary(
                 '/panthera.arm.v1.ArmService/TeachStop',
                 request_serializer=arm__pb2.Empty.SerializeToString,
@@ -526,6 +531,13 @@ class ArmServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def TeachClutch(self, request, context):
+        """需 lease
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def TeachStop(self, request, context):
         """需 lease
         """
@@ -768,6 +780,11 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     servicer.TeachStart,
                     request_deserializer=arm__pb2.TeachStartRequest.FromString,
                     response_serializer=arm__pb2.TeachStartResponse.SerializeToString,
+            ),
+            'TeachClutch': grpc.unary_unary_rpc_method_handler(
+                    servicer.TeachClutch,
+                    request_deserializer=arm__pb2.TeachClutchRequest.FromString,
+                    response_serializer=arm__pb2.TeachClutchResponse.SerializeToString,
             ),
             'TeachStop': grpc.unary_unary_rpc_method_handler(
                     servicer.TeachStop,
@@ -1835,6 +1852,33 @@ class ArmService:
             '/panthera.arm.v1.ArmService/TeachStart',
             arm__pb2.TeachStartRequest.SerializeToString,
             arm__pb2.TeachStartResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TeachClutch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/TeachClutch',
+            arm__pb2.TeachClutchRequest.SerializeToString,
+            arm__pb2.TeachClutchResponse.FromString,
             options,
             channel_credentials,
             insecure,

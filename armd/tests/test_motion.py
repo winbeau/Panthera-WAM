@@ -15,6 +15,7 @@ from armd.motion import (
     JOG_TARGET_LOOKAHEAD_S,
     JointJogMotion,
     JointPositionMotion,
+    TeachClutchCommand,
     TeachMotion,
     gripper_position_frame,
 )
@@ -523,6 +524,101 @@ def _drag_until_still_holds(clock, backend, motion, *, drag_steps: int = 5) -> N
         backend.refresh_state()
         backend._velocities[:6] = 0.0
         assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+
+
+def test_manual_clutch_lock_samples_current_position_and_ignores_velocity() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    cfg = AutoHoldConfig(hold_ramp_time=0.4)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        auto_hold=cfg,
+        manual_clutch=True,
+    )
+
+    for _ in range(60):
+        clock.advance(0.005)
+        backend.refresh_state()
+        backend._velocities[:6] = 0.0
+        motion.step(backend, clock.now)
+    assert motion.auto_hold_state is AutoHoldState.DRAG
+
+    backend._positions[:6] = np.array([0.1, 1.3, 0.2, -0.1, 0.05, -0.05])
+    backend._velocities[:6] = 0.1
+    expected = backend._positions[:6].copy()
+    motion.request_clutch(TeachClutchCommand.LOCK)
+    motion.step(backend, clock.now)
+
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+    assert motion.hold_position == pytest.approx(expected)
+    assert backend.frames[-1].arm_position == pytest.approx(expected)
+    assert backend.frames[-1].arm_kp == pytest.approx([0.0] * 6)
+
+    for _ in range(80):
+        clock.advance(0.005)
+        backend.refresh_state()
+        backend._velocities[:6] = 0.1
+        motion.step(backend, clock.now)
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+    assert backend.frames[-1].arm_kp == pytest.approx(cfg.kp_hold, abs=0.05)
+
+
+def test_manual_clutch_drag_releases_smoothly_then_stays_drag() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    cfg = AutoHoldConfig(hold_ramp_time=0.05, release_ramp_time=0.2)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        auto_hold=cfg,
+        manual_clutch=True,
+    )
+    motion.request_clutch(TeachClutchCommand.LOCK)
+    motion.step(backend, clock.now)
+    for _ in range(12):
+        clock.advance(0.005)
+        backend.refresh_state()
+        motion.step(backend, clock.now)
+    assert motion.hold_kp.max() > 0.0
+
+    motion.request_clutch(TeachClutchCommand.DRAG)
+    motion.step(backend, clock.now)
+    assert motion.auto_hold_state is AutoHoldState.RELEASE
+    previous = backend.frames[-1].arm_kp.copy()
+    for _ in range(44):
+        clock.advance(0.005)
+        backend.refresh_state()
+        backend._velocities[:6] = 0.0
+        motion.step(backend, clock.now)
+        current = backend.frames[-1].arm_kp
+        assert np.all(current <= previous + 1e-9)
+        previous = current
+
+    assert motion.auto_hold_state is AutoHoldState.DRAG
+    assert motion.hold_position is None
+    assert backend.frames[-1].arm_kp == pytest.approx([0.0] * 6)
+    for _ in range(60):
+        clock.advance(0.005)
+        backend.refresh_state()
+        backend._velocities[:6] = 0.0
+        motion.step(backend, clock.now)
+    assert motion.auto_hold_state is AutoHoldState.DRAG
+
+
+def test_manual_clutch_rejects_command_when_not_enabled() -> None:
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+    )
+    with pytest.raises(ValueError, match="未启用显式 clutch"):
+        motion.request_clutch(TeachClutchCommand.LOCK)
 
 
 def test_auto_hold_locks_position_after_still() -> None:

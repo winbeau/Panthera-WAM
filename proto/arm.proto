@@ -482,8 +482,22 @@ message TeachStartRequest {
   repeated double kd = 2;
   repeated double fc = 3;
   repeated double fv = 4;
+  // true 时只接受显式 TeachClutch(lock/drag) 命令，不依赖速度猜测松手。
+  bool manual_clutch = 5;
 }
 message TeachStartResponse { bool accepted = 1; string reject_reason = 2; }
+
+enum TeachClutchMode {
+  TEACH_CLUTCH_MODE_UNSPECIFIED = 0;
+  TEACH_CLUTCH_MODE_LOCK = 1;  // 下一控制周期采样当前位置并锁定
+  TEACH_CLUTCH_MODE_DRAG = 2;  // 平滑释放位置刚度，恢复手拖
+}
+message TeachClutchRequest { TeachClutchMode mode = 1; }
+message TeachClutchResponse {
+  bool accepted = 1;
+  string reject_reason = 2;
+  string state = 3;  // 命令排队时的当前 Auto-Hold 状态
+}
 message TeachStopResponse { bool accepted = 1; }
 
 message TeachRecordStartRequest {
@@ -600,6 +614,7 @@ service ArmService {
 
   // ---------- 示教录制回放（v2）----------
   rpc TeachStart(TeachStartRequest) returns (TeachStartResponse);               // 需 lease
+  rpc TeachClutch(TeachClutchRequest) returns (TeachClutchResponse);             // 需 lease
   rpc TeachStop(Empty) returns (TeachStopResponse);                             // 需 lease
   rpc TeachRecordStart(TeachRecordStartRequest) returns (TeachRecordStartResponse); // 需 lease
   rpc TeachRecordStop(Empty) returns (TeachRecordStopResponse);                 // 需 lease

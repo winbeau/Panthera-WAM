@@ -29,6 +29,7 @@ from .motion import (
     JointMITMotion,
     JointPositionMotion,
     TEACH_TAU_LIMIT,
+    TeachClutchCommand,
     TeachMotion,
     TeachPlaybackMotion,
     AutoHoldConfig,
@@ -78,6 +79,7 @@ LEASE_PROTECTED_METHODS = {
     "RunJointTrajectory",
     "ApplyPolicyChunk",
     "TeachStart",
+    "TeachClutch",
     "TeachStop",
     "TeachRecordStart",
     "TeachRecordStop",
@@ -223,6 +225,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         teach_gravity_segmented: bool = False,
         teach_gravity_residual: float | np.ndarray = 0.0,
         auto_hold_enabled: bool = True,
+        teach_manual_clutch: bool = False,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
@@ -247,6 +250,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         residual = np.asarray(teach_gravity_residual, dtype=np.float64)
         self._teach_gravity_residual = float(residual) if residual.shape == () else residual.copy()
         self._auto_hold_enabled = bool(auto_hold_enabled)
+        self._teach_manual_clutch = bool(teach_manual_clutch)
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
@@ -1447,6 +1451,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 gravity_segmented=self._teach_gravity_segmented,
                 gravity_residual=self._teach_gravity_residual,
                 auto_hold=AutoHoldConfig() if self._auto_hold_enabled else AutoHoldConfig(enabled=False),
+                manual_clutch=bool(request.manual_clutch) or self._teach_manual_clutch,
             )
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
@@ -1465,6 +1470,39 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             name="panthera-teach-monitor",
         )
         return arm_pb2.TeachStartResponse(accepted=True)
+
+    async def TeachClutch(self, request, context):
+        await self._refresh_teach_motion()
+        motion = self._teach_motion
+        if motion is None:
+            return arm_pb2.TeachClutchResponse(
+                accepted=False,
+                reject_reason="当前没有运行中的 teach",
+            )
+        if not motion.manual_clutch:
+            return arm_pb2.TeachClutchResponse(
+                accepted=False,
+                reject_reason="当前 teach 未启用显式 clutch；请用 teach start --manual-clutch",
+                state=motion.auto_hold_state.value,
+            )
+        commands = {
+            arm_pb2.TEACH_CLUTCH_MODE_LOCK: TeachClutchCommand.LOCK,
+            arm_pb2.TEACH_CLUTCH_MODE_DRAG: TeachClutchCommand.DRAG,
+        }
+        command = commands.get(request.mode)
+        if command is None:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "mode 必须为 lock 或 drag")
+        try:
+            motion.request_clutch(command)
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        return arm_pb2.TeachClutchResponse(
+            accepted=True,
+            state=motion.auto_hold_state.value,
+        )
 
     async def TeachStop(self, request, context):
         del request

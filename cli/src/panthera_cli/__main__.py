@@ -1265,6 +1265,7 @@ def teach_start(
     kd: str | None = typer.Option(None, "--kd"),
     fc: str | None = typer.Option(None, "--fc"),
     fv: str | None = typer.Option(None, "--fv"),
+    manual_clutch: bool = typer.Option(False, "--manual-clutch"),
 ) -> None:
     lease = load_lease()
     channel, stub = create_stub(lease.endpoint)
@@ -1275,6 +1276,7 @@ def teach_start(
                 kd=optional_float_list(kd, name="kd"),
                 fc=optional_float_list(fc, name="fc"),
                 fv=optional_float_list(fv, name="fv"),
+                manual_clutch=manual_clutch,
             ),
             metadata=lease_metadata(lease),
         )
@@ -1286,6 +1288,32 @@ def teach_start(
         console.print(f"[red]拖动示教启动失败[/red]: {response.reject_reason}")
         raise typer.Exit(2)
     console.print("[green]拖动示教已启动[/green]（需持续 heartbeat 保持控制权）")
+
+
+@teach_app.command("clutch")
+def teach_clutch(mode: str = typer.Argument(..., help="lock=锁定当前位置；drag=恢复手拖")) -> None:
+    normalized_mode = mode.strip().lower()
+    mode_values = {
+        "lock": arm_pb2.TEACH_CLUTCH_MODE_LOCK,
+        "drag": arm_pb2.TEACH_CLUTCH_MODE_DRAG,
+    }
+    if normalized_mode not in mode_values:
+        raise typer.BadParameter("mode 必须是 lock 或 drag")
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        response = stub.TeachClutch(
+            arm_pb2.TeachClutchRequest(mode=mode_values[normalized_mode]),
+            metadata=lease_metadata(lease),
+        )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if not response.accepted:
+        console.print(f"[red]teach clutch {normalized_mode} 失败[/red]: {response.reject_reason}")
+        raise typer.Exit(2)
+    console.print(f"[green]teach clutch {normalized_mode} 已发送[/green] state={response.state}")
 
 
 @teach_app.command("stop")

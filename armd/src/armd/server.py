@@ -47,6 +47,7 @@ class ArmdServer:
         teach_gravity_segmented: bool = False,
         teach_gravity_residual: float | np.ndarray = 0.0,
         auto_hold_enabled: bool = True,
+        teach_manual_clutch: bool = False,
     ) -> None:
         if camera_worker is not None and camera_endpoint is not None:
             raise ValueError("camera_worker 与 camera_endpoint 不能同时设置")
@@ -81,6 +82,7 @@ class ArmdServer:
             teach_gravity_segmented=teach_gravity_segmented,
             teach_gravity_residual=teach_gravity_residual,
             auto_hold_enabled=auto_hold_enabled,
+            teach_manual_clutch=teach_manual_clutch,
         )
         arm_pb2_grpc.add_ArmServiceServicer_to_server(
             self.arm_service,

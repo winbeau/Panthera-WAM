@@ -60,6 +60,7 @@ EXPECTED_COMMANDS = {
     "state get",
     "state watch",
     "trajectory run-waypoints",
+    "teach clutch",
     "teach list",
     "teach play",
     "teach record start",

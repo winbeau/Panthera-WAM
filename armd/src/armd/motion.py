@@ -51,6 +51,11 @@ class AutoHoldState(str, enum.Enum):
     RELEASE = "release"
 
 
+class TeachClutchCommand(str, enum.Enum):
+    LOCK = "lock"
+    DRAG = "drag"
+
+
 @dataclass(frozen=True, slots=True)
 class AutoHoldConfig:
     """Auto-Hold（静止自动锁位）配置：松手检测 + 位置保持 + 平滑退出。
@@ -742,6 +747,7 @@ class TeachMotion:
         gravity_segmented: bool = False,
         gravity_residual: float | np.ndarray = 0.0,
         auto_hold: AutoHoldConfig | None = None,
+        manual_clutch: bool = False,
     ) -> None:
         self.kp = np.asarray(kp, dtype=np.float64).copy()
         self.kd = np.asarray(kd, dtype=np.float64).copy()
@@ -772,11 +778,18 @@ class TeachMotion:
 
         # ---- Auto-Hold 状态机（None=默认启用；enabled=False 禁用并回退原行为）----
         self.auto_hold_cfg = auto_hold if auto_hold is not None else AutoHoldConfig()
+        self.manual_clutch = bool(manual_clutch)
+        if self.manual_clutch and not self.auto_hold_cfg.enabled:
+            raise ValueError("manual_clutch 需要启用 auto-hold 位置保持")
+        self._clutch_request: TeachClutchCommand | None = None
         self._hold_state = AutoHoldState.DRAG
         self._state_since: float | None = None
         self._still_since: float | None = None
         self._q_hold: np.ndarray | None = None
         self._kp_now = np.zeros(6, dtype=np.float64)
+        self._hold_kp_start = np.zeros(6, dtype=np.float64)
+        self._release_kp_start = np.zeros(6, dtype=np.float64)
+        self._release_kd_start = np.zeros(6, dtype=np.float64)
         if self.auto_hold_cfg.kd_drag is None:
             self._kd_drag_now = self.kd.copy()
         else:
@@ -799,6 +812,14 @@ class TeachMotion:
     @property
     def fraction(self) -> float:
         return 0.0
+
+    def request_clutch(self, command: TeachClutchCommand) -> None:
+        if not self.manual_clutch:
+            raise ValueError("当前 teach 未启用显式 clutch")
+        if not isinstance(command, TeachClutchCommand):
+            raise ValueError("clutch 命令必须为 lock 或 drag")
+        with self._lock:
+            self._clutch_request = command
 
     def request_cancel(self, reason: CancelReason) -> None:
         with self._lock:
@@ -876,6 +897,49 @@ class TeachMotion:
         只依赖关节速度判定，不依赖力矩/外力估计。
         """
         cfg = self.auto_hold_cfg
+        with self._lock:
+            clutch_request = self._clutch_request
+            self._clutch_request = None
+        if clutch_request is TeachClutchCommand.LOCK:
+            self._q_hold = q.copy()
+            self._still_since = None
+            self._hold_kp_start = self._kp_now.copy()
+            self._enter_state(AutoHoldState.HOLD, now, "显式 lock -> HOLD (锁定当前位置)")
+        elif clutch_request is TeachClutchCommand.DRAG:
+            self._still_since = None
+            if self._hold_state in {AutoHoldState.HOLD, AutoHoldState.RELEASE}:
+                self._release_kp_start = self._kp_now.copy()
+                self._release_kd_start = np.asarray(cfg.kd_hold, dtype=np.float64).copy()
+                self._enter_state(AutoHoldState.RELEASE, now, "显式 drag -> RELEASE (恢复手拖)")
+            else:
+                self._q_hold = None
+                self._kp_now.fill(0.0)
+                self._enter_state(AutoHoldState.DRAG, now, "显式 drag -> DRAG")
+
+        # 显式离合模式不再依据速度自动切换。
+        if self.manual_clutch:
+            if self._hold_state is AutoHoldState.HOLD:
+                assert self._q_hold is not None
+                elapsed = max(0.0, now - (self._state_since or now))
+                s = _smoothstep(elapsed / cfg.hold_ramp_time)
+                kp_hold = np.asarray(cfg.kp_hold, dtype=np.float64)
+                self._kp_now = self._hold_kp_start + (kp_hold - self._hold_kp_start) * s
+                return self._kp_now, np.asarray(cfg.kd_hold, dtype=np.float64), self._q_hold, np.zeros(6)
+            if self._hold_state is AutoHoldState.RELEASE:
+                assert self._state_since is not None
+                elapsed = max(0.0, now - self._state_since)
+                s = _smoothstep(elapsed / cfg.release_ramp_time)
+                self._kp_now = self._release_kp_start * (1.0 - s)
+                kd_now = self._kd_drag_now + (self._release_kd_start - self._kd_drag_now) * (1.0 - s)
+                if elapsed >= cfg.release_ramp_time:
+                    self._kp_now.fill(0.0)
+                    self._q_hold = None
+                    self._enter_state(AutoHoldState.DRAG, now, "显式 release -> DRAG")
+                cmd = q if self._q_hold is None else self._q_hold
+                return self._kp_now, kd_now, cmd, np.zeros(6)
+            self._kp_now.fill(0.0)
+            return self._kp_now, self._kd_drag_now, q, np.zeros(6)
+
         # 轻量低通速度（仅用于判定，tau 很小不引入明显延迟）
         if self._velocity_filter_updated_at is None:
             self._filtered_velocity = v.copy()

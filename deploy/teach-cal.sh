@@ -10,6 +10,8 @@
 #   teach-cal.sh --J3 "0,0,0,0,-0.05"     # J3 仅 scale-0.05
 #   teach-cal.sh --show                 # 显示当前 6 关节参数
 #   teach-cal.sh --reset                # 恢复出厂基线
+#   teach-cal.sh lock                   # 运行中的 teach 锁定当前位置
+#   teach-cal.sh drag                   # 运行中的 teach 恢复手拖
 #
 # 增量规则：逗号分隔 5 个值（顺序 kp,kd,fc,fv,scale）；0 = 不修改；
 # 数字 = 当前值 + 增量（可正可负）。scale 必须保持 >0。
@@ -21,6 +23,14 @@ set -euo pipefail
 
 env_file="$HOME/.config/panthera-wam/armd.env"
 state_file="$HOME/.config/panthera-wam/teach-cal.json"
+
+if [[ ${1:-} == "lock" || ${1:-} == "drag" ]]; then
+    [[ $# -eq 1 ]] || { echo "error: lock/drag 不接受额外参数" >&2; exit 2; }
+    cd "$HOME/Panthera-WAM"
+    uv run --no-sync --package panthera-cli panthera teach clutch "$1" 2>&1 \
+        | grep -v "incompatible\|Warning" | tail -1
+    exit ${PIPESTATUS[0]}
+fi
 
 out="$(python3 - "$state_file" "$@" <<'PY'
 import json
@@ -107,6 +117,7 @@ cd "$HOME/Panthera-WAM"
 uv run --no-sync --package panthera-cli panthera control acquire --client-id teach-cal 2>&1 | grep -v "incompatible\|Warning" | tail -1
 nohup uv run --no-sync --package panthera-cli panthera control heartbeat >/tmp/hb.log 2>&1 &
 sleep 4
-uv run --no-sync --package panthera-cli panthera teach start --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" 2>&1 | grep -v "incompatible\|Warning" | tail -1
+uv run --no-sync --package panthera-cli panthera teach start --manual-clutch --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" 2>&1 | grep -v "incompatible\|Warning" | tail -1
 timeout 20 uv run --no-sync --package panthera-cli panthera state get 2>&1 | grep -v "incompatible\|Warning" | sed -n '4,9p'
-echo "==> teach 运行中。拖动测试后停止：pkill -f \"control heartbeat\""
+echo "==> teach 运行中（显式离合）：./deploy/teach-cal.sh lock 锁定；./deploy/teach-cal.sh drag 手拖"
+echo "==> 停止：pkill -f \"control heartbeat\""

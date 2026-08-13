@@ -236,6 +236,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="teach_auto_hold",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--teach-manual-clutch",
+        action="store_true",
+        default=os.environ.get("PANTHERA_TEACH_MANUAL_CLUTCH", "0") == "1",
+        help="启用 teach 显式 lock/drag 离合命令（默认关闭）",
+    )
     parser.add_argument("--check", action="store_true", help="启动后通过 gRPC 做一次仿真自检并退出")
     return parser
 
@@ -330,6 +336,7 @@ async def run(args: argparse.Namespace) -> None:
         teach_gravity_segmented=args.teach_gravity_segmented,
         teach_gravity_residual=args.teach_gravity_residual,
         auto_hold_enabled=args.teach_auto_hold,
+        teach_manual_clutch=args.teach_manual_clutch,
     )
     loop.start()
     try:

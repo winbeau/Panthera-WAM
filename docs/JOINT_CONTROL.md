@@ -235,6 +235,21 @@ teach 每关节 4 个参数：**kp**（刚度，回中力）、**kd**（速度�
 采集（collectord）时应先以本配置 `teach start`（kp=kd 用上表值），确保拖拽时
 臂不会自驱/下垂；正式录制如需最丝滑手感可临时将 kd 减半（旋转轴），录完恢复。
 
+### 显式 lock/drag 离合（推荐采集使用）
+
+自动 Auto-Hold 仍保留用于兼容，但它只能根据速度推测松手。真机采集建议使用显式离合：
+
+```bash
+./deploy/teach-cal.sh                  # 启动显式离合 teach
+./deploy/teach-cal.sh lock              # 下一控制周期采样当前位置并锁定
+./deploy/teach-cal.sh drag              # 平滑释放位置刚度，恢复手拖
+pkill -f "control heartbeat"            # 结束 teach
+```
+
+`lock` 不依赖机械臂当前速度或重力残差；HOLD 仍保留重力/摩擦前馈，并按 smoothstep
+渐增位置刚度。`drag` 通过 RELEASE 阶段平滑降刚度，避免突然跳变。录制 color-block 时，
+在每次放置或调整末端后执行 `lock`，拖到下一位置前执行 `drag`。
+
 ## 4. 安全须知
 
 - **低速 jog 会锁死关节**：任何低于 0.1 rad/s 的单关节命令都视为危险操作；锁死后必须

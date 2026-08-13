@@ -25,6 +25,12 @@ class DynamicsTerm(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DYNAMICS_TERM_FULL_INVERSE_DYNAMICS: _ClassVar[DynamicsTerm]
     DYNAMICS_TERM_FRICTION: _ClassVar[DynamicsTerm]
 
+class TeachClutchMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    TEACH_CLUTCH_MODE_UNSPECIFIED: _ClassVar[TeachClutchMode]
+    TEACH_CLUTCH_MODE_LOCK: _ClassVar[TeachClutchMode]
+    TEACH_CLUTCH_MODE_DRAG: _ClassVar[TeachClutchMode]
+
 class PlaybackMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     PLAYBACK_MODE_UNSPECIFIED: _ClassVar[PlaybackMode]
@@ -42,6 +48,9 @@ DYNAMICS_TERM_MASS_MATRIX: DynamicsTerm
 DYNAMICS_TERM_INERTIA: DynamicsTerm
 DYNAMICS_TERM_FULL_INVERSE_DYNAMICS: DynamicsTerm
 DYNAMICS_TERM_FRICTION: DynamicsTerm
+TEACH_CLUTCH_MODE_UNSPECIFIED: TeachClutchMode
+TEACH_CLUTCH_MODE_LOCK: TeachClutchMode
+TEACH_CLUTCH_MODE_DRAG: TeachClutchMode
 PLAYBACK_MODE_UNSPECIFIED: PlaybackMode
 PLAYBACK_MODE_MIT: PlaybackMode
 PLAYBACK_MODE_POSVEL: PlaybackMode
@@ -741,16 +750,18 @@ class PolicyAcceptanceResponse(_message.Message):
     def __init__(self, terminal: _Optional[bool] = ..., passed: _Optional[bool] = ..., endpoint_error_m: _Optional[float] = ..., tolerance_m: _Optional[float] = ..., reject_reason: _Optional[str] = ...) -> None: ...
 
 class TeachStartRequest(_message.Message):
-    __slots__ = ("kp", "kd", "fc", "fv")
+    __slots__ = ("kp", "kd", "fc", "fv", "manual_clutch")
     KP_FIELD_NUMBER: _ClassVar[int]
     KD_FIELD_NUMBER: _ClassVar[int]
     FC_FIELD_NUMBER: _ClassVar[int]
     FV_FIELD_NUMBER: _ClassVar[int]
+    MANUAL_CLUTCH_FIELD_NUMBER: _ClassVar[int]
     kp: _containers.RepeatedScalarFieldContainer[float]
     kd: _containers.RepeatedScalarFieldContainer[float]
     fc: _containers.RepeatedScalarFieldContainer[float]
     fv: _containers.RepeatedScalarFieldContainer[float]
-    def __init__(self, kp: _Optional[_Iterable[float]] = ..., kd: _Optional[_Iterable[float]] = ..., fc: _Optional[_Iterable[float]] = ..., fv: _Optional[_Iterable[float]] = ...) -> None: ...
+    manual_clutch: bool
+    def __init__(self, kp: _Optional[_Iterable[float]] = ..., kd: _Optional[_Iterable[float]] = ..., fc: _Optional[_Iterable[float]] = ..., fv: _Optional[_Iterable[float]] = ..., manual_clutch: _Optional[bool] = ...) -> None: ...
 
 class TeachStartResponse(_message.Message):
     __slots__ = ("accepted", "reject_reason")
@@ -759,6 +770,22 @@ class TeachStartResponse(_message.Message):
     accepted: bool
     reject_reason: str
     def __init__(self, accepted: _Optional[bool] = ..., reject_reason: _Optional[str] = ...) -> None: ...
+
+class TeachClutchRequest(_message.Message):
+    __slots__ = ("mode",)
+    MODE_FIELD_NUMBER: _ClassVar[int]
+    mode: TeachClutchMode
+    def __init__(self, mode: _Optional[_Union[TeachClutchMode, str]] = ...) -> None: ...
+
+class TeachClutchResponse(_message.Message):
+    __slots__ = ("accepted", "reject_reason", "state")
+    ACCEPTED_FIELD_NUMBER: _ClassVar[int]
+    REJECT_REASON_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    accepted: bool
+    reject_reason: str
+    state: str
+    def __init__(self, accepted: _Optional[bool] = ..., reject_reason: _Optional[str] = ..., state: _Optional[str] = ...) -> None: ...
 
 class TeachStopResponse(_message.Message):
     __slots__ = ("accepted",)

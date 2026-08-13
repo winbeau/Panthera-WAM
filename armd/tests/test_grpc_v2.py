@@ -216,6 +216,35 @@ async def test_m6_joint_trajectory_with_middle_velocity(v2_stack) -> None:
 
 
 @pytest.mark.asyncio
+async def test_m7_teach_manual_clutch_lock_and_drag(v2_stack) -> None:
+    loop, stub, metadata, _ = v2_stack
+    started = await stub.TeachStart(
+        arm_pb2.TeachStartRequest(manual_clutch=True),
+        metadata=metadata,
+    )
+    assert started.accepted
+    await asyncio.sleep(0.03)
+    assert loop.has_active_motion
+
+    locked = await stub.TeachClutch(
+        arm_pb2.TeachClutchRequest(mode=arm_pb2.TEACH_CLUTCH_MODE_LOCK),
+        metadata=metadata,
+    )
+    assert locked.accepted
+    await asyncio.sleep(0.05)
+    dragged = await stub.TeachClutch(
+        arm_pb2.TeachClutchRequest(mode=arm_pb2.TEACH_CLUTCH_MODE_DRAG),
+        metadata=metadata,
+    )
+    assert dragged.accepted
+    await asyncio.sleep(0.25)
+    stopped = await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    assert stopped.accepted
+    await asyncio.sleep(0.03)
+    assert not loop.has_active_motion
+
+
+@pytest.mark.asyncio
 async def test_m7_teach_record_stop_and_list(v2_stack) -> None:
     loop, stub, metadata, _ = v2_stack
     started = await stub.TeachStart(arm_pb2.TeachStartRequest(), metadata=metadata)
