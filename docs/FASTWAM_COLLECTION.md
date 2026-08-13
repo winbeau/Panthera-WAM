@@ -1,5 +1,8 @@
 # FastWAM collection contract
 
+> 现场录制逐步操作见 **`docs/RECORDING_PLAYBOOK.md`**（2026-08-13 打通验证，照抄即可）。
+> 本文定义所有权、时间戳、原子 staging 与硬门契约。
+
 ## Ownership and safety
 
 - `HardwareLoop` remains the only owner of the robot backend and the only producer of measured-state sequence numbers.
