@@ -60,14 +60,16 @@ class AutoHoldConfig:
     """
 
     enabled: bool = True
-    still_velocity_threshold: float = 0.02  # rad/s，全部关节低于此值视为静止
-    release_velocity_threshold: float = 0.04  # rad/s，任一关节超过此值视为重新拖动
+    still_velocity_threshold: float = 0.05  # rad/s，全部关节低于此值视为静止（残差驱动慢漂移也能进入 HOLD）
+    release_velocity_threshold: float = 0.08  # rad/s，任一关节超过此值视为重新拖动
     still_duration: float = 0.20  # s，静止持续时长确认松手
     hold_ramp_time: float = 0.40  # s，kp 从 0 渐变到 kp_hold
     release_ramp_time: float = 0.20  # s，kp 从 kp_hold 渐变回 0
-    kp_hold: tuple[float, ...] = (1.0, 2.0, 2.0, 1.0, 0.8, 0.8)  # 逐关节保持刚度
+    # 逐关节保持刚度：必须能压住重力补偿残差（J2/J3 实测残差可达 1-2 Nm，
+    # 偏移=残差/kp；kp=8 → 0.13-0.25 rad）
+    kp_hold: tuple[float, ...] = (2.0, 8.0, 8.0, 4.0, 1.5, 1.5)
     kd_drag: tuple[float, ...] | None = None  # 拖动阻尼；None=沿用 TeachMotion.kd
-    kd_hold: tuple[float, ...] = (0.4, 0.8, 0.8, 0.4, 0.2, 0.2)  # 逐关节保持阻尼
+    kd_hold: tuple[float, ...] = (0.6, 1.5, 1.5, 0.8, 0.3, 0.3)  # 逐关节保持阻尼
     velocity_filter_tau_s: float = 0.03  # 速度判定用低通时间常数
 
     def __post_init__(self) -> None:
