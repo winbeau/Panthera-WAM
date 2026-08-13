@@ -235,33 +235,58 @@ teach 每关节 4 个参数：**kp**（刚度，回中力）、**kd**（速度�
 采集（collectord）时应先以本配置 `teach start`（kp=kd 用上表值），确保拖拽时
 臂不会自驱/下垂；正式录制如需最丝滑手感可临时将 kd 减半（旋转轴），录完恢复。
 
-### 显式 lock/drag 离合（推荐采集使用）
+### Auto-Hold 状态机与显式离合（lock/drag，推荐采集使用）
 
-自动 Auto-Hold 仍保留用于兼容，但它只能根据速度推测松手。真机采集建议使用显式离合：
+teach 模式内有一个 Auto-Hold 状态机，负责「手拖（柔顺）↔ 锁位（刚硬）」切换。
+状态机共 5 个状态：
+
+| 状态 | 含义 | 进入条件 | 下发控制帧 |
+|---|---|---|---|
+| `DRAG` | 手拖：kp=0，只发重力/摩擦前馈 | teach 启动；`drag` 释放完成 | 实时 q/v 前馈 |
+| `STILL_DETECT` | 自动模式：疑似松手（速度已低但未确认） | 全关节 \|v\| < `still_velocity_threshold` | 同 DRAG |
+| `HOLD` | 锁位：位置刚度保持 | 自动：静止持续 `still_duration`；显式：`lock` 命令 | 锚定 q_hold + kp_hold |
+| `RELEASE` | 平滑退出 HOLD（kp 渐变回 0） | 自动：任一关节 \|v\| > `release_velocity_threshold`；显式：`drag` 命令 | kp/kd 渐变 |
+| `SAFE_HOLD` | teach 被取消后的限时安全保持 | `teach stop` / lease 过期 / `pkill heartbeat` | 锚定当前位形 + kp_hold，约 10s 后 limp |
+
+两种驱动模式：
+
+- **自动 Auto-Hold（默认开启）**：靠速度阈值推测「松手」，适合原地短暂松手。
+  重力残差驱动的慢漂移与真实手推在低速下不可区分，因此自动判定**不保证**任意位形松手即停。
+- **显式离合（推荐采集使用）**：`lock`/`drag` 命令直接驱动 HOLD/RELEASE，**不依赖速度**；
+  松手/继续拖由操作员意图决定，锁位可靠。teach-cal.sh 启动时自动带 `--manual-clutch`。
 
 ```bash
-./deploy/teach-cal.sh                  # 启动显式离合 teach
-./deploy/teach-cal.sh lock              # 下一控制周期采样当前位置并锁定
-./deploy/teach-cal.sh drag              # 平滑释放位置刚度，恢复手拖
-pkill -f "control heartbeat"            # 结束 teach
+./deploy/teach-cal.sh                  # 启动显式离合 teach（重启 armd + 拉起）
+./deploy/teach-cal.sh lock              # 下一控制周期采样当前位置并锁定（进入 HOLD）
+./deploy/teach-cal.sh drag              # 平滑释放位置刚度，恢复手拖（经 RELEASE 回 DRAG）
+./deploy/teach-cal.sh stop              # 优雅停止（先 SAFE_HOLD 约 10s，请扶住机械臂）
+pkill -f "control heartbeat"            # 等价停止：lease 过期同样进入 SAFE_HOLD
 ```
 
-`lock` 不依赖机械臂当前速度或重力残差；HOLD 使用 SDK 阻抗示例量级
-`kp=[4,20,20,2,2,1]`，约 80 ms 内按 smoothstep 建立，并确保 HOLD 阻尼不低于拖动阻尼
-且至少为 `kp*0.08`。重力前馈固定按锁定位形计算，摩擦前馈使用零目标速度，避免漂移后
-继续同向助推。`drag` 通过约 80 ms RELEASE 平滑降刚度，避免突然跳变。录制 color-block 时，
-在每次放置或调整末端后执行 `lock`，拖到下一位置前执行 `drag`。
+**显式离合保持参数**（代码常量，改动需提交 `armd/src/armd/motion.py`）：
 
-### 停止 teach 的安全保持（SAFE_HOLD）
+| 参数 | 值 | 说明 |
+|---|---|---|
+| `MANUAL_CLUTCH_KP_HOLD` | `[4, 20, 20, 2, 2, 1]` | 锁位刚度（J2/J3 承重轴 20，压住重力残差稳态偏移≈残差/kp） |
+| hold/release ramp | 80 ms smoothstep | kp 渐变，禁止瞬间跳变 |
+| HOLD 阻尼 | `max(拖动 kd, kd_hold, kp*0.08)` | 不低于拖动阻尼，防止欠阻尼振荡 |
+| 前馈锚定 | q_hold + 零速度 | 重力项不随漂移追着走，摩擦项不助推漂移 |
+| `SAFE_HOLD` 时长 | 10 s（`PANTHERA_TEACH_SAFE_HOLD_S`） | 取消后保持，超时退出到零前馈柔顺阻尼 |
 
-显式离合 teach 被取消时（`teach stop`、lease 过期、`pkill -f "control heartbeat"`），
-不会立即切软：先锚定当前位形，以重力/摩擦前馈 + 强位置刚度保持约 10 秒
-（`PANTHERA_TEACH_SAFE_HOLD_S` 可调），之后才退出到零前馈柔顺阻尼。
-**10 秒窗口结束前请扶住机械臂**；高位停止时不要站在承重关节下。
-```bash
-./deploy/teach-cal.sh stop      # 优雅停止（含 SAFE_HOLD）
-pkill -f "control heartbeat"    # 等价：lease 过期同样进入 SAFE_HOLD
-```
+**自动模式阈值参数**（`AutoHoldConfig`，`armd/src/armd/motion.py`，默认值）：
+`still_velocity_threshold=0.02 rad/s`、`release_velocity_threshold=0.04 rad/s`、
+`still_duration=0.20 s`、`hold_ramp_time=0.40 s`、`release_ramp_time=0.20 s`、
+`kp_hold=[1,2,2,1,0.8,0.8]`、`kd_hold=[0.4,0.8,0.8,0.4,0.2,0.2]`。
+
+**与 §5 调参的关系**：`DRAG` 阶段的手感完全由 §5 的 kp/kd/fc/fv/scale 决定
+（teach start 下发 kp/kd，fc/fv/scale 来自 `armd.env`）；`HOLD` 阶段刚度与拖动参数独立，
+调锁位硬度改 `MANUAL_CLUTCH_KP_HOLD`。采集时在每次放置/调整末端后执行 `lock`，
+拖到下一位置前执行 `drag`。
+
+**⚠ 安全注意**：`SAFE_HOLD` 的 10s 保持已在代码实现并有仿真回归，但**真机保持效果尚未现场确认**；
+停止 teach 时务必扶住机械臂，高位停止尤其不要站在承重关节下方。
+`lock` 现场验证（kp=20）：J2 高位约 6 秒零速度保持；若仍观察到缓慢漂移，属于重力前馈残差，
+应调整 `PANTHERA_TEACH_GRAVITY_RESIDUAL`（符号/数值）而非盲目增大 kp。
 
 ## 4. 安全须知
 
