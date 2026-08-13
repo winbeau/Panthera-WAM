@@ -53,8 +53,9 @@ The marker is created only after the target mount, sustained write throughput, f
 ```
 
 定长契约为：30 s → 901 canonical ticks → 900 training frames。默认额外采集 5 s
-对齐余量；不会补帧、复用帧或发布不完整 episode。`recordctl.sh status/watch/verify`
-可在 SSH 断线后恢复观察。
+对齐余量；graceful stop 时发布最后一个完整的 30 s 公共窗口，而不是采集开头窗口，
+因此启动/建流延迟不会进入最终 episode。不会补帧、复用帧或发布不完整 episode。
+`recordctl.sh status/watch/verify` 可在 SSH 断线后恢复观察。
 
 底层调试命令仍可直接使用：
 

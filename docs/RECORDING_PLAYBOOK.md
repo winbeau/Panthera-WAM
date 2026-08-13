@@ -19,6 +19,8 @@
 - LeRobot packager 使用相邻样本生成 `q[t+1]` action，因此输出 **900 training frames**；
 - collectord 默认额外采集 5 s 对齐余量，避免三路流启动/结束边界造成短一帧；
 - 余量不是数据的一部分，最终 episode 仍严格为 901 ticks；
+- 定长模式发布的是 **graceful stop 时刻的最后一个完整公共窗口**，不是采集开始后的第一个窗口；因此终端切换、建流和动作启动产生的前段空白不会进入最终 episode；
+- `stop` 过早发送时，collectord 会继续采集，直到公共窗口至少达到目标 tick 数后再正常收尾；
 - 不足固定 tick、出现丢帧或质量门失败时，保留 `FAILED.json`，不补帧、不复用帧、不发布 `COMPLETE`。
 
 旧的 `000002`、`000003` 可能是 899 ticks，这是旧流程的历史数据；不要混淆为新定长契约。
@@ -113,7 +115,7 @@ cd ~/Panthera-WAM
 - 不停止 heartbeat；
 - 不发送机械臂运动命令；
 - 不直接 kill 转码/落盘过程；
-- 如果过早执行，会等到 901 tick 的固定窗口就绪后再收尾；
+- 如果过早执行，会继续等到至少 901 个公共 canonical tick 就绪，再截取**结束时最后 901 个 tick**收尾；
 - 终端 A 会继续等待 PNG 转码、fsync、原子发布和验收。
 
 **不要**使用 `timeout 100`、`kill -9`、`pkill collectord`。这些操作会打断 staging，留下
@@ -172,7 +174,7 @@ PY
 
 ## 5. 时间预算与临时目录
 
-- 30 s 示范 + 默认 5 s 对齐余量；
+- 30 s 示范 + 默认 5 s 对齐余量；余量用于覆盖启动/结束边界，最终只保留停止时最后一个完整 30 s 窗口；
 - 采集完成后还要进行 RGB/depth PNG 转换、Parquet 写入、fsync，通常总耗时 2–4 分钟；
 - 录制期间 `episodes/` 下的 staging 目录以点开头：`.color-block-XXXXXX.tmp-*`，普通 `ls` 看不到；
 - `recordctl` 终端 A 会一直等到最终 JSON 和 `COMPLETE`，期间不要杀；
