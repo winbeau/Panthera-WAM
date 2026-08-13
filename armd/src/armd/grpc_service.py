@@ -221,6 +221,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         teach_gravity_scale_high: float | np.ndarray | None = None,
         teach_gravity_breakpoint: float | np.ndarray | None = None,
         teach_gravity_segmented: bool = False,
+        teach_gravity_residual: float | np.ndarray = 0.0,
         auto_hold_enabled: bool = True,
     ) -> None:
         self._hardware_loop = hardware_loop
@@ -243,6 +244,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         else:
             self._teach_gravity_breakpoint = None
         self._teach_gravity_segmented = bool(teach_gravity_segmented)
+        residual = np.asarray(teach_gravity_residual, dtype=np.float64)
+        self._teach_gravity_residual = float(residual) if residual.shape == () else residual.copy()
         self._auto_hold_enabled = bool(auto_hold_enabled)
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
@@ -1442,6 +1445,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 gravity_scale_high=self._teach_gravity_scale_high,
                 gravity_breakpoint=self._teach_gravity_breakpoint,
                 gravity_segmented=self._teach_gravity_segmented,
+                gravity_residual=self._teach_gravity_residual,
                 auto_hold=AutoHoldConfig() if self._auto_hold_enabled else AutoHoldConfig(enabled=False),
             )
         except ValueError as exc:
@@ -1612,6 +1616,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 gravity_scale_high=self._teach_gravity_scale_high,
                 gravity_breakpoint=self._teach_gravity_breakpoint,
                 gravity_segmented=self._teach_gravity_segmented,
+                gravity_residual=self._teach_gravity_residual,
             )
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))

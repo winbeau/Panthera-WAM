@@ -740,6 +740,7 @@ class TeachMotion:
         gravity_scale_high: float | np.ndarray | None = None,
         gravity_breakpoint: float | np.ndarray | None = None,
         gravity_segmented: bool = False,
+        gravity_residual: float | np.ndarray = 0.0,
         auto_hold: AutoHoldConfig | None = None,
     ) -> None:
         self.kp = np.asarray(kp, dtype=np.float64).copy()
@@ -758,6 +759,12 @@ class TeachMotion:
             gravity_scale, gravity_scale_high, gravity_breakpoint
         )
         self.gravity_segmented = bool(gravity_segmented)
+        residual = np.asarray(gravity_residual, dtype=np.float64)
+        if residual.shape == ():
+            residual = np.full(6, float(residual))
+        if residual.shape != (6,) or not np.all(np.isfinite(residual)):
+            raise ValueError("gravity_residual 必须是有限标量或 6 个有限数值")
+        self.gravity_residual = residual.copy()
         self.vel_threshold = float(vel_threshold)
         self.reject_reason = ""
         self._cancel_reason: CancelReason | None = None
@@ -822,7 +829,7 @@ class TeachMotion:
             self.gravity_scale_high if self.gravity_segmented else None,
             self.gravity_breakpoint if self.gravity_segmented else None,
         )
-        torque = np.clip(torque, -self.tau_limit, self.tau_limit)
+        torque = np.clip(torque + self.gravity_residual, -self.tau_limit, self.tau_limit)
 
         if self.auto_hold_cfg.enabled:
             kp, kd, cmd_positions, cmd_velocities = self._auto_hold_step(positions, velocities, now)
@@ -954,6 +961,7 @@ class TeachPlaybackMotion:
         gravity_scale_high: float | np.ndarray | None = None,
         gravity_breakpoint: float | np.ndarray | None = None,
         gravity_segmented: bool = False,
+        gravity_residual: float | np.ndarray = 0.0,
     ) -> None:
         if not frames:
             raise ValueError("示教回放帧不能为空")
@@ -983,6 +991,12 @@ class TeachPlaybackMotion:
             gravity_scale, gravity_scale_high, gravity_breakpoint
         )
         self.gravity_segmented = bool(gravity_segmented)
+        residual = np.asarray(gravity_residual, dtype=np.float64)
+        if residual.shape == ():
+            residual = np.full(6, float(residual))
+        if residual.shape != (6,) or not np.all(np.isfinite(residual)):
+            raise ValueError("gravity_residual 必须是有限标量或 6 个有限数值")
+        self.gravity_residual = residual.copy()
         self.gripper_kp = float(gripper_kp)
         self.gripper_kd = float(gripper_kd)
         self.start_timeout_s = start_timeout_s
@@ -1128,7 +1142,7 @@ class TeachPlaybackMotion:
             self.gravity_scale_high if self.gravity_segmented else None,
             self.gravity_breakpoint if self.gravity_segmented else None,
         )
-        torque = np.clip(torque, -self.tau_limit, self.tau_limit)
+        torque = np.clip(torque + self.gravity_residual, -self.tau_limit, self.tau_limit)
         backend.write_frame(
             JointFrame(
                 mode=FrameMode.POS_VEL_TQE_KP_KD,

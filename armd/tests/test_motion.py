@@ -459,6 +459,54 @@ def test_teach_disables_segmented_gravity_by_default() -> None:
     assert backend.captured[2] is None
 
 
+def test_teach_adds_continuous_gravity_residual_before_limit() -> None:
+    class ResidualRecordingBackend(SimBackend):
+        def compensation_torque(
+            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+        ):
+            return np.full(6, 0.25)
+
+    backend = ResidualRecordingBackend()
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        gravity_residual=np.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0]),
+    )
+    assert motion.step(backend, 0.0) is MotionStepResult.RUNNING
+    assert backend._last_frame is not None
+    assert backend._last_frame.arm_torque[0] == pytest.approx(0.35)
+
+
+def test_teach_residual_is_continuous_across_zero_crossing() -> None:
+    class ContinuousGravityBackend(RecordingSimBackend):
+        def compensation_torque(
+            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+        ):
+            # 连续的近似过轴曲线；测试不允许出现断点式跳变。
+            return np.array([0.0, 0.6 - float(q[1]), 0.0, 0.0, 0.0, 0.0])
+
+    clock = FakeClock()
+    backend = ContinuousGravityBackend(clock=clock)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        gravity_residual=np.array([0.0, 0.1, 0.0, 0.0, 0.0, 0.0]),
+    )
+    torques = []
+    for q2 in (1.199, 1.201):
+        backend._positions[1] = q2
+        clock.advance(0.005)
+        backend.refresh_state()
+        motion.step(backend, clock.now)
+        torques.append(float(backend.frames[-1].arm_torque[1]))
+    assert abs(torques[1] - torques[0]) == pytest.approx(0.002, abs=1e-4)
+    assert all(np.isfinite(torques))
+
+
 def _drag_until_still_holds(clock, backend, motion, *, drag_steps: int = 5) -> None:
     """模拟拖动 drag_steps 步后松手，推进 0.21s 进入 HOLD。
 

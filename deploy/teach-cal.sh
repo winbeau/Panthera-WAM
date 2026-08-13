@@ -2,6 +2,7 @@
 # 真机示教参数标定脚本（现场手调工具）。
 #
 # 每关节 5 个参数（顺序固定）：kp, kd, fc, fv, gravity_scale
+# 可选连续重力残差通过 PANTHERA_TEACH_GRAVITY_RESIDUAL 在 armd.env 配置（Nm，6个值）。
 #
 # 用法（在 Pi 5 上）：
 #   teach-cal.sh                        # 用当前基线拉起 teach
@@ -88,6 +89,9 @@ fv="$(printf '%s' "$state_json" | python3 -c 'import json,sys; s=json.load(sys.s
 scale="$(printf '%s' "$state_json" | python3 -c 'import json,sys; s=json.load(sys.stdin); print(",".join(str(s[f"J{i}"][4]) for i in range(1,7)))')"
 
 echo "==> scale=$scale kp=$kp kd=$kd fc=$fc fv=$fv"
+if grep -q '^PANTHERA_TEACH_GRAVITY_RESIDUAL=' "$env_file"; then
+    echo "==> residual=$(sed -n 's/^PANTHERA_TEACH_GRAVITY_RESIDUAL=//p' "$env_file")"
+fi
 pkill -f "control heartbeat" 2>/dev/null || true
 if grep -q '^PANTHERA_TEACH_GRAVITY_SCALE=' "$env_file"; then
     sed -i "s|^PANTHERA_TEACH_GRAVITY_SCALE=.*|PANTHERA_TEACH_GRAVITY_SCALE=$scale|" "$env_file"

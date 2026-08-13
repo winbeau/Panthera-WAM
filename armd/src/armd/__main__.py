@@ -219,6 +219,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="显式启用分段重力补偿；默认关闭，避免固定断点产生人工吸附点",
     )
     parser.add_argument(
+        "--teach-gravity-residual",
+        type=parse_gravity_scale,
+        default=parse_gravity_scale(os.environ.get("PANTHERA_TEACH_GRAVITY_RESIDUAL", "0.0")),
+        help="连续逐关节重力残差偏置（Nm；1个或6个值，默认全零）",
+    )
+    parser.add_argument(
         "--teach-auto-hold",
         action="store_true",
         default=os.environ.get("PANTHERA_TEACH_AUTO_HOLD", "1") == "1",
@@ -322,6 +328,7 @@ async def run(args: argparse.Namespace) -> None:
         teach_gravity_scale_high=args.teach_gravity_scale_high,
         teach_gravity_breakpoint=args.teach_gravity_breakpoint,
         teach_gravity_segmented=args.teach_gravity_segmented,
+        teach_gravity_residual=args.teach_gravity_residual,
         auto_hold_enabled=args.teach_auto_hold,
     )
     loop.start()

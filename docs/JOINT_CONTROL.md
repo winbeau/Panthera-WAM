@@ -124,6 +124,8 @@ J4 漂到 0.62，J3 稳定**——J2/J4 重力补偿**过强**，J3 正确。平
 - **分段补偿默认关闭**：只有显式设置 `PANTHERA_TEACH_GRAVITY_SEGMENTED=1`
   才启用 `PANTHERA_TEACH_GRAVITY_SCALE_HIGH/BREAKPOINT`。固定断点会让补偿力矩不连续，
   可能制造人工平衡/吸附点（J2 约 69°尤其危险）；未完成连续曲线标定前不要开启。
+- 连续模型若在过轴后仍有近似恒定残差，可使用 `PANTHERA_TEACH_GRAVITY_RESIDUAL`
+  逐关节增加 Nm 偏置；默认全零，先用多位置静态数据确认符号，不要用它替代 scale 标定。
 - 标定流程：设 scale=0.7 → teach 小 kp/kd（如 0.3/0.1）→ 用户松手观测 10s →
   迭代 scale 直到静止漂移 < 0.01 rad/s。**不要凭猜测改符号或全局翻转力矩**。
 
