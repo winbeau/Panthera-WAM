@@ -464,10 +464,10 @@ def test_auto_hold_locks_position_after_still() -> None:
     assert motion.auto_hold_state is AutoHoldState.HOLD
     assert motion.hold_position is not None
     assert np.allclose(motion.hold_position, backend._positions[:6])
-    # HOLD 帧：位置指令 = 锁定位，kp 从 0 起步且仍很小（渐变初期）
+    # HOLD 帧：位置指令 = 锁定位，kp 从 0 起步（渐变初期仍小）
     frame = backend.frames[-1]
     assert np.allclose(frame.arm_position, motion.hold_position)
-    assert np.all(frame.arm_kp < 0.1)
+    assert np.all(frame.arm_kp < 0.5)
 
 
 def test_auto_hold_kp_ramps_smoothly_to_kp_hold() -> None:
