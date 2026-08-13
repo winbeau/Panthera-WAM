@@ -154,6 +154,7 @@ def align_episode(
     wrist_rgb: Sequence[CameraSample],
     wrist_depth: Sequence[CameraSample] = (),
     require_depth: bool = False,
+    fixed_ticks: int | None = None,
 ) -> list[AlignedSample]:
     if not states or not overhead_rgb or not wrist_rgb:
         raise ValueError("state, overhead RGB, and wrist RGB streams are required")
@@ -173,6 +174,15 @@ def align_episode(
         starts.append(wrist_depth[0].alignment_monotonic_ns)
         ends.append(wrist_depth[-1].alignment_monotonic_ns)
     ticks = canonical_ticks(max(starts), min(ends))
+    if fixed_ticks is not None:
+        if len(ticks) < fixed_ticks:
+            raise ValueError(
+                f"fixed-length episode requires {fixed_ticks} canonical ticks, "
+                f"but the common stream window provides {len(ticks)}"
+            )
+        # Fixed mode publishes the first complete window. The collector captures
+        # a trailing margin so this window is never padded or shortened.
+        ticks = ticks[:fixed_ticks]
     aligned_states = interpolate_states(states, ticks)
     aligned_overhead = select_nearest_unique(
         overhead_rgb,

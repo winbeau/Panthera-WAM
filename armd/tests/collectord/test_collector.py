@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import threading
@@ -16,6 +17,7 @@ from armd.camera.backend import CameraRole, CameraWorker, SimCameraBackend, SimO
 from armd.camera.service import CameraService
 from armd.collectord.collector import (
     CaptureResult,
+    CollectorAborted,
     CollectorConfig,
     _camera_worker,
     _CaptureWorker,
@@ -89,6 +91,52 @@ def test_capture_worker_cancels_resources_bound_after_stop() -> None:
     assert channel.closed is True
     assert ready_future.cancelled is True
     assert call.cancelled is True
+
+
+@pytest.mark.asyncio
+async def test_capture_workers_finish_waits_until_fixed_window_is_ready() -> None:
+    stopped = threading.Event()
+    finish = asyncio.Event()
+    ready = False
+
+    def wait_for_stop(stop_requested: threading.Event) -> None:
+        stop_requested.wait()
+        stopped.set()
+
+    worker = _CaptureWorker("fixed", wait_for_stop)
+    task = asyncio.create_task(
+        _run_capture_workers(
+            [worker],
+            1.0,
+            finish_event=finish,
+            finish_ready=lambda: ready,
+        )
+    )
+    await asyncio.sleep(0.03)
+    finish.set()
+    await asyncio.sleep(0.03)
+    assert not task.done()
+    ready = True
+    await asyncio.wait_for(task, timeout=0.5)
+    assert stopped.is_set()
+
+
+@pytest.mark.asyncio
+async def test_capture_workers_abort_does_not_publish_episode() -> None:
+    stopped = threading.Event()
+    abort = asyncio.Event()
+
+    def wait_for_stop(stop_requested: threading.Event) -> None:
+        stop_requested.wait()
+        stopped.set()
+
+    worker = _CaptureWorker("abort", wait_for_stop)
+    task = asyncio.create_task(_run_capture_workers([worker], 1.0, abort_event=abort))
+    await asyncio.sleep(0.03)
+    abort.set()
+    with pytest.raises(CollectorAborted, match="aborted by operator"):
+        await asyncio.wait_for(task, timeout=0.5)
+    assert stopped.is_set()
 
 
 @pytest.mark.asyncio

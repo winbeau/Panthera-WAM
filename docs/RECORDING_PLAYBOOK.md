@@ -1,120 +1,229 @@
 # color-block 录制操作手册（真机 Pi 5）
 
-> 2026-08-13 首次完整打通验证：`color-block-000002`（30 s、899/899 tick 有效、
-> 四流零丢帧/零溢出、深度完整、COMPLETE）。本手册流程与现场逐条验证一致，
-> 照抄即可。背景契约见 `docs/FASTWAM_COLLECTION.md`（硬门/原子 staging）。
+> `color-block-000002`、`000003` 已用旧版定时采集流程打通。
+> 从 `000004` 开始统一使用本手册的**定长双终端流程**。
+> 固定契约：30 s 示范时长 → 901 个 canonical ticks → 900 个训练 frames。
 
-## 0. 每次录制前的三项检查（30 秒）
+## 0. 固定长度契约
+
+录制脚本不再把 `--duration-s 30` 当作最终样本数，而是使用：
+
+```text
+--fixed-duration-s 30
+```
+
+含义：
+
+- canonical 采样频率固定为 30 Hz；
+- 30 s = 900 个时间间隔，因此原始对齐数据包含首尾两端，共 **901 ticks**；
+- LeRobot packager 使用相邻样本生成 `q[t+1]` action，因此输出 **900 training frames**；
+- collectord 默认额外采集 5 s 对齐余量，避免三路流启动/结束边界造成短一帧；
+- 余量不是数据的一部分，最终 episode 仍严格为 901 ticks；
+- 不足固定 tick、出现丢帧或质量门失败时，保留 `FAILED.json`，不补帧、不复用帧、不发布 `COMPLETE`。
+
+旧的 `000002`、`000003` 可能是 899 ticks，这是旧流程的历史数据；不要混淆为新定长契约。
+
+## 1. 每次录制前检查
 
 ```bash
 cd ~/Panthera-WAM
-# 1) 服务在线
 systemctl --user is-active armd.service camerad.service
-pgrep -af 'overhead' | grep camerad        # overhead C920e 是 nohup 进程，非 systemd
-# 2) 相机流（都要求 streaming:true、约 30 fps）
+pgrep -af 'overhead' | grep camerad        # C920e 通常是 nohup 进程，非 armd 服务
 uv run --no-sync --package panthera-cli panthera camera status --source wrist --json
 uv run --no-sync --package panthera-cli panthera camera status --source overhead --json
-# 3) 磁盘余量（每段约 1.1 GB，录 10 段需 ~12 GB 空闲）
 df -h /home/winbeau | tail -1
 ```
 
-若 overhead 相机进程不在，重启它（固定用稳定别名，禁止写死 /dev/videoN）：
+每段约 1.1 GB；定长录制还会先产生隐藏 staging 临时目录。不要在空间不足时开始。
 
-```bash
-cd ~/Panthera-WAM && nohup uv run --no-sync --package panthera-armd camerad \
-  --backend v4l2 --role overhead \
-  --bind 100.78.118.74:50053 --local-bind 127.0.0.1:50053 \
-  --device /home/winbeau/camera-devices/c920e \
-  --width 1920 --height 1080 --fps 30 >/tmp/overhead-camerad.log 2>&1 &
-```
-
-## 1. 启动显式离合 teach（每次录制前）
+若 teach 尚未运行：
 
 ```bash
 cd ~/Panthera-WAM
 ./deploy/teach-cal.sh
 ```
 
-脚本自动：杀旧 heartbeat → 重启 armd（解锁 0x0B）→ acquire → 后台 heartbeat →
-`teach start --manual-clutch`。看到 6 关节 mode=0x15、fault=0 即就绪。
+看到 6 个关节 `mode=0x15`、`fault=0` 后再继续。修改参数或 armd 重启后必须重新执行此步骤。
 
-## 2. 录制一段 episode（约 3–5 分钟，中途不要杀）
+## 2. 双终端布局
+
+### 终端 A：录制控制面与日志
+
+终端 A 会启动 collectord，并持续守着日志；它不是普通 `tail`，会在进程退出后自动检查
+`COMPLETE`、固定 tick 数和质量门。
 
 ```bash
 cd ~/Panthera-WAM
-EP=color-block-000003   # 每段自增；已用：000001（试录）、000002（首段正式）
-COMMIT=$(git rev-parse HEAD)
-nohup uv run --no-sync --package panthera-armd collectord \
-  --collection-root /home/winbeau/panthera-data \
-  --episode-id "$EP" \
-  --task 'Move the red block from the start area to the target area.' \
-  --operator winbeau \
-  --panthera-commit "$COMMIT" \
-  --calibration /home/winbeau/panthera-data/calibration.json \
-  --identity /home/winbeau/panthera-data/identity.json \
-  --capture-depth \
-  --duration-s 30 > /tmp/collectord-$EP.log 2>&1 &
-echo $! > /tmp/collectord-$EP.pid
+./deploy/recordctl.sh start color-block-000004
 ```
 
-**重要行为（实测教训）**：
+默认参数：
 
-- collectord **只在结束时打印一行 JSON**（`{"episode": "...", "status": "complete"}`），
-  中途日志静默是正常的；约 30 s 采集 + 约 100 s PNG 转码/fsync，总耗时 2–4 分钟。
-- 录制期间 `episodes/` 下出现的是**点前缀临时目录**（`.color-block-XXXXXX.tmp-*`，
-  `ls` 不带 `-a` 看不见），完成后才原子改名为正式目录并写 `COMPLETE`。
-- **不要用 100 秒以内的 timeout 包它**（实测 120s timeout 会把转码中的 episode 杀掉）；
-  要限时就用 600 s。中途失败/被杀会残留 `.tmp-*` 目录，确认无用后 `rm -rf` 掉。
+- `--fixed-duration-s 30`；
+- `--fixed-margin-s 5`；
+- 采集 depth；
+- 日志和 PID 状态放在 `~/.cache/panthera-recordctl/color-block-000004/`；
+- 脚本内部使用 `nohup`，SSH/TUI 断开不会杀掉 collectord。
 
-## 3. 录制期间的手臂操作（drag / lock）
-
-- 采集前先把臂拖到起始位形，发一次 `lock` 稳定起始姿态；
-- 开始采集（nohup 命令发出后）立即执行任务动作：**`drag` → 徒手拖动 → `lock`** 循环；
-  每次放置/调整末端后 `lock`，拖到下一位置前 `drag`：
+如果终端 A 只想启动、不进入监看：
 
 ```bash
-./deploy/teach-cal.sh drag   # 恢复手拖（kp 平滑降到 0，重力补偿仍在）
-./deploy/teach-cal.sh lock   # 下一周期采样当前位置并锁定（kp=[4,20,20,2,2,1]）
+./deploy/recordctl.sh start color-block-000004 --detach
+./deploy/recordctl.sh watch color-block-000004
 ```
 
-- lock/drag 的完整状态机与参数见 `docs/JOINT_CONTROL.md` §6「Auto-Hold 状态机与显式离合」。
-- **30 秒内尽量做出明确运动**（起步→拿起→平移→放下→复位）：过小运动会得到
-  `offset_estimation_method=insufficient_motion`（不算失败，但相机/状态时间偏置无法估计）。
+### 终端 B：机械臂 lock / drag / stop
 
-## 4. 等结果并验收（一条命令）
+终端 B 只负责操作 teach，不要在这里启动第二个 collectord：
 
 ```bash
-EP=color-block-000003
-tail -3 /tmp/collectord-$EP.log      # 期待 {"episode": "...", "status": "complete"}
-EP=/home/winbeau/panthera-data/episodes/$EP
-ls "$EP"/COMPLETE && python3 - <<'PY'
+cd ~/Panthera-WAM
+./deploy/teach-cal.sh lock   # 起始位形先锁住
+```
+
+确认终端 A 已打印 `collectord PID=...` 后，开始示教：
+
+```bash
+./deploy/teach-cal.sh drag   # 恢复手拖
+```
+
+30 秒目标动作内按需要循环：
+
+```bash
+./deploy/teach-cal.sh lock   # 放置/调整后锁住当前位置
+./deploy/teach-cal.sh drag   # 拖到下一位置
+```
+
+建议动作顺序：起始位 → 拖到红块 → 拿起 → 平移 → 放到目标区 → 复位/停稳。动作幅度要足够，
+否则相机时间偏置可能记录为 `insufficient_motion`（这不是质量门失败）。
+
+## 3. 控制录制结束
+
+动作完成后，先让机械臂处于安全的锁定姿态，再在终端 B 执行：
+
+```bash
+cd ~/Panthera-WAM
+./deploy/teach-cal.sh lock
+./deploy/recordctl.sh stop color-block-000004
+```
+
+`stop` 只向 collectord 发送 graceful finish 信号：
+
+- 不停止 teach；
+- 不停止 heartbeat；
+- 不发送机械臂运动命令；
+- 不直接 kill 转码/落盘过程；
+- 如果过早执行，会等到 901 tick 的固定窗口就绪后再收尾；
+- 终端 A 会继续等待 PNG 转码、fsync、原子发布和验收。
+
+**不要**使用 `timeout 100`、`kill -9`、`pkill collectord`。这些操作会打断 staging，留下
+`.color-block-XXXXXX.tmp-*` 半成品。
+
+如果本段明显无效、必须放弃：
+
+```bash
+./deploy/recordctl.sh abort color-block-000004
+```
+
+`abort` 发送 SIGTERM，保留 `FAILED.json` 供诊断；确认日志后才清理临时目录。
+
+## 4. 终端 A 的完成结果
+
+正常完成时日志最后一行类似：
+
+```json
+{"episode":"/home/winbeau/panthera-data/episodes/color-block-000004","status":"complete"}
+```
+
+脚本随后自动验收并要求：
+
+```text
+fixed.enabled = true
+canonical_ticks = valid_ticks = 901
+training_frames = 900
+missing/duplicate/sequence_gaps/ring_overflows = 0
+timestamp_regressions = 0
+COMPLETE exists
+```
+
+也可以手动查看：
+
+```bash
+./deploy/recordctl.sh status color-block-000004
+./deploy/recordctl.sh verify color-block-000004
+```
+
+如果只看原始文件：
+
+```bash
+EP=/home/winbeau/panthera-data/episodes/color-block-000004
+ls "$EP"/COMPLETE
+python3 - <<'PY'
 import json
-ep="/home/winbeau/panthera-data/episodes/color-block-000003"
-d=json.load(open(ep+"/episode.json"))
-s=json.load(open(ep+"/sync_report.json"))
-print("success", d["success"], "| ticks", s["valid_ticks"], "/", s["canonical_ticks"],
-      "| missing", s["missing_frames"], "| overflow", s["ring_overflows"])
-print("offset_method", s["camera_state_offset"]["method"])
+p="/home/winbeau/panthera-data/episodes/color-block-000004"
+e=json.load(open(p+"/episode.json"))
+s=json.load(open(p+"/sync_report.json"))
+print("fixed", e["fixed_length"])
+print("ticks", s["valid_ticks"], "/", s["canonical_ticks"])
+print("depth", e["depth"])
+print("offset", s["camera_state_offset"]["method"])
 PY
 ```
 
-验收标准：`success=True`；`valid_ticks == canonical_ticks`（30 s → 899–900）；
-missing/duplicate/overflow/gap 全 0；`timestamp_regressions=0`。
-`insufficient_motion` 只说明本段动作幅度不足以估计时间偏置，不是失败。
+## 5. 时间预算与临时目录
 
-## 5. 结束与清理
+- 30 s 示范 + 默认 5 s 对齐余量；
+- 采集完成后还要进行 RGB/depth PNG 转换、Parquet 写入、fsync，通常总耗时 2–4 分钟；
+- 录制期间 `episodes/` 下的 staging 目录以点开头：`.color-block-XXXXXX.tmp-*`，普通 `ls` 看不到；
+- `recordctl` 终端 A 会一直等到最终 JSON 和 `COMPLETE`，期间不要杀；
+- SSH 掉线不会改变 Pi 上的进程。恢复连接后执行：
 
-- 当天录完最后一段：`./deploy/teach-cal.sh stop`（先 SAFE_HOLD 约 10 s，**务必扶住机械臂**），
-  或 `pkill -f "control heartbeat"`（等价）。
-- 上传 HF（每段录完就传，参照 `docs/FASTWAM_COLLECTION.md`）后清理本地：
-  `rm -rf /home/winbeau/panthera-data/episodes/color-block-XXXXXX`。
-- 失败残留清理：`rm -rf /home/winbeau/panthera-data/episodes/.color-block-*.tmp-*`。
+```bash
+cd ~/Panthera-WAM
+./deploy/recordctl.sh status color-block-000004
+./deploy/recordctl.sh watch color-block-000004
+```
 
-## 6. 已确认的坑
+## 6. 当天收工
 
-| 坑 | 现象 | 处理 |
-|---|---|---|
-| timeout 太短 | `rc=124`、日志只有 uv warning、无 tmp 可见（其实有，点前缀） | 后台 nohup 运行，不要包短 timeout |
-| 中途杀进程 | 残留 `.tmp-*` 半成品 | `rm -rf episodes/.color-block-*.tmp-*` |
-| 低位/微动录制 | `insufficient_motion` | 不算失败；下一段加大动作幅度 |
-| 高位 kill heartbeat | 失去重力前馈会坠落（SAFE_HOLD 真机保持未确认） | 停止时扶住机械臂；首选 `teach-cal.sh stop` |
+最后一段完成并确认机械臂由人扶稳后：
+
+```bash
+cd ~/Panthera-WAM
+./deploy/teach-cal.sh stop
+```
+
+它会先进入约 10 s SAFE_HOLD；SAFE_HOLD 真机保持效果尚未完成现场确认，停止时务必扶住机械臂。
+上传 HF 后再按需清理已确认的正式 episode：
+
+```bash
+rm -rf /home/winbeau/panthera-data/episodes/color-block-XXXXXX
+```
+
+只清理确定失败的临时目录：
+
+```bash
+rm -rf /home/winbeau/panthera-data/episodes/.color-block-*.tmp-*
+```
+
+## 7. 底层 collectord（仅调试）
+
+正常采集不要手写长命令；如需诊断，可直接使用：
+
+```bash
+cd ~/Panthera-WAM
+.venv/bin/collectord \
+  --collection-root /home/winbeau/panthera-data \
+  --episode-id color-block-000004 \
+  --task 'Move the red block from the start area to the target area.' \
+  --operator winbeau \
+  --panthera-commit "$(git rev-parse HEAD)" \
+  --calibration /home/winbeau/panthera-data/calibration.json \
+  --identity /home/winbeau/panthera-data/identity.json \
+  --fixed-duration-s 30 \
+  --fixed-margin-s 5 \
+  --capture-depth
+```
+
+底层进程支持 `SIGUSR1` graceful finish、`SIGTERM` abort；生产操作优先使用
+`deploy/recordctl.sh`，因为它还负责 PID、日志、断线恢复和固定长度验收。

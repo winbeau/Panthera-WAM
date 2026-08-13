@@ -39,8 +39,27 @@ Production collection roots require an approval marker named `.panthera-usb3-ssd
 
 The marker is created only after the target mount, sustained write throughput, fsync latency, free-space reserve, and thermal behavior have been measured. The `--sim-allow-unapproved-root` flag is for tests only.
 
+生产真机录制使用双终端控制脚本，不要手写长命令：
+
 ```bash
-uv run --package panthera-armd collectord \
+# 终端 A：启动定长录制并持续监看日志
+./deploy/recordctl.sh start color-block-000004
+
+# 终端 B：只做 teach lock/drag；动作完成后请求优雅结束
+./deploy/teach-cal.sh lock
+./deploy/teach-cal.sh drag
+./deploy/teach-cal.sh lock
+./deploy/recordctl.sh stop color-block-000004
+```
+
+定长契约为：30 s → 901 canonical ticks → 900 training frames。默认额外采集 5 s
+对齐余量；不会补帧、复用帧或发布不完整 episode。`recordctl.sh status/watch/verify`
+可在 SSH 断线后恢复观察。
+
+底层调试命令仍可直接使用：
+
+```bash
+.venv/bin/collectord \
   --collection-root /mnt/panthera-ssd \
   --episode-id color-block-000001 \
   --task 'Move the red block from the start area to the target area.' \
@@ -48,10 +67,13 @@ uv run --package panthera-armd collectord \
   --panthera-commit <40-char-sha> \
   --calibration calibration.json \
   --identity dataset-identity.json \
+  --fixed-duration-s 30 \
+  --fixed-margin-s 5 \
   --capture-depth
 ```
 
-Default endpoints are Pi-local ports 50051/50052/50053. Camera roles and configured serials are checked before recording.
+`SIGUSR1` requests graceful finish; `SIGTERM` aborts and retains `FAILED.json`. Default endpoints
+are Pi-local ports 50051/50052/50053. Camera roles and configured serials are checked before recording.
 
 ## Upload each complete episode to Hugging Face
 
@@ -98,7 +120,12 @@ episodes/.<episode_id>.tmp-<uuid>/
 └── COMPLETE              # written only after all gates pass
 ```
 
-Canonical ticks are generated at rational 30 Hz without accumulated truncation. State is linearly interpolated from the 200 Hz tap. Camera frames are selected by estimated capture time, or explicitly degraded host receive time, without silent frame reuse. Camera/state motion correlation evaluates offsets `[-2,-1,0,1,2]`; insufficient motion produces a null offset rather than a fabricated zero.
+Canonical ticks are generated at rational 30 Hz without accumulated truncation. In fixed mode,
+`fixed_length.canonical_ticks` is enforced before publication; 30 s means 901 ticks because both
+endpoints are represented. State is linearly interpolated from the 200 Hz tap. Camera frames are
+selected by estimated capture time, or explicitly degraded host receive time, without silent frame
+reuse. Camera/state motion correlation evaluates offsets `[-2,-1,0,1,2]`; insufficient motion
+produces a null offset rather than a fabricated zero.
 
 After validation, files and directories are fsynced, `COMPLETE` is written, and the temporary directory is atomically renamed. Failed capture or quality checks retain `FAILED.json` and never receive `COMPLETE`.
 

@@ -100,6 +100,13 @@ def validate_staging_contents(
         raise ValueError("sync_report canonical_ticks does not match samples")
     if int(sync_report.get("valid_ticks", -1)) != len(samples):
         raise ValueError("sync_report valid_ticks does not match samples")
+    fixed_length = episode.get("fixed_length")
+    if isinstance(fixed_length, dict) and bool(fixed_length.get("enabled")):
+        expected_ticks = int(fixed_length.get("canonical_ticks", -1))
+        if expected_ticks < 2 or len(samples) != expected_ticks:
+            raise ValueError(
+                "fixed-length episode tick count does not match fixed_length.canonical_ticks"
+            )
     if not math.isclose(float(timestamp_quality.get("coverage_fraction", 0.0)), 1.0):
         raise ValueError("timestamp coverage_fraction must be 1.0")
 

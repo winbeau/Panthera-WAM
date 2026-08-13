@@ -96,6 +96,7 @@ def create_staging_fixture(output: Path, *, overwrite: bool = False) -> Path:
             "overflow_policy": "explicit_episode_rejection",
         },
         "depth": {"requested": True, "complete": True},
+        "fixed_length": {"enabled": True, "canonical_ticks": 6, "duration_s": 5 / FPS},
         "identity": {
             "dataset_id": "panthera-color-block-fixture-v1",
             "task_id": "color_block_red_to_target_v1",

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from armd.collectord.alignment import (
+    align_episode,
     canonical_ticks,
     estimate_motion_offset,
     interpolate_states,
@@ -56,6 +57,31 @@ def test_canonical_ticks_do_not_accumulate_fractional_drift() -> None:
     assert ticks[60] - start == 2_000_000_000
     intervals = {right - left for left, right in zip(ticks, ticks[1:])}
     assert intervals == {33_333_333, 33_333_334}
+
+
+def test_fixed_alignment_publishes_exact_tick_count_without_padding() -> None:
+    samples = [state(index + 1, 1_000_000_000 + index * 33_333_333, float(index)) for index in range(5)]
+    cameras = [camera(index + 1, 1_000_000_000 + index * 33_333_333) for index in range(5)]
+    aligned = align_episode(
+        states=samples,
+        overhead_rgb=cameras,
+        wrist_rgb=[camera(index + 1, 1_000_000_000 + index * 33_333_333) for index in range(5)],
+        fixed_ticks=3,
+    )
+    assert len(aligned) == 3
+    assert [sample.tick_index for sample in aligned] == [0, 1, 2]
+
+
+def test_fixed_alignment_rejects_short_common_window() -> None:
+    samples = [state(1, 1_000_000_000, 0.0), state(2, 1_033_333_333, 1.0)]
+    cameras = [camera(1, 1_000_000_000), camera(2, 1_033_333_333)]
+    with pytest.raises(ValueError, match="fixed-length episode requires"):
+        align_episode(
+            states=samples,
+            overhead_rgb=cameras,
+            wrist_rgb=cameras,
+            fixed_ticks=3,
+        )
 
 
 def test_state_interpolation_is_linear_and_bounded() -> None:

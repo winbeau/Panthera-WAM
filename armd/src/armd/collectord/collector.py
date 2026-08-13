@@ -8,7 +8,7 @@ import os
 import shutil
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,7 @@ class CollectorConfig:
     calibration: dict[str, Any]
     identity: dict[str, str]
     duration_s: float = 5.0
+    fixed_ticks: int | None = None
     capture_depth: bool = False
     allow_unapproved_root: bool = False
     expected_overhead_serial: str = ""
@@ -55,6 +56,8 @@ class CollectorConfig:
     def __post_init__(self) -> None:
         if not 0 < self.duration_s <= 3600:
             raise ValueError("duration_s must be in (0, 3600]")
+        if self.fixed_ticks is not None and self.fixed_ticks < 2:
+            raise ValueError("fixed_ticks must be at least 2")
         if len(self.panthera_wam_commit) != 40:
             raise ValueError("panthera_wam_commit must be a full Git SHA")
 
@@ -65,6 +68,10 @@ class CaptureResult:
     overhead_rgb: list[CameraSample] = field(default_factory=list)
     wrist_rgb: list[CameraSample] = field(default_factory=list)
     wrist_depth: list[CameraSample] = field(default_factory=list)
+
+
+class CollectorAborted(RuntimeError):
+    """The operator explicitly aborted capture before publication."""
 
 
 def _enum_name(module, field: str, value: int) -> str:
@@ -412,20 +419,71 @@ def _capture_workers(config: CollectorConfig, raw_dir: Path, result: CaptureResu
     return workers
 
 
-async def _run_capture_workers(workers: list[_CaptureWorker], duration_s: float) -> None:
+def _fixed_window_ready(
+    result: CaptureResult,
+    *,
+    fixed_ticks: int,
+    require_depth: bool,
+) -> bool:
+    sources: list[Sequence[StateSample | CameraSample]] = [
+        result.states,
+        result.overhead_rgb,
+        result.wrist_rgb,
+    ]
+    if require_depth:
+        sources.append(result.wrist_depth)
+    if any(not source for source in sources):
+        return False
+    starts = [
+        result.states[0].sampled_monotonic_ns,
+        result.overhead_rgb[0].alignment_monotonic_ns,
+        result.wrist_rgb[0].alignment_monotonic_ns,
+    ]
+    ends = [
+        result.states[-1].sampled_monotonic_ns,
+        result.overhead_rgb[-1].alignment_monotonic_ns,
+        result.wrist_rgb[-1].alignment_monotonic_ns,
+    ]
+    if require_depth:
+        starts.append(result.wrist_depth[0].alignment_monotonic_ns)
+        ends.append(result.wrist_depth[-1].alignment_monotonic_ns)
+    available = (min(ends) - max(starts)) * FPS // 1_000_000_000 + 1
+    return available >= fixed_ticks
+
+
+async def _run_capture_workers(
+    workers: list[_CaptureWorker],
+    duration_s: float,
+    *,
+    finish_event: asyncio.Event | None = None,
+    abort_event: asyncio.Event | None = None,
+    finish_ready: Callable[[], bool] | None = None,
+) -> None:
     for worker in workers:
         worker.start()
-    deadline = time.monotonic() + duration_s
+    started = time.monotonic()
+    deadline = started + duration_s
     failure: BaseException | None = None
+    aborted = False
     try:
         while True:
             failed = next((worker for worker in workers if worker.failed.is_set()), None)
             if failed is not None:
                 failure = RuntimeError(f"collector stream failed ({failed.name}): {failed.failure}")
                 break
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if abort_event is not None and abort_event.is_set():
+                aborted = True
                 break
-            await asyncio.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+            if (
+                finish_event is not None
+                and finish_event.is_set()
+                and (finish_ready is None or finish_ready())
+            ):
+                break
+            if now >= deadline:
+                break
+            await asyncio.sleep(min(0.02, max(0.0, deadline - now)))
     finally:
         for worker in workers:
             worker.request_stop()
@@ -442,6 +500,8 @@ async def _run_capture_workers(workers: list[_CaptureWorker], duration_s: float)
     failed = next((worker for worker in workers if worker.failed.is_set()), None)
     if failed is not None:
         failure = RuntimeError(f"collector stream failed ({failed.name}): {failed.failure}")
+    if aborted:
+        raise CollectorAborted("recording aborted by operator")
     if failure is not None:
         raise failure
 
@@ -550,7 +610,12 @@ def _staging_rows(writer: AtomicEpisodeWriter, aligned: list[AlignedSample]) -> 
     return rows
 
 
-async def collect_episode(config: CollectorConfig) -> Path:
+async def collect_episode(
+    config: CollectorConfig,
+    *,
+    finish_event: asyncio.Event | None = None,
+    abort_event: asyncio.Event | None = None,
+) -> Path:
     writer = AtomicEpisodeWriter(
         config.collection_root,
         config.episode_id,
@@ -584,7 +649,24 @@ async def collect_episode(config: CollectorConfig) -> Path:
         )
         del arm_stub
         workers = _capture_workers(config, raw_dir, result)
-        await _run_capture_workers(workers, config.duration_s)
+        finish_ready = (
+            (
+                lambda: _fixed_window_ready(
+                    result,
+                    fixed_ticks=config.fixed_ticks,
+                    require_depth=config.capture_depth,
+                )
+            )
+            if config.fixed_ticks is not None
+            else None
+        )
+        await _run_capture_workers(
+            workers,
+            config.duration_s,
+            finish_event=finish_event,
+            abort_event=abort_event,
+            finish_ready=finish_ready,
+        )
 
         result.states.sort(key=lambda item: item.sampled_monotonic_ns)
         result.overhead_rgb.sort(key=lambda item: item.alignment_monotonic_ns)
@@ -605,6 +687,7 @@ async def collect_episode(config: CollectorConfig) -> Path:
             wrist_rgb=result.wrist_rgb,
             wrist_depth=result.wrist_depth,
             require_depth=config.capture_depth,
+            fixed_ticks=config.fixed_ticks,
         )
         camera_state_offset, offset_scores = estimate_aligned_camera_state_offset(aligned)
         sync_report = build_sync_report(
@@ -647,6 +730,13 @@ async def collect_episode(config: CollectorConfig) -> Path:
             "success": config.success,
             "failure_reason": config.failure_reason,
             "fps": FPS,
+            "fixed_length": {
+                "enabled": config.fixed_ticks is not None,
+                "canonical_ticks": config.fixed_ticks,
+                "duration_s": (
+                    (config.fixed_ticks - 1) / FPS if config.fixed_ticks is not None else None
+                ),
+            },
             "action_semantics": ACTION_SEMANTICS,
             "action_source": "next_state_pseudo_action",
             "schema_version": SCHEMA_VERSION,

@@ -188,6 +188,13 @@ def validate_staging_episode(staging: Path) -> tuple[dict[str, Any], list[dict[s
         raise ValueError("sync_report.canonical_ticks does not match samples.parquet")
     if int(sync_report.get("valid_ticks", -1)) != len(samples):
         raise ValueError("sync_report.valid_ticks does not match samples.parquet")
+    fixed_length = episode.get("fixed_length")
+    if isinstance(fixed_length, dict) and bool(fixed_length.get("enabled")):
+        expected_ticks = int(fixed_length.get("canonical_ticks", -1))
+        if expected_ticks < 2 or len(samples) != expected_ticks:
+            raise ValueError(
+                "fixed-length episode tick count does not match fixed_length.canonical_ticks"
+            )
     if int(sync_report.get("timestamp_regressions", -1)) != 0:
         raise ValueError("sync_report.timestamp_regressions must be zero")
     for field in ("missing_frames", "duplicate_frames", "sequence_gaps", "ring_overflows"):
@@ -521,6 +528,8 @@ def pack_staging_episode(
             "source_staging_sha256": source_hash,
             "dataset_content_sha256": content_hash,
             "frame_count": len(sidecar_records),
+            "canonical_tick_count": len(samples),
+            "fixed_length": episode.get("fixed_length", {"enabled": False}),
             "action_semantics": ACTION_SEMANTICS,
             "source_episode_id": episode["episode_id"],
             "source_panthera_commit": episode["panthera_wam_commit"],

@@ -50,6 +50,7 @@ def episode() -> dict:
             "action_units_version": "rad-v1",
         },
         "depth": {"requested": False, "complete": True},
+        "fixed_length": {"enabled": True, "canonical_ticks": 2, "duration_s": 1 / 30},
     }
 
 
@@ -148,6 +149,23 @@ def test_atomic_writer_publishes_only_after_full_validation(tmp_path: Path) -> N
         observed_episode["calibration_sha256"]
         == hashlib.sha256((final / "calibration.json").read_bytes()).hexdigest()
     )
+
+
+def test_atomic_writer_rejects_fixed_length_count_mismatch(tmp_path: Path) -> None:
+    writer = AtomicEpisodeWriter(tmp_path, "episode-fixed", allow_unapproved_root=True)
+    sync, quality = reports()
+    episode_data = episode()
+    episode_data["fixed_length"] = {"enabled": True, "canonical_ticks": 3, "duration_s": 2 / 30}
+    with pytest.raises(ValueError, match="fixed-length episode tick count"):
+        writer.finalize(
+            episode=episode_data,
+            samples=samples(writer),
+            sync_report=sync,
+            timestamp_quality=quality,
+            calibration={"version": "test"},
+        )
+    assert (writer.temporary_path / "FAILED.json").is_file()
+    assert not writer.final_path.exists()
 
 
 def test_atomic_writer_never_marks_failed_quality_complete(tmp_path: Path) -> None:
