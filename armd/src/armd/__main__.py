@@ -210,7 +210,13 @@ def build_parser() -> argparse.ArgumentParser:
             if os.environ.get("PANTHERA_TEACH_GRAVITY_BREAKPOINT")
             else None
         ),
-        help="示教重力补偿分段断点（rad；q_i>断点用高区系数；默认 inf=不分段）",
+        help="示教重力补偿分段断点（rad；仅 --teach-gravity-segmented 开启后生效）",
+    )
+    parser.add_argument(
+        "--teach-gravity-segmented",
+        action="store_true",
+        default=os.environ.get("PANTHERA_TEACH_GRAVITY_SEGMENTED", "0") == "1",
+        help="显式启用分段重力补偿；默认关闭，避免固定断点产生人工吸附点",
     )
     parser.add_argument(
         "--teach-auto-hold",
@@ -315,6 +321,7 @@ async def run(args: argparse.Namespace) -> None:
         teach_gravity_scale=args.teach_gravity_scale,
         teach_gravity_scale_high=args.teach_gravity_scale_high,
         teach_gravity_breakpoint=args.teach_gravity_breakpoint,
+        teach_gravity_segmented=args.teach_gravity_segmented,
         auto_hold_enabled=args.teach_auto_hold,
     )
     loop.start()

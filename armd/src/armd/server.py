@@ -44,6 +44,7 @@ class ArmdServer:
         teach_gravity_scale: float | np.ndarray = 1.0,
         teach_gravity_scale_high: float | np.ndarray | None = None,
         teach_gravity_breakpoint: float | np.ndarray | None = None,
+        teach_gravity_segmented: bool = False,
         auto_hold_enabled: bool = True,
     ) -> None:
         if camera_worker is not None and camera_endpoint is not None:
@@ -76,6 +77,7 @@ class ArmdServer:
             teach_gravity_scale=teach_gravity_scale,
             teach_gravity_scale_high=teach_gravity_scale_high,
             teach_gravity_breakpoint=teach_gravity_breakpoint,
+            teach_gravity_segmented=teach_gravity_segmented,
             auto_hold_enabled=auto_hold_enabled,
         )
         arm_pb2_grpc.add_ArmServiceServicer_to_server(

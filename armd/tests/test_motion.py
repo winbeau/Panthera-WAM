@@ -413,6 +413,7 @@ def test_teach_passes_segmented_gravity_scale_to_compensation() -> None:
         gravity_scale=0.85,
         gravity_scale_high=np.array([1.7] * 6),
         gravity_breakpoint=np.array([1.2, np.inf, np.inf, np.inf, np.inf, np.inf]),
+        gravity_segmented=True,
     )
     assert motion.step(backend, 0.0) is MotionStepResult.RUNNING
     scale, high, breakpoint = backend.captured
@@ -428,6 +429,34 @@ def test_teach_rejects_invalid_segmented_gravity_scale() -> None:
         TeachMotion(**kwargs, gravity_scale_high=np.zeros(6))
     with pytest.raises(ValueError):
         TeachMotion(**kwargs, gravity_breakpoint=np.array([-1.0] * 6))
+
+
+def test_teach_disables_segmented_gravity_by_default() -> None:
+    class RecordingBackend(SimBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.captured: tuple | None = None
+
+        def compensation_torque(
+            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+        ):
+            self.captured = (gravity_scale, gravity_scale_high, gravity_breakpoint)
+            return np.zeros(6)
+
+    backend = RecordingBackend()
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        gravity_scale=0.78,
+        gravity_scale_high=np.full(6, 1.9),
+        gravity_breakpoint=np.array([1.2, np.inf, np.inf, np.inf, np.inf, np.inf]),
+    )
+    assert motion.step(backend, 0.0) is MotionStepResult.RUNNING
+    assert backend.captured is not None
+    assert backend.captured[1] is None
+    assert backend.captured[2] is None
 
 
 def _drag_until_still_holds(clock, backend, motion, *, drag_steps: int = 5) -> None:

@@ -60,16 +60,15 @@ class AutoHoldConfig:
     """
 
     enabled: bool = True
-    still_velocity_threshold: float = 0.05  # rad/s，全部关节低于此值视为静止（残差驱动慢漂移也能进入 HOLD）
-    release_velocity_threshold: float = 0.08  # rad/s，任一关节超过此值视为重新拖动
+    still_velocity_threshold: float = 0.02  # rad/s，全部关节低于此值视为静止
+    release_velocity_threshold: float = 0.04  # rad/s，任一关节超过此值视为重新拖动
     still_duration: float = 0.20  # s，静止持续时长确认松手
     hold_ramp_time: float = 0.40  # s，kp 从 0 渐变到 kp_hold
     release_ramp_time: float = 0.20  # s，kp 从 kp_hold 渐变回 0
-    # 逐关节保持刚度：必须能压住重力补偿残差（J2/J3 实测残差可达 1-2 Nm，
-    # 偏移=残差/kp；kp=8 → 0.13-0.25 rad）
-    kp_hold: tuple[float, ...] = (2.0, 8.0, 8.0, 4.0, 1.5, 1.5)
+    # 保守逐关节保持刚度；重力残差应在独立标定层修正，不靠盲目增大 kp
+    kp_hold: tuple[float, ...] = (1.0, 2.0, 2.0, 1.0, 0.8, 0.8)
     kd_drag: tuple[float, ...] | None = None  # 拖动阻尼；None=沿用 TeachMotion.kd
-    kd_hold: tuple[float, ...] = (0.6, 1.5, 1.5, 0.8, 0.3, 0.3)  # 逐关节保持阻尼
+    kd_hold: tuple[float, ...] = (0.4, 0.8, 0.8, 0.4, 0.2, 0.2)  # 逐关节保持阻尼
     velocity_filter_tau_s: float = 0.03  # 速度判定用低通时间常数
 
     def __post_init__(self) -> None:
@@ -740,6 +739,7 @@ class TeachMotion:
         gravity_scale: float | np.ndarray = 1.0,
         gravity_scale_high: float | np.ndarray | None = None,
         gravity_breakpoint: float | np.ndarray | None = None,
+        gravity_segmented: bool = False,
         auto_hold: AutoHoldConfig | None = None,
     ) -> None:
         self.kp = np.asarray(kp, dtype=np.float64).copy()
@@ -757,6 +757,7 @@ class TeachMotion:
         self.gravity_scale, self.gravity_scale_high, self.gravity_breakpoint = _gravity_params(
             gravity_scale, gravity_scale_high, gravity_breakpoint
         )
+        self.gravity_segmented = bool(gravity_segmented)
         self.vel_threshold = float(vel_threshold)
         self.reject_reason = ""
         self._cancel_reason: CancelReason | None = None
@@ -818,8 +819,8 @@ class TeachMotion:
             self.fv,
             self.vel_threshold,
             self.gravity_scale,
-            self.gravity_scale_high,
-            self.gravity_breakpoint,
+            self.gravity_scale_high if self.gravity_segmented else None,
+            self.gravity_breakpoint if self.gravity_segmented else None,
         )
         torque = np.clip(torque, -self.tau_limit, self.tau_limit)
 
@@ -952,6 +953,7 @@ class TeachPlaybackMotion:
         gravity_scale: float | np.ndarray = 1.0,
         gravity_scale_high: float | np.ndarray | None = None,
         gravity_breakpoint: float | np.ndarray | None = None,
+        gravity_segmented: bool = False,
     ) -> None:
         if not frames:
             raise ValueError("示教回放帧不能为空")
@@ -980,6 +982,7 @@ class TeachPlaybackMotion:
         self.gravity_scale, self.gravity_scale_high, self.gravity_breakpoint = _gravity_params(
             gravity_scale, gravity_scale_high, gravity_breakpoint
         )
+        self.gravity_segmented = bool(gravity_segmented)
         self.gripper_kp = float(gripper_kp)
         self.gripper_kd = float(gripper_kd)
         self.start_timeout_s = start_timeout_s
@@ -1122,8 +1125,8 @@ class TeachPlaybackMotion:
             self.fv,
             self.vel_threshold,
             self.gravity_scale,
-            self.gravity_scale_high,
-            self.gravity_breakpoint,
+            self.gravity_scale_high if self.gravity_segmented else None,
+            self.gravity_breakpoint if self.gravity_segmented else None,
         )
         torque = np.clip(torque, -self.tau_limit, self.tau_limit)
         backend.write_frame(
