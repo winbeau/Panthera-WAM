@@ -70,6 +70,8 @@ def test_fixed_alignment_publishes_exact_tick_count_without_padding() -> None:
     )
     assert len(aligned) == 3
     assert [sample.tick_index for sample in aligned] == [0, 1, 2]
+    assert aligned[-1].state is not None
+    assert aligned[-1].state.position == pytest.approx((3.0,) * 7)
 
 
 def test_fixed_alignment_rejects_short_common_window() -> None:

@@ -180,9 +180,9 @@ def align_episode(
                 f"fixed-length episode requires {fixed_ticks} canonical ticks, "
                 f"but the common stream window provides {len(ticks)}"
             )
-        # Fixed mode publishes the first complete window. The collector captures
-        # a trailing margin so this window is never padded or shortened.
-        ticks = ticks[:fixed_ticks]
+        # Fixed mode publishes the final complete window at graceful stop. The
+        # collector's margin absorbs terminal-switch and action-start latency.
+        ticks = ticks[-fixed_ticks:]
     aligned_states = interpolate_states(states, ticks)
     aligned_overhead = select_nearest_unique(
         overhead_rgb,
