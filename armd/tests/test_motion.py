@@ -13,6 +13,8 @@ from armd.motion import (
     CartesianTrajectoryMotion,
     JOG_FRESHNESS_S,
     JOG_TARGET_LOOKAHEAD_S,
+    MANUAL_CLUTCH_HOLD_RAMP_TIME_S,
+    MANUAL_CLUTCH_KP_HOLD,
     JointJogMotion,
     JointPositionMotion,
     TeachClutchCommand,
@@ -557,13 +559,60 @@ def test_manual_clutch_lock_samples_current_position_and_ignores_velocity() -> N
     assert backend.frames[-1].arm_position == pytest.approx(expected)
     assert backend.frames[-1].arm_kp == pytest.approx([0.0] * 6)
 
-    for _ in range(80):
+    for _ in range(16):
         clock.advance(0.005)
         backend.refresh_state()
         backend._velocities[:6] = 0.1
         motion.step(backend, clock.now)
     assert motion.auto_hold_state is AutoHoldState.HOLD
-    assert backend.frames[-1].arm_kp == pytest.approx(cfg.kp_hold, abs=0.05)
+    assert backend.frames[-1].arm_kp == pytest.approx(MANUAL_CLUTCH_KP_HOLD, abs=0.05)
+    assert backend.frames[-1].arm_kd == pytest.approx(np.maximum(cfg.kd_hold, motion.kd))
+    assert 16 * 0.005 == pytest.approx(MANUAL_CLUTCH_HOLD_RAMP_TIME_S)
+
+
+def test_manual_clutch_hold_anchors_compensation_at_lock_pose_and_zero_velocity() -> None:
+    class CapturingBackend(RecordingSimBackend):
+        def __init__(self, *, clock: FakeClock) -> None:
+            super().__init__(clock=clock)
+            self.compensation_inputs = []
+
+        def compensation_torque(
+            self,
+            q,
+            v,
+            fc,
+            fv,
+            vel_threshold,
+            gravity_scale=1.0,
+            gravity_scale_high=None,
+            gravity_breakpoint=None,
+        ):
+            self.compensation_inputs.append((np.asarray(q).copy(), np.asarray(v).copy()))
+            return np.asarray(q) + np.asarray(v)
+
+    clock = FakeClock()
+    backend = CapturingBackend(clock=clock)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.array([0.4, 2.0, 0.6, 0.4, 0.15, 0.08]),
+        fc=np.full(6, 0.15),
+        fv=np.full(6, 0.06),
+        manual_clutch=True,
+    )
+    hold = np.array([0.1, 1.3, 0.2, -0.1, 0.05, -0.05])
+    backend._positions[:6] = hold
+    motion.request_clutch(TeachClutchCommand.LOCK)
+    motion.step(backend, clock.now)
+
+    backend._positions[:6] = hold + 0.2
+    backend._velocities[:6] = 0.1
+    clock.advance(0.005)
+    motion.step(backend, clock.now)
+
+    q_used, v_used = backend.compensation_inputs[-1]
+    assert q_used == pytest.approx(hold)
+    assert v_used == pytest.approx([0.0] * 6)
+    assert backend.frames[-1].arm_torque == pytest.approx(hold)
 
 
 def test_manual_clutch_drag_releases_smoothly_then_stays_drag() -> None:

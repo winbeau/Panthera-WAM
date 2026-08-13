@@ -246,9 +246,11 @@ teach 每关节 4 个参数：**kp**（刚度，回中力）、**kd**（速度�
 pkill -f "control heartbeat"            # 结束 teach
 ```
 
-`lock` 不依赖机械臂当前速度或重力残差；HOLD 仍保留重力/摩擦前馈，并按 smoothstep
-渐增位置刚度。`drag` 通过 RELEASE 阶段平滑降刚度，避免突然跳变。录制 color-block 时，
-在每次放置或调整末端后执行 `lock`，拖到下一位置前执行 `drag`。
+`lock` 不依赖机械臂当前速度或重力残差；HOLD 使用 SDK 阻抗示例量级
+`kp=[4,10,10,2,2,1]`，约 80 ms 内按 smoothstep 建立，并确保 HOLD 阻尼不低于拖动阻尼。
+重力前馈固定按锁定位形计算，摩擦前馈使用零目标速度，避免漂移后继续同向助推。
+`drag` 通过约 80 ms RELEASE 平滑降刚度，避免突然跳变。录制 color-block 时，在每次放置
+或调整末端后执行 `lock`，拖到下一位置前执行 `drag`。
 
 ## 4. 安全须知
 

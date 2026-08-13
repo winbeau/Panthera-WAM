@@ -39,6 +39,11 @@ JOG_ZERO_EPSILON = 1e-4
 MIT_FRESHNESS_S = 0.12
 TEACH_VEL_THRESHOLD_S = 0.02
 TEACH_TAU_LIMIT = np.array([15.0, 30.0, 30.0, 15.0, 5.0, 5.0], dtype=np.float64)
+# 官方 SDK 的阻抗示例使用 K=[4,10,10,2,2,1]；显式 lock 是确定性
+# 位置保持，不应复用面向自动判定的保守 kp_hold。
+MANUAL_CLUTCH_KP_HOLD = np.array([4.0, 10.0, 10.0, 2.0, 2.0, 1.0], dtype=np.float64)
+MANUAL_CLUTCH_HOLD_RAMP_TIME_S = 0.08
+MANUAL_CLUTCH_RELEASE_RAMP_TIME_S = 0.08
 GRIPPER_POSITION_TORQUE_FRACTION = 0.8
 GRIPPER_POSITION_MAX_KP = 5.0
 GRIPPER_POSITION_MAX_KD = 0.5
@@ -794,6 +799,11 @@ class TeachMotion:
             self._kd_drag_now = self.kd.copy()
         else:
             self._kd_drag_now = np.asarray(self.auto_hold_cfg.kd_drag, dtype=np.float64).copy()
+        # 显式 HOLD 的阻尼不得低于拖动阻尼，避免 lock 后阻尼反而变软。
+        self._manual_kd_hold = np.maximum(
+            np.asarray(self.auto_hold_cfg.kd_hold, dtype=np.float64),
+            self._kd_drag_now,
+        )
         self._filtered_velocity = np.zeros(6, dtype=np.float64)
         self._velocity_filter_updated_at: float | None = None
 
@@ -840,9 +850,25 @@ class TeachMotion:
             self.reject_reason = f"示教已停止: {cancel_reason.value}"
             return MotionStepResult.CANCELLED
 
+        if self.auto_hold_cfg.enabled:
+            kp, kd, cmd_positions, cmd_velocities = self._auto_hold_step(positions, velocities, now)
+        else:
+            kp, kd, cmd_positions, cmd_velocities = self.kp, self.kd, positions, np.zeros(6)
+
+        # HOLD/RELEASE 的前馈锚定在锁定位形：重力项不能随漂移后的 q 追着走，
+        # 摩擦项也不能把当前漂移速度变成同方向助推。DRAG 仍使用实时 q/v。
+        if self.manual_clutch and self._q_hold is not None and self._hold_state in {
+            AutoHoldState.HOLD,
+            AutoHoldState.RELEASE,
+        }:
+            compensation_position = self._q_hold
+            compensation_velocity = np.zeros(6, dtype=np.float64)
+        else:
+            compensation_position = positions
+            compensation_velocity = velocities
         torque = backend.compensation_torque(
-            positions,
-            velocities,
+            compensation_position,
+            compensation_velocity,
             self.fc,
             self.fv,
             self.vel_threshold,
@@ -851,11 +877,6 @@ class TeachMotion:
             self.gravity_breakpoint if self.gravity_segmented else None,
         )
         torque = np.clip(torque + self.gravity_residual, -self.tau_limit, self.tau_limit)
-
-        if self.auto_hold_cfg.enabled:
-            kp, kd, cmd_positions, cmd_velocities = self._auto_hold_step(positions, velocities, now)
-        else:
-            kp, kd, cmd_positions, cmd_velocities = self.kp, self.kd, positions, np.zeros(6)
 
         backend.write_frame(
             JointFrame(
@@ -909,7 +930,7 @@ class TeachMotion:
             self._still_since = None
             if self._hold_state in {AutoHoldState.HOLD, AutoHoldState.RELEASE}:
                 self._release_kp_start = self._kp_now.copy()
-                self._release_kd_start = np.asarray(cfg.kd_hold, dtype=np.float64).copy()
+                self._release_kd_start = self._manual_kd_hold.copy()
                 self._enter_state(AutoHoldState.RELEASE, now, "显式 drag -> RELEASE (恢复手拖)")
             else:
                 self._q_hold = None
@@ -921,17 +942,16 @@ class TeachMotion:
             if self._hold_state is AutoHoldState.HOLD:
                 assert self._q_hold is not None
                 elapsed = max(0.0, now - (self._state_since or now))
-                s = _smoothstep(elapsed / cfg.hold_ramp_time)
-                kp_hold = np.asarray(cfg.kp_hold, dtype=np.float64)
-                self._kp_now = self._hold_kp_start + (kp_hold - self._hold_kp_start) * s
-                return self._kp_now, np.asarray(cfg.kd_hold, dtype=np.float64), self._q_hold, np.zeros(6)
+                s = _smoothstep(elapsed / MANUAL_CLUTCH_HOLD_RAMP_TIME_S)
+                self._kp_now = self._hold_kp_start + (MANUAL_CLUTCH_KP_HOLD - self._hold_kp_start) * s
+                return self._kp_now, self._manual_kd_hold, self._q_hold, np.zeros(6)
             if self._hold_state is AutoHoldState.RELEASE:
                 assert self._state_since is not None
                 elapsed = max(0.0, now - self._state_since)
-                s = _smoothstep(elapsed / cfg.release_ramp_time)
+                s = _smoothstep(elapsed / MANUAL_CLUTCH_RELEASE_RAMP_TIME_S)
                 self._kp_now = self._release_kp_start * (1.0 - s)
                 kd_now = self._kd_drag_now + (self._release_kd_start - self._kd_drag_now) * (1.0 - s)
-                if elapsed >= cfg.release_ramp_time:
+                if elapsed >= MANUAL_CLUTCH_RELEASE_RAMP_TIME_S:
                     self._kp_now.fill(0.0)
                     self._q_hold = None
                     self._enter_state(AutoHoldState.DRAG, now, "显式 release -> DRAG")
