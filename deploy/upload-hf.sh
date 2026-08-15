@@ -2,13 +2,14 @@
 # upload-hf.sh — 上传 Panthera 录制数据到 Hugging Face
 #
 # 目录规范（kv-compression/fastwam-lerobot）：
-#   lerobot/<episode>/...    正式采集成品（collectord 原始格式，含 COMPLETE）
-#   preview/<session>/...    手动预演/手举演示抓帧（wrist_/overhead_ 帧）
+#   lerobot/<episode>/...          正式采集成品（collectord 原始格式，含 COMPLETE）
+#   preview/<task>_<num>/<task>_wrist_<num>.mp4    预演视频（腕部相机）
+#   preview/<task>_<num>/<task>_overhead_<num>.mp4 预演视频（顶部相机）
 #
 # 用法：
 #   ./deploy/upload-hf.sh episode <name>            上传单个正式 episode
 #   ./deploy/upload-hf.sh episode --all             上传全部 COMPLETE 成品
-#   ./deploy/upload-hf.sh preview <frames-dir> [session]   上传预演抓帧目录
+#   ./deploy/upload-hf.sh preview <video-dir> <task> <num>   上传预演 mp4
 #   ./deploy/upload-hf.sh list                      列出仓库已有内容
 #
 # 选项：
@@ -117,13 +118,19 @@ EOF
 }
 
 # ---------- preview ----------
+# 规范：preview/<task>_<num>/<task>_wrist_<num>.mp4 + <task>_overhead_<num>.mp4
 upload_preview() {
-    local src="$1"
-    local session="${2:-$(date +%Y-%m-%d)}"
-    [ -d "$src" ] || die "preview 帧目录不存在: $src"
-    log "上传预演帧：$src -> $REPO_ID:preview/$session/"
-    hf_upload "$src" "preview/$session" "upload preview $session"
-    log "完成：preview/$session"
+    local dir="$1"
+    local task="$2"
+    local num="$3"
+    [ -d "$dir" ] || die "preview 视频目录不存在: $dir"
+    local wrist="$dir/${task}_wrist_${num}.mp4"
+    local overhead="$dir/${task}_overhead_${num}.mp4"
+    [ -f "$wrist" ] || die "缺少视频 $wrist（先用 deploy/encode-preview-mp4.py 编码）"
+    [ -f "$overhead" ] || die "缺少视频 $overhead（先用 deploy/encode-preview-mp4.py 编码）"
+    log "上传预演视频：${task}_${num} -> $REPO_ID:preview/${task}_${num}/"
+    hf_upload "$dir" "preview/${task}_${num}" "upload preview ${task}_${num}"
+    log "完成：preview/${task}_${num}"
 }
 
 # ---------- 仓库列表 ----------
@@ -173,15 +180,17 @@ case "$cmd" in
         fi
         ;;
     preview)
-        src="${1:-}"
+        dir="${1:-}"
         shift || true
-        [ -n "$src" ] || die "用法: $0 preview <frames-dir> [session]"
-        upload_preview "$src" "${1:-}"
+        task="${1:-}"
+        shift || true
+        [ -n "$dir" ] && [ -n "$task" ] || die "用法: $0 preview <video-dir> <task> <num>"
+        upload_preview "$dir" "$task" "${1:-}"
         ;;
     list)
         list_repo
         ;;
     *)
-        die "用法: $0 episode <name|--all> | preview <frames-dir> [session] | list"
+        die "用法: $0 episode <name|--all> | preview <video-dir> <task> <num> | list"
         ;;
 esac
