@@ -31,9 +31,16 @@ log() { printf '[upload-hf] %s\n' "$*"; }
 die() { printf '[upload-hf] ERROR: %s\n' "$*" >&2; exit 1; }
 
 # ---------- 网络与认证 ----------
+# 任意 HTTP 响应码（200/401/403...）都说明网络可达
+hf_http_code() {
+    curl -s -m 8 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || echo 000
+}
+
 ensure_network() {
-    if curl -fsS -m 8 -o /dev/null https://huggingface.co/api/whoami-v2; then
-        log "huggingface.co 直连可用"
+    local code
+    code=$(hf_http_code https://huggingface.co/api/whoami-v2)
+    if [ "$code" != "000" ]; then
+        log "huggingface.co 直连可用（http_code=$code）"
         return 0
     fi
     log "直连不可用，尝试 sing-box 代理（~/sb）..."
@@ -44,8 +51,9 @@ ensure_network() {
         proxyon >/dev/null 2>&1 || true
         sleep 2
     fi
-    if curl -fsS -m 8 -x "${http_proxy:-http://127.0.0.1:10808}" -o /dev/null https://huggingface.co/api/whoami-v2; then
-        log "代理可用（${http_proxy:-http://127.0.0.1:10808}）"
+    code=$(hf_http_code -x "${http_proxy:-http://127.0.0.1:10808}" https://huggingface.co/api/whoami-v2)
+    if [ "$code" != "000" ]; then
+        log "代理可用（${http_proxy:-http://127.0.0.1:10808}，http_code=$code）"
         return 0
     fi
     die "无法访问 huggingface.co（直连与代理均失败）"
