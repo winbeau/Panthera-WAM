@@ -34,7 +34,9 @@ die() { printf '[upload-hf] ERROR: %s\n' "$*" >&2; exit 1; }
 # ---------- 网络与认证 ----------
 # 任意 HTTP 响应码（200/401/403...）都说明网络可达
 hf_http_code() {
-    curl -s -m 8 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || echo 000
+    local code
+    code=$(curl -s -m 8 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null) || code=000
+    printf '%s' "$code"
 }
 
 ensure_network() {
