@@ -22,6 +22,7 @@
 # teach 保持运行直到 `pkill -f "control heartbeat"`（watchdog 随后自动停 teach）。
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_file="$HOME/.config/panthera-wam/armd.env"
 state_file="$HOME/.config/panthera-wam/teach-cal.json"
 
@@ -113,6 +114,8 @@ if grep -q '^PANTHERA_TEACH_GRAVITY_RESIDUAL=' "$env_file"; then
     echo "==> residual=$(sed -n 's/^PANTHERA_TEACH_GRAVITY_RESIDUAL=//p' "$env_file")"
 fi
 pkill -f "control heartbeat" 2>/dev/null || true
+pkill -f "$repo_root/deploy/lease-heartbeat.py" 2>/dev/null || true
+pkill -f "/tmp/panthera-lease-heartbeat.py" 2>/dev/null || true
 if grep -q '^PANTHERA_TEACH_GRAVITY_SCALE=' "$env_file"; then
     sed -i "s|^PANTHERA_TEACH_GRAVITY_SCALE=.*|PANTHERA_TEACH_GRAVITY_SCALE=$scale|" "$env_file"
 else
@@ -123,11 +126,12 @@ systemctl --user restart armd.service
 sleep 8
 systemctl --user is-active armd.service >/dev/null || { echo "armd 未激活" >&2; exit 1; }
 
-cd "$HOME/Panthera-WAM"
-uv run --no-sync --package panthera-cli panthera control acquire --client-id teach-cal 2>&1 | grep -v "incompatible\|Warning" | tail -1
-nohup uv run --no-sync --package panthera-cli panthera control heartbeat >/tmp/hb.log 2>&1 &
-sleep 4
-uv run --no-sync --package panthera-cli panthera teach start --manual-clutch --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" 2>&1 | grep -v "incompatible\|Warning" | tail -1
-timeout 20 uv run --no-sync --package panthera-cli panthera state get 2>&1 | grep -v "incompatible\|Warning" | sed -n '4,9p'
+cd "$repo_root"
+hb_log="${PANTHERA_TEACH_HEARTBEAT_LOG:-/tmp/panthera-lease-heartbeat.log}"
+nohup "$repo_root/.venv/bin/python" "$repo_root/deploy/lease-heartbeat.py" >"$hb_log" 2>&1 &
+sleep 1
+"$repo_root/.venv/bin/panthera" teach start --manual-clutch --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" 2>&1 | grep -v "incompatible\|Warning" | tail -1
+timeout 20 "$repo_root/.venv/bin/panthera" state get 2>&1 | grep -v "incompatible\|Warning" | sed -n '4,9p'
 echo "==> teach 运行中（显式离合）：./deploy/teach-cal.sh lock 锁定；./deploy/teach-cal.sh drag 手拖"
-echo "==> 停止（会先 SAFE_HOLD 约10秒）：./deploy/teach-cal.sh stop 或 pkill -f \"control heartbeat\""
+echo "==> heartbeat 日志：$hb_log"
+echo "==> 停止（会先 SAFE_HOLD 约10秒）：./deploy/teach-cal.sh stop 或 pkill -f \"$repo_root/deploy/lease-heartbeat.py\""
