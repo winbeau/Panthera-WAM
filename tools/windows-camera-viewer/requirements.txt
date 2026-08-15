@@ -1,0 +1,4 @@
+grpcio==1.82.1
+protobuf>=7.35.0,<8
+numpy>=1.26,<3
+opencv-python>=4.10
