@@ -203,8 +203,10 @@ def record_state(
                 "t": max(0.0, (timestamp - first_timestamp) / 1_000_000_000.0),
                 "pos": [float(motor.position) for motor in motors[:6]],
                 "vel": [float(motor.velocity) for motor in motors[:6]],
-                "gripper_pos": float(motors[6].position),
-                "gripper_vel": float(motors[6].velocity),
+                # SDK 开位偶尔会返回略小于 0 的量化值；TeachPlay 的
+                # 契约是 gripper position ∈ [0, 2]、velocity ∈ [-1, 1]。
+                "gripper_pos": float(np.clip(motors[6].position, 0.0, 2.0)),
+                "gripper_vel": float(np.clip(motors[6].velocity, -1.0, 1.0)),
             }
             handle.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n")
             count += 1
