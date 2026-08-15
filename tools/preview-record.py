@@ -8,11 +8,12 @@ Outputs:
     ~/panthera-data/preview/color-block_001/
       color-block_wrist_001.mp4
       color-block_overhead_001.mp4
-      trajectory_001.jsonl
+      trajectory_001.jsonl              # raw 7-axis state/torque/timestamp
+      replay_trajectory_001.jsonl       # legal TeachPlay view
       preview.json
 
-The same trajectory is copied into the armd TeachStore under:
-    ~/.local/share/panthera/teach/preview/color-block_001/trajectory_001.jsonl
+Both trajectories are copied into the armd TeachStore under:
+    ~/.local/share/panthera/teach/preview/color-block_001/
 
 This process only reads camera/state streams. It does not acquire the arm
 lease and does not send movement commands; manual movement remains controlled
@@ -23,6 +24,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import re
 import shutil
 import signal
@@ -41,7 +43,7 @@ from panthera_arm import arm_pb2, arm_pb2_grpc, camera_pb2, camera_pb2_grpc
 
 DEFAULT_ROOT = Path.home() / "panthera-data" / "preview"
 DEFAULT_TEACH_ROOT = Path.home() / ".local" / "share" / "panthera" / "teach"
-DEFAULT_RATE_HZ = 15.0
+DEFAULT_RATE_HZ = 8.0
 DEFAULT_DURATION_S = 30.0
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 
@@ -169,6 +171,7 @@ def record_state(
     stop_event: threading.Event,
     errors: list[str],
     counts: dict[str, int],
+    quality: dict[str, int],
 ) -> None:
     channel = grpc.insecure_channel(
         endpoint,
@@ -181,6 +184,9 @@ def record_state(
     handle = None
     count = 0
     first_timestamp: int | None = None
+    last_timestamp: int | None = None
+    last_sequence: int | None = None
+    stream_instance_id: str | None = None
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
         handle = output.open("w", encoding="utf-8")
@@ -197,16 +203,34 @@ def record_state(
             if len(motors) != 7 or not all(motor.valid for motor in motors):
                 continue
             timestamp = int(robot.sampled_monotonic_ns)
+            sequence = int(robot.sequence)
+            current_stream = str(robot.stream_instance_id)
             if first_timestamp is None:
                 first_timestamp = timestamp
+                stream_instance_id = current_stream
+            else:
+                if timestamp <= (last_timestamp or first_timestamp):
+                    quality["timestamp_regressions"] += 1
+                    continue
+                if sequence <= (last_sequence or sequence - 1):
+                    quality["sequence_regressions"] += 1
+                    continue
+                if current_stream != stream_instance_id:
+                    quality["stream_instance_changes"] += 1
+                    stream_instance_id = current_stream
+            last_timestamp = timestamp
+            last_sequence = sequence
             item = {
                 "t": max(0.0, (timestamp - first_timestamp) / 1_000_000_000.0),
+                "sampled_monotonic_ns": timestamp,
+                "sequence": sequence,
+                "stream_instance_id": current_stream,
                 "pos": [float(motor.position) for motor in motors[:6]],
                 "vel": [float(motor.velocity) for motor in motors[:6]],
-                # SDK 开位偶尔会返回略小于 0 的量化值；TeachPlay 的
-                # 契约是 gripper position ∈ [0, 2]、velocity ∈ [-1, 1]。
-                "gripper_pos": float(np.clip(motors[6].position, 0.0, 2.0)),
-                "gripper_vel": float(np.clip(motors[6].velocity, -1.0, 1.0)),
+                "torque": [float(motor.torque) for motor in motors[:6]],
+                "gripper_pos": float(motors[6].position),
+                "gripper_vel": float(motors[6].velocity),
+                "gripper_torque": float(motors[6].torque),
             }
             handle.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n")
             count += 1
@@ -229,6 +253,21 @@ def record_state(
         counts["state"] = count
 
 
+def make_replay_trajectory(raw_path: Path, replay_path: Path) -> None:
+    """Create the legal TeachPlay view without altering measured preview data."""
+    with raw_path.open(encoding="utf-8") as source, replay_path.open("w", encoding="utf-8") as target:
+        for line in source:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            row["gripper_pos"] = float(np.clip(row["gripper_pos"], 0.0, 2.0))
+            # Position remains the measured path; cap only noisy velocity feed-forward.
+            row["gripper_vel"] = float(np.clip(row["gripper_vel"], -0.5, 0.5))
+            target.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+        target.flush()
+        os.fsync(target.fileno())
+
+
 def main() -> int:
     args = parse_args()
     validate_args(args)
@@ -237,9 +276,12 @@ def main() -> int:
     wrist_output = output_dir / f"{args.task}_wrist_{args.number}.mp4"
     overhead_output = output_dir / f"{args.task}_overhead_{args.number}.mp4"
     trajectory_output = output_dir / f"trajectory_{args.number}.jsonl"
+    replay_trajectory_output = output_dir / f"replay_trajectory_{args.number}.jsonl"
     metadata_output = output_dir / "preview.json"
     teach_relative = Path("preview") / session / trajectory_output.name
+    teach_replay_relative = Path("preview") / session / replay_trajectory_output.name
     teach_output = args.teach_root.expanduser().resolve() / teach_relative
+    teach_replay_output = args.teach_root.expanduser().resolve() / teach_replay_relative
 
     if output_dir.exists() and not args.overwrite:
         raise SystemExit(f"输出目录已存在：{output_dir}；需要覆盖时加 --overwrite")
@@ -251,10 +293,15 @@ def main() -> int:
     stop_event = threading.Event()
     errors: list[str] = []
     counts: dict[str, int] = {}
+    quality = {
+        "timestamp_regressions": 0,
+        "sequence_regressions": 0,
+        "stream_instance_changes": 0,
+    }
     threads = [
         threading.Thread(
             target=record_state,
-            args=(args.arm_endpoint, trajectory_output, start_event, stop_event, errors, counts),
+            args=(args.arm_endpoint, trajectory_output, start_event, stop_event, errors, counts, quality),
             daemon=True,
         ),
         threading.Thread(
@@ -279,7 +326,8 @@ def main() -> int:
     print(f"输出目录：{output_dir}", flush=True)
     print(f"wrist：{wrist_output.name}", flush=True)
     print(f"overhead：{overhead_output.name}", flush=True)
-    print(f"trajectory：{trajectory_output.name}（200 Hz measured state）", flush=True)
+    print(f"trajectory：{trajectory_output.name}（7 轴 measured state/torque + timestamp/sequence）", flush=True)
+    print(f"replay：{replay_trajectory_output.name}（TeachPlay 安全视图）", flush=True)
     print(f"目标：{args.duration_s:.1f}s @ {args.rate_hz:.1f} FPS；Ctrl-C 可正常收尾", flush=True)
     for thread in threads:
         thread.start()
@@ -293,10 +341,12 @@ def main() -> int:
         thread.join(timeout=10.0)
 
     try:
+        make_replay_trajectory(trajectory_output, replay_trajectory_output)
         teach_output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(trajectory_output, teach_output)
+        shutil.copy2(replay_trajectory_output, teach_replay_output)
     except OSError as exc:
-        errors.append(f"trajectory copy to TeachStore failed: {exc}")
+        errors.append(f"trajectory/TeachStore write failed: {exc}")
 
     metadata = {
         "task": args.task,
@@ -304,12 +354,21 @@ def main() -> int:
         "duration_s": args.duration_s,
         "camera_rate_hz": args.rate_hz,
         "frames": counts,
+        "quality": quality,
         "trajectory": str(trajectory_output),
+        "replay_trajectory": str(replay_trajectory_output),
         "teach_trajectory": str(teach_relative),
+        "teach_replay_trajectory": str(teach_replay_relative),
         "wrist_endpoint": args.wrist_endpoint,
         "overhead_endpoint": args.overhead_endpoint,
         "arm_endpoint": args.arm_endpoint,
-        "success": not errors and all(counts.get(name, 0) > 0 for name in ("state", "wrist", "overhead")),
+        "success": (
+            not errors
+            and not any(quality.values())
+            and counts.get("state", 0) >= max(100, int(args.duration_s * 100))
+            and counts.get("wrist", 0) >= max(1, int(args.duration_s * args.rate_hz * 0.75))
+            and counts.get("overhead", 0) >= max(1, int(args.duration_s * args.rate_hz * 0.75))
+        ),
     }
     metadata_output.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if errors:
