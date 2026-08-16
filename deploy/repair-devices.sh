@@ -286,7 +286,12 @@ service_exists() {
 
 service_state() {
     local state
-    if state=$(systemctl --user is-active "$1" 2>/dev/null); then
+    # 注意：systemctl is-active 对 inactive/failed 状态返回非零退出码，
+    # 但输出文本是可靠的；只有无输出（dbus/命令失败）才视为 query-failed。
+    set +e
+    state=$(systemctl --user is-active "$1" 2>/dev/null)
+    set -e
+    if [[ -n "$state" ]]; then
         printf '%s' "$state"
     else
         printf '%s' query-failed
