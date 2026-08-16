@@ -288,6 +288,23 @@ pkill -f "control heartbeat"            # 等价停止：lease 过期同样进�
 `lock` 现场验证（kp=20）：J2 高位约 6 秒零速度保持；若仍观察到缓慢漂移，属于重力前馈残差，
 应调整 `PANTHERA_TEACH_GRAVITY_RESIDUAL`（符号/数值）而非盲目增大 kp。
 
+## 7. WorkZero 真机前置（work-zero 方案，2026-08-17 冻结）
+
+进入工作零位 / 回位（`workzero gozero/rezero`）的安全前置：
+
+1. **只读前置**：`armd.service` active、7 电机 valid/fault=0/mode 正常、EStop 状态符合预期、
+   `~/.config/panthera-wam/work-zero.json` 存在且权限 0600、C# 前端与其它 D405 客户端关闭。
+2. **gozero/rezero 只走服务端连续流式 WorkZeroMotion**（每控制周期 MIT 完整帧）。
+   真机禁止作为回位路径：`joint move/movej`、`JointPositionMotion`、单帧 `position_frame`、
+   teach play 的 posvel 起点移动、`trajectory run-waypoints`、`cartesian movel`。
+3. **显式确认**：每次真机 gozero/rezero 前脚本先打印 target、duration、limits，
+   用户二次确认（`--confirm` 由服务端判定，不能只是客户端提示），E-stop 可立即触达。
+4. **低速/零速 MIT hold 未完成真机验证前**，不把 gozero 目标设为极小位移；
+   `PANTHERA_WORKZERO_REAL_HARDWARE_ENABLED` 默认 0，真机放行需逐级确认。
+5. **setzero** 基于 active teach + 显式 manual clutch lock 的同一 7 轴状态样本，
+   不调用 `calibrate zero` / `set_reset_zero`。
+6. **失败语义**：EStop/lease 失效后不自动恢复、不自动 rezero；报告 rezero=skipped 与原因。
+
 ## 4. 安全须知
 
 - **低速 jog 会锁死关节**：任何低于 0.1 rad/s 的单关节命令都视为危险操作；锁死后必须

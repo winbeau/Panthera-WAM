@@ -636,6 +636,87 @@ panthera dataset export-lerobot TRAJECTORY_PATH [--out-dir DIR] [--repo-id OWNER
 
 ---
 
+## Work-Zero 工作零位决策（2026-08-17 冻结，P0 回写）
+
+> 权威拆分计划：`docs/WORKZERO_IMPLEMENTATION_PLAN.md` + `docs/plans/workzero/00..05`。
+> 本节记录实现前（P0）重新核实的事实与冻结的架构决策，作为后续阶段的契约锚点。
+> 基线：`fba5a7a`（2026-08-15）。
+
+### WZ-1 应用层工作姿态，不是硬件零点
+
+- `workzero setzero` 保存 6 关节 + 夹爪 7 轴**工作姿态**到 armd 主机文件
+  `~/.config/panthera-wam/work-zero.json`（`PANTHERA_WORK_ZERO_PATH` 可覆盖），权限 0600。
+- **不得调用** `backend.set_zero()` / SDK `set_reset_zero()` / 既有 `SetZero` RPC /
+  `calibrate zero` 路径。`SetZero` 语义（§V2）是平移硬件零参考、限位失准风险高，与本功能无关。
+- 命令树 `workzero show/setzero/gozero/rezero` 与 `calibrate zero` 明确分开。
+
+### WZ-2 gozero/rezero 只走服务端连续流式 MIT
+
+- 第一版 `WorkZeroMotion` 由 HardwareLoop 每控制周期推进，输出 `POS_VEL_TQE_KP_KD` 完整帧；
+  目标、软限位、速度/加速度/力矩、取消、EStop 交互全部在服务端。
+- 禁止路径（已按 fba5a7a 代码逐一定位）：
+  `JointPositionMotion.step()`（motion.py:356，单次 POS-VEL 目标帧 + 轮询）；
+  `MoveJ`（grpc_service.py:623）；单帧 `position_frame()` helper（motion.py:95）；
+  `TeachPlaybackMotion._step_move_to_start` 的 posvel 起点移动（motion.py）；
+  `CartesianTrajectoryMotion`（motion.py:597）与 `RunJointTrajectory` 作为第一版真机回位路径；
+  `PolicyChunkMotion`（policy.py:253，单帧 `position_frame`）只用于任务动作，不得用于回位。
+- `rezero` 是 CLI/session 语义，调用同一 `GoWorkZero`（`reason=post_action`），不复制第二套运动实现。
+- 第一版为关节空间，不依赖 IK/FK；§1.4 双 pinocchio 实例/独立进程结论仍有效，WorkZeroMotion 不触碰。
+
+### WZ-3 action window 定义
+
+```text
+gozero 完成 + settle 稳定 → [ACTION WINDOW 开始] → 只执行任务动作
+→ 动作结束（lock/stop）→ 数据 COMPLETE 提交 → [ACTION WINDOW 结束] → rezero
+```
+
+- preview 与正式 episode 只记录 action window；训练契约维持 30 s → 901 canonical ticks → 900 training frames。
+- gozero/rezero、启动准备、失败收尾、与任务无关的回零一律不进训练 action。
+- 数据 manifest 增加 `motion_scope=task_action_only`、`gozero_excluded/rezero_excluded=true`
+  及 action window 起止字段（P1 落 preview.json，P4 落正式 episode）。
+
+### WZ-4 armd 启动不自动运动
+
+- armd/systemd 启动只初始化服务；进入工作零位必须显式 `workzero gozero --confirm`（操作员在场）。
+- 断电恢复、服务重启、网络重连均不得自动运动、不得自动重新 acquire lease 后继续。
+
+### WZ-5 小残差与夹爪策略（冻结 + 待真机验证）
+
+- 小残差：仿真阶段先冻结为显式拒绝 `WORK_ZERO_RESIDUAL_TOO_SMALL` 或已验证的 MIT settle，
+  禁止偷退回单帧位置模式；真机验证前不默认放开。
+- 夹爪回位：第一版在完整 MIT 帧内以普通 gripper limits 约束目标；若仿真/真机证明
+  arm+gripper 同帧回位不安全，拆为 arm settle → 独立受限 gripper 段（仍禁止单帧危险路径、
+  禁止全局关闭夹爪速度门）。
+- 真机验证前默认 `PANTHERA_WORKZERO_REAL_HARDWARE_ENABLED=0`；低速/零速 MIT hold
+  在当前固件的稳定性（JOINT_CONTROL §2 B1 堵转历史）必须经仿真 + 一次受控真机 spike 验证。
+
+### WZ-6 proto / CLI 新位置
+
+- proto：`GetWorkZero`（只读无 lease）、`SetWorkZero`（需 lease + active manual-clutch teach +
+  lock generation 同样本）、`GoWorkZero`（需 lease + confirm，返回 `ExecutionAccepted`）。
+  字段编号审计无冲突（arm.proto 无 reserved、无同名）。
+- CLI：`panthera workzero show/setzero/gozero --confirm --wait/rezero --confirm --wait`；
+  写/动命令经 lease metadata + 服务端 confirm 判定，`--confirm` 必须传到服务端。
+- lock snapshot：`TeachMotion` 每次显式 LOCK 被控制循环消费时 generation+1，
+  snapshot 保存 6 关节 + 夹爪（同一 `backend.read_all()` 样本），P2 实现。
+- 生成链路：改 proto 后 `./proto/gen.sh` 重生成 Python stub；C# 由
+  `wpf/src/Panthera.Terminal.Contracts/` 的 Grpc.Tools 在 build 时从同一 arm.proto 生成，不复制生成物。
+
+### WZ-7 P0 核实与基线记录（2026-08-17）
+
+- 事实核对：pinocchio 双实例/独立进程结论有效（kinematics.py:647 `ProcessPoolExecutor`）；
+  MotorState 7 电机顺序 = 6 关节 + 夹爪（backend/base.py:155，`read_all()` 索引 6）；
+  HardwareLoop 周期顺序 EStop→cancel→refresh→motion step 符合 WZ-2（hardware_loop.py）；
+  ExecutionRegistry register/snapshot/cancel 可直接复用（execution.py）。
+- 基线检查：armd pytest 208 passed；cli pytest 3 passed；ruff check 全过；proto import ok；
+  `ruff format --check` 有 11 个 armd 文件需重排（预存格式债，与 work-zero 无关，不混入本计划 commit）。
+- 未决风险（实现前不视为已消除）：
+  1. 低速/零速 MIT hold 真机稳定性（JOINT_CONTROL §2 B1 堵转历史）；
+  2. 小残差策略真机行为；
+  3. 夹爪同帧回位真机行为；
+  4. SAFE_HOLD 真机保持效果未现场确认（JOINT_CONTROL §6）；
+  5. setzero 依赖真实 teach manual-clutch 的 lock 消费路径，仿真与真机必须一致。
+
 ## 附：审计修订对照（14 项 gap 全部已回填）
 
 | # | 审计缺陷 | 回填位置 |
