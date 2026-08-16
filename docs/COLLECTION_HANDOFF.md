@@ -93,7 +93,10 @@ systemctl --user is-active armd.service            # 必须 active
 内部顺序：阻尼 lock → teach stop → `recordctl start --variable` →
 `teach play --mode posvel`（POS-VEL 逐帧刚体跟随，与 MoveL 同一执行机制；
 MIT 前馈回放 kp≈0 软跟随真机发飘已弃用）→ 结束 lock（闭爪 10%）→
-`recordctl stop` → `verify`。完成后按提示跑 `rezero`。
+`recordctl stop` → `verify`，随后自动 rezero（开爪松方块 → MoveL 回工作0位 →
+定死锁）。录制失败（verify 未通过或 COMPLETE 超时）也自动 rezero，脚本退出码 1
+并报出失败原因；作废重录前删除 episode 目录与 recordctl 状态目录。rezero 自身
+失败则回退恢复阻尼锁（teach HOLD）并退出。
 
 ⚠ 回放需要方块摆在录制起始位置。`record-formal` 真机全流程尚未现场验收，
 第一次执行时人必须在场、E-stop 可触达，并逐段确认（见 §9 未验证清单）。

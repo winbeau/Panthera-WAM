@@ -11,7 +11,7 @@
 #   ./deploy/lerobot-collect.sh end-record [--force]       # 4. 结束录制（变长）→阻尼锁+开爪（--force 跳过已死录制进程收尾）
 #   ./deploy/lerobot-collect.sh rezero                     # 5. rezero 回工作0位（定死锁）
 #
-# 正式录制（把录制的动作用机械臂自己来一遍，开始/结束都 lock）：
+# 正式录制（把录制的动作用机械臂自己来一遍，开始/结束都 lock；结束自动 rezero）：
 #   ./deploy/lerobot-collect.sh record-formal color-block-000011 \
 #       ~/panthera-data/preview/color-block_021/replay_trajectory_021.jsonl
 #
@@ -266,11 +266,17 @@ PY
     echo "==> 下一步: ./deploy/lerobot-collect.sh rezero（回工作0位，定死锁）"
 }
 
+# rezero 动作本体：只执行 CLI 命令并返回其退出码（不打印 banner/状态），
+# 供 record-formal 第 7 步自动 rezero 与 rezero 子命令复用。
+do_rezero() {
+    ensure_cli; ensure_lease
+    "$CLI" workzero rezero --confirm --wait
+}
+
 rezero() {
     step "rezero：开爪松方块 → MoveL 回工作0位 → 定死锁"
     warn "回位运动：确认工作空间无障碍、人在场、E-stop 可触达"
-    ensure_cli; ensure_lease
-    "$CLI" workzero rezero --confirm --wait
+    do_rezero
     sleep 1
     "$CLI" state get
 }
@@ -367,16 +373,33 @@ record_formal() {
         || { ./deploy/recordctl.sh stop "$episode" >/dev/null 2>&1 || true; formal_abort "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"; }
     # 5) 结束 lock（阻尼锁 + 闭爪 10%）
     teach_start_lock "$CLOSE_GRIPPER"
-    # 6) 优雅结束录制 + 验收
+    # 6) 优雅结束录制 + 验收（无论结果如何，随后第 7 步都会自动 rezero）
     ./deploy/recordctl.sh stop "$episode"
-    local deadline=$((SECONDS + 300))
+    local fail_reason="" complete_ok=0 deadline=$((SECONDS + ${RECORD_FORMAL_COMPLETE_TIMEOUT_S:-300}))
     while ((SECONDS < deadline)); do
-        ./deploy/recordctl.sh status "$episode" 2>/dev/null | grep -q "published=COMPLETE" && break
+        ./deploy/recordctl.sh status "$episode" 2>/dev/null | grep -q "published=COMPLETE" && { complete_ok=1; break; }
         sleep 5
     done
-    ./deploy/recordctl.sh verify "$episode" || die "episode 质量验收失败"
-    echo "==> record-formal 完成: $COLLECTION_ROOT/episodes/$episode"
-    echo "==> 下一步: ./deploy/lerobot-collect.sh rezero；上传: ./deploy/lerobot-collect.sh hf-upload $episode"
+    if ((complete_ok)); then
+        ./deploy/recordctl.sh verify "$episode" \
+            || fail_reason="质量验收失败（详情: $COLLECTION_ROOT/episodes/$episode/FAILED.json 或 sync_report）"
+    else
+        ./deploy/recordctl.sh abort "$episode" >/dev/null 2>&1 || true
+        fail_reason="录制未在 ${RECORD_FORMAL_COMPLETE_TIMEOUT_S:-300}s 内 COMPLETE（超时，已 SIGTERM 放弃残留 collectord）"
+    fi
+    # 7) 自动 rezero：开爪松方块 → MoveL 回工作0位 → 定死锁。
+    #    录制成功或失败都执行；rezero 自身失败才回退 formal_abort（恢复阻尼锁）。
+    step "自动 rezero：开爪松方块 → MoveL 回工作0位 → 定死锁"
+    if ! do_rezero; then
+        formal_abort "自动 rezero 失败（臂可能仍在动作完成位，阻尼锁已恢复）；人工确认后重试 ./deploy/lerobot-collect.sh rezero"
+    fi
+    sleep 1
+    "$CLI" state get || true
+    if [[ -n "$fail_reason" ]]; then
+        die "record-formal 录制失败: $fail_reason（臂已回工作0位；作废重录前删除 $COLLECTION_ROOT/episodes/$episode 与 $STATE_DIR/../panthera-recordctl/$episode）"
+    fi
+    echo "==> record-formal 完成: $COLLECTION_ROOT/episodes/$episode（臂已自动回工作0位，定死锁）"
+    echo "==> 上传: ./deploy/lerobot-collect.sh hf-upload $episode"
 }
 
 # ---------------------------------------------------------------- status/verify/hf
