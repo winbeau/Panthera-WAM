@@ -88,7 +88,7 @@ teach start --manual-clutch          # 4. 切阻尼锁（录制/推理开始时�
 teach clutch lock                    # 5. 阻尼锁锁定当前位置
 teach clutch drag                    # 6. 恢复手拖，开始任务动作
 # …… 手拖动/模型动作：把方块移到目标区域上方（动作指令到此为止）……
-teach clutch lock --gripper 0.3      # 7. 目标位置闭爪 + 阻尼锁（脚本闭爪）
+teach clutch lock --gripper 0.2      # 7. 目标位置闭爪 + 阻尼锁（脚本闭爪）
 recordctl.sh stop <episode>          # 8. 录制结束 → fsync → 原子提交 → COMPLETE
 recordctl.sh verify <episode>        # 9. 验收：901 ticks / 900 frames / rezero_allowed
 workzero rezero --confirm --wait     # 10. 开爪（松方块，脚本）→ MoveL→工作0位 → 定死锁

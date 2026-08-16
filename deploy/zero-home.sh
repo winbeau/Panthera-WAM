@@ -64,7 +64,7 @@ fi
 "$CLI" cartesian movel --pos "$POS" --rpy "$RPY"
 
 step "回位后快速闭爪（低位形下安全）"
-"$CLI" gripper close --pos 0.0 --vel 1.0
+"$CLI" gripper close --pos 0.2 --vel 1.0
 
 step "完成"
 cat <<'EOF'

@@ -88,17 +88,17 @@ cat <<'EOF'
 动作流程（录制窗口内完成）：
   1) panthera teach clutch drag              # 恢复手拖
   2) 手拖到方块处
-  3) panthera teach clutch lock --gripper 0.3   # 闭爪抓取 + 锁位
+  3) panthera teach clutch lock --gripper 0.2   # 闭爪抓取 + 锁位
   4) panthera teach clutch drag              # 继续拖
   5) 把方块移动到目标区域上方
-  6) panthera teach clutch lock --gripper 0.3   # 放置位闭爪保持 + 锁位
+  6) panthera teach clutch lock --gripper 0.2   # 放置位闭爪保持 + 锁位
 EOF
 echo "现在机械臂在阻尼锁。按回车后我将发送 drag 开始动作窗口"
 confirm
 "$CLI" teach clutch drag
 echo "拖动中……（30 秒内完成动作）完成后按回车：闭爪 + 阻尼锁"
 confirm
-"$CLI" teach clutch lock --gripper 0.3
+"$CLI" teach clutch lock --gripper 0.2
 confirm
 
 # ---------------------------------------------------------------- 阶段 5
