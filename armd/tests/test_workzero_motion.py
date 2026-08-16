@@ -460,6 +460,39 @@ def test_hold_position_motion_latches_gripper_after_first_reach() -> None:
     assert second.gripper_velocity == pytest.approx(0.0)
 
 
+def test_hold_position_motion_teach_handoff_holds_with_gravity_frames() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = HoldPositionMotion(arm_position=np.zeros(6), gripper_position=None)
+    motion.request_teach_handoff_cancel(
+        CancelReason.CLIENT,
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        vel_threshold=0.02,
+        gravity_scale=np.ones(6),
+        gravity_scale_high=None,
+        gravity_breakpoint=None,
+        gravity_segmented=False,
+        gravity_residual=np.zeros(6),
+        tau_limit=np.full(6, 10.0),
+        kd_drag=np.full(6, 0.4),
+        cycles=4,
+    )
+    for _ in range(4):
+        assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    frames = backend.frames[-4:]
+    for frame in frames:
+        # 交接帧是重力前馈 MIT：零 kp + 拖动阻尼，不进入无前馈阻尼帧
+        assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+        assert np.all(frame.arm_kp == 0.0)
+        assert np.all(frame.arm_kd == 0.4)
+        assert np.all(np.isfinite(frame.arm_torque))
+        assert frame.gripper_kp == 0.0
+        assert frame.gripper_kd == 0.0
+    # 交接窗口结束后才正常释放（阻尼 + CANCELLED）
+    assert motion.step(backend, clock.now) is MotionStepResult.CANCELLED
+
+
 def test_hold_position_motion_cancel_releases_to_idle_damping() -> None:
     clock = FakeClock()
     backend = IdealServoBackend(clock=clock)

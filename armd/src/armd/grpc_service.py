@@ -25,6 +25,7 @@ from .execution import ExecutionRegistry
 from .hardware_loop import CancelReason, HardwareLoop, MotionStepResult
 from .kinematics import KinematicsWorker
 from .motion import (
+    AutoHoldConfig,
     CartesianTrajectoryMotion,
     GripperPositionMotion,
     HoldPositionMotion,
@@ -32,10 +33,10 @@ from .motion import (
     JointMITMotion,
     JointPositionMotion,
     TEACH_TAU_LIMIT,
+    TEACH_VEL_THRESHOLD_S,
     TeachClutchCommand,
     TeachMotion,
     TeachPlaybackMotion,
-    AutoHoldConfig,
 )
 from .policy import (
     PolicyChunkMotion,
@@ -1889,20 +1890,15 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
 
     async def TeachStart(self, request, context):
         await self._refresh_teach_motion()
-        if self._hardware_loop.has_active_motion:
-            if self._hold_motion is not None:
-                # 定死锁 → 阻尼锁切换：释放保持帧，teach 下一周期接管
-                await self._release_hold_motion()
-                if self._hardware_loop.has_active_motion:
-                    return arm_pb2.TeachStartResponse(
-                        accepted=False,
-                        reject_reason="定死锁释放超时，teach 未启动",
-                    )
-            else:
-                return arm_pb2.TeachStartResponse(
-                    accepted=False,
-                    reject_reason="已有运动正在执行",
-                )
+        if self._hardware_loop.has_active_motion and self._hold_motion is None:
+            return arm_pb2.TeachStartResponse(
+                accepted=False,
+                reject_reason="已有运动正在执行",
+            )
+        # ---- 先算后放：门控、参数解析与 TeachMotion 构造都在定死锁保持帧还在
+        #      运行时完成；最后才释放 hold。释放时 hold 先发重力补偿交接帧
+        #      （MIT，重力前馈 + 零 kp + 拖动阻尼），teach 首帧无缝接管——
+        #      真机已见：释放后无前馈窗口会让承重关节瞬间下坠。----
         gate_reason = await self._teach_contract_gate(mit=True)
         if gate_reason:
             return arm_pb2.TeachStartResponse(accepted=False, reject_reason=gate_reason)
@@ -1930,6 +1926,33 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
         if not self._leases.heartbeat(token):
             await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        if self._hold_motion is not None:
+            hold = self._hold_motion
+            self._hold_motion = None
+            self._hold_completion = None
+            hold.request_teach_handoff_cancel(
+                CancelReason.CLIENT,
+                fc=fc,
+                fv=fv,
+                vel_threshold=TEACH_VEL_THRESHOLD_S,
+                gravity_scale=self._teach_gravity_scale,
+                gravity_scale_high=self._teach_gravity_scale_high,
+                gravity_breakpoint=self._teach_gravity_breakpoint,
+                gravity_segmented=self._teach_gravity_segmented,
+                gravity_residual=self._teach_gravity_residual,
+                tau_limit=TEACH_TAU_LIMIT,
+                kd_drag=kd,
+            )
+            deadline = time.monotonic() + 1.5
+            while self._hardware_loop.has_active_motion and time.monotonic() < deadline:
+                await asyncio.sleep(0.02)
+            if self._hardware_loop.has_active_motion:
+                self._hold_motion = hold
+                self._hold_completion = None
+                return arm_pb2.TeachStartResponse(
+                    accepted=False,
+                    reject_reason="定死锁释放超时，teach 未启动",
+                )
         accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
         try:
             await asyncio.wrap_future(accepted)

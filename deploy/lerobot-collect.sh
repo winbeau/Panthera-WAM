@@ -114,6 +114,15 @@ gozero() {
 zero_home() {
     step "zero-home：MoveL 回初始0位（低位）→ 快速闭爪 10%"
     warn "大位移回位：确认工作空间无障碍、人在场、E-stop 可触达"
+    ensure_cli
+    # teach 运行中（阻尼锁）时 MoveL 会被“已有运动”拒绝；先 rezero 回工作0位
+    # （定死锁），zero-home 的 MoveL 会自动接管定死锁。探测 lock 本身无副作用：
+    # 无 teach 时返回失败，有 teach 时顺便把状态置为 HOLD（更安全）。
+    if "$CLI" teach clutch lock >/dev/null 2>&1; then
+        echo "==> 检测到 teach 运行（阻尼锁）：先 rezero 回工作0位（定死锁）"
+        ensure_lease
+        "$CLI" workzero rezero --confirm --wait
+    fi
     "$repo_root/deploy/zero-home.sh"
 }
 

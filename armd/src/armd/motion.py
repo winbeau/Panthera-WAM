@@ -289,6 +289,9 @@ class HoldPositionMotion:
         # 夹爪首次进入目标容差后永久锁存：下一周期不能恢复原始开爪目标，
         # 否则机械止点/反馈抖动会让 J7 反复以速度伺服继续向外顶。
         self._gripper_reached = gripper_position is None
+        # 释放定死锁时的重力补偿交接帧（teach 接管用）：见 request_teach_handoff_cancel。
+        self._handoff: dict[str, object] | None = None
+        self._handoff_step = 0
         self._max_torque = None if max_torque is None else np.asarray(max_torque, dtype=np.float64)
         self.reject_reason = ""
         self._cancel_reason: CancelReason | None = None
@@ -297,6 +300,41 @@ class HoldPositionMotion:
     def request_cancel(self, reason: CancelReason) -> None:
         with self._lock:
             self._cancel_reason = reason
+
+    def request_teach_handoff_cancel(
+        self,
+        reason: CancelReason,
+        *,
+        fc: np.ndarray,
+        fv: np.ndarray,
+        vel_threshold: float,
+        gravity_scale: float | np.ndarray,
+        gravity_scale_high: float | np.ndarray | None,
+        gravity_breakpoint: float | np.ndarray | None,
+        gravity_segmented: bool,
+        gravity_residual: np.ndarray,
+        tau_limit: np.ndarray,
+        kd_drag: np.ndarray,
+        cycles: int = 80,
+    ) -> None:
+        """释放定死锁前先发 cycles 个重力补偿保持帧（MIT），覆盖 teach 首帧
+        接管前的窗口：无前馈的阻尼帧会在承重关节上瞬间下坠（真机已见）。"""
+        with self._lock:
+            self._cancel_reason = reason
+            self._handoff = {
+                "fc": np.asarray(fc, dtype=np.float64),
+                "fv": np.asarray(fv, dtype=np.float64),
+                "vel_threshold": float(vel_threshold),
+                "gravity_scale": gravity_scale,
+                "gravity_scale_high": gravity_scale_high,
+                "gravity_breakpoint": gravity_breakpoint,
+                "gravity_segmented": bool(gravity_segmented),
+                "gravity_residual": np.asarray(gravity_residual, dtype=np.float64),
+                "tau_limit": np.asarray(tau_limit, dtype=np.float64),
+                "kd_drag": np.asarray(kd_drag, dtype=np.float64),
+                "cycles": int(cycles),
+            }
+            self._handoff_step = 0
 
     def step(self, backend: Backend, now: float) -> MotionStepResult:
         del now
@@ -307,7 +345,53 @@ class HoldPositionMotion:
             return MotionStepResult.FAILED
         with self._lock:
             cancel_reason = self._cancel_reason
+            handoff = self._handoff
+            if handoff is not None:
+                self._handoff_step += 1
+                handoff_step = self._handoff_step
+            else:
+                handoff_step = 0
         if cancel_reason is not None:
+            # ---- 重力补偿交接帧：定死锁释放后、teach 首帧前，臂仍被重力前馈托住 ----
+            if handoff is not None and handoff_step <= int(handoff["cycles"]):
+                current = np.asarray(
+                    [state.position for state in states[:6]], dtype=np.float64
+                )
+                torque = backend.compensation_torque(
+                    current,
+                    np.zeros(6),
+                    np.asarray(handoff["fc"]),
+                    np.asarray(handoff["fv"]),
+                    float(handoff["vel_threshold"]),
+                    handoff["gravity_scale"],
+                    handoff["gravity_scale_high"]
+                    if handoff["gravity_segmented"]
+                    else None,
+                    handoff["gravity_breakpoint"]
+                    if handoff["gravity_segmented"]
+                    else None,
+                )
+                torque = np.clip(
+                    torque + np.asarray(handoff["gravity_residual"]),
+                    -np.asarray(handoff["tau_limit"]),
+                    np.asarray(handoff["tau_limit"]),
+                )
+                backend.write_frame(
+                    JointFrame(
+                        mode=FrameMode.POS_VEL_TQE_KP_KD,
+                        arm_position=current,
+                        arm_velocity=np.zeros(6),
+                        arm_torque=torque,
+                        arm_kp=np.zeros(6),
+                        arm_kd=np.asarray(handoff["kd_drag"]),
+                        gripper_position=float(states[6].position),
+                        gripper_velocity=0.0,
+                        gripper_torque=0.0,
+                        gripper_kp=0.0,
+                        gripper_kd=0.0,
+                    )
+                )
+                return MotionStepResult.RUNNING
             backend.enter_idle_damping()
             backend.maintain_idle()
             self.reject_reason = f"定死锁已释放: {cancel_reason.value}"
