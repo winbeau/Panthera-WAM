@@ -715,7 +715,14 @@ async def collect_episode(
         )
         gate_reasons = quality_gate_reasons(sync_report, timestamp_quality)
         if gate_reasons:
-            writer.abort("quality_gate_failure", details={"reasons": gate_reasons})
+            writer.abort(
+                "quality_gate_failure",
+                details={
+                    "reasons": gate_reasons,
+                    "sync_report": sync_report,
+                    "timestamp_quality": timestamp_quality,
+                },
+            )
             raise ValueError(f"episode failed quality gates: {gate_reasons}")
         rows = _staging_rows(writer, aligned)
         shutil.rmtree(raw_dir)
