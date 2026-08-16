@@ -56,7 +56,7 @@ from .workzero import (
     WorkZeroStore,
     WorkZeroValidationError,
 )
-from .workzero_motion import ImmediateDoneMotion, WORKZERO_SMALL_RESIDUAL
+from .workzero_motion import ContinuousTrajectoryMotion, ImmediateDoneMotion, WORKZERO_SMALL_RESIDUAL
 
 SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
 
@@ -755,33 +755,22 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     grpc.StatusCode.FAILED_PRECONDITION,
                     f"工作零位笛卡尔路径仅完成 {result['fraction'] * 100:.1f}%",
                 )
-            # 真机调优：100Hz 逐点更新让固件跟随颤动，抽稀到 20Hz（0.05s/帧），
-            # 保持末点；速度仍按 limits 规划（用户要求偏快）。
-            positions = result["positions"]
-            velocities = result["velocities"]
+            # 连续插值执行：每控制周期平滑推进目标（不再逐点跳变/抽稀），
+            # 末端零速锁定后 settle（真机平滑性已由 jog 连续流验证）。
+            positions = [np.asarray(value) for value in result["positions"]]
+            velocities = [np.asarray(value) for value in result["velocities"]]
             timestamps = list(result["timestamps"])
-            if len(positions) > 2:
-                step = max(1, round(0.05 / max(timestamps[1] - timestamps[0], 1e-6)))
-                positions = positions[::step]
-                velocities = velocities[::step]
-                timestamps = timestamps[::step]
-                if positions[-1] is not result["positions"][-1]:
-                    positions.append(result["positions"][-1])
-                    velocities.append(result["velocities"][-1])
-                    timestamps.append(result["timestamps"][-1])
-            # 末端强制减速：末点零速锁定（SDK 语义），倒二点减半，
-            # 避免轨迹末端残余速度冲过目标/冲击 settle 切换。
             velocities[-1] = np.zeros(6)
             if len(velocities) > 1:
                 velocities[-2] = np.asarray(velocities[-2]) * 0.5
-            motion = CartesianTrajectoryMotion(
-                positions=[np.asarray(value) for value in positions],
-                velocities=[np.asarray(value) for value in velocities],
+            motion = ContinuousTrajectoryMotion(
+                positions=positions,
+                velocities=velocities,
                 timestamps=timestamps,
                 max_torque=limits.joint_torque,
-                tolerance=0.03,  # 工作零位到位容差（1.7°，高位形 PID 稳态可达）
+                tolerance=0.03,
                 settle_timeout_s=min(6.0, timeout_s),
-                operation_name="gozero-movel",
+                operation_name="gozero-continuous",
             )
         accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
         try:
