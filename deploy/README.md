@@ -106,6 +106,18 @@ PANTHERA_OVERHEAD_CAMERA_ENDPOINT=127.0.0.1:50053 \
   uv run panthera camera snapshot --source overhead --out /tmp/c920e.jpg
 ```
 
+设备拔插或某一路服务异常时，使用统一恢复脚本。脚本默认只读预检，真实执行必须显式带 `--yes`：
+
+```bash
+./deploy/repair-devices.sh c920e --dry-run
+./deploy/repair-devices.sh c920e --yes
+./deploy/repair-devices.sh realsense --yes
+./deploy/repair-devices.sh can --yes
+./deploy/repair-devices.sh all --yes
+```
+
+它只停止/启动对应 systemd user service，按目标刷新 udev 和 `ttyACM*` 映射，并在末尾读取稳定别名、相机帧、armd 状态和电机只读状态；不会 acquire lease、发送运动命令或修改 encoder zero。完整安全门、退出码和映射说明见 [`docs/DEVICE_REPAIR.md`](../docs/DEVICE_REPAIR.md)。
+
 ### FastWAM shadow/preview gateway
 
 `panthera-policy-gateway` 只读取 `StreamMeasuredState` 和两路 `CameraService`，向
