@@ -873,19 +873,31 @@ arm_already_healthy() {
 }
 
 repair_can() {
+    # 简单可靠（用户定稿）：健康 → 直接报告正常；异常 →
+    # systemctl --user restart armd.service + sleep 8 + is-active 报告。
+    # 不再做 stop_service/udev 刷新/start_service/verify_can 全流程（无需 sudo）。
     check_arm_safety pre-stop-armd || return $?
     if arm_already_healthy; then
-        log "repair=can result=already-healthy message=机械臂原本正常，无需重启（不需 sudo）"
+        log "repair=can result=already-healthy message=机械臂原本正常，无需重启"
         PHASE=verify
-        verify_can
-        return $?
+        printf '✅ 机械臂服务正常（armd active、7 电机 mode=0x15、fault=0；原本正常未重启）\n'
+        return 0
     fi
-    log "repair=can result=needs-restart message=电机不健康（0x0B/异常），执行停止→udev 刷新→重启"
-    prepare_privilege
-    stop_service armd.service 50051 || return $?
-    refresh_udev || return $?
-    start_service armd.service 50051 || return $?
-    verify_can
+    log "repair=can result=restart message=电机不健康（0x0B/异常），执行 systemctl --user restart armd.service"
+    PHASE=restart
+    if ! run_cmd restart-armd systemctl --user restart armd.service; then
+        return 5
+    fi
+    log "repair=can action=wait result=sleep-8"
+    sleep 8
+    PHASE=verify
+    if systemctl --user is-active armd.service >/dev/null 2>&1; then
+        log "repair=can result=restart-ok message=armd 已重启且 active"
+        printf '✅ 机械臂服务正常（armd active；已执行 systemctl --user restart armd.service + sleep 8）\n'
+        return 0
+    fi
+    log "repair=can result=restart-failed message=armd 未激活"
+    return 6
 }
 
 repair_all() {
@@ -956,11 +968,7 @@ main() {
     fi
     PHASE=complete
     log "result=success rc=0 log=$LOG_PATH map=$MAP_PATH"
-    if [[ "$TARGET" == can || "$TARGET" == all ]]; then
-        printf '✅ 机械臂服务正常（armd active、7 电机 mode=0x15、fault=0）\n'
-    else
-        printf '✅ 设备修复完成，只读验收通过\n'
-    fi
+    printf '✅ 设备修复完成\n'
 }
 
 main "$@"

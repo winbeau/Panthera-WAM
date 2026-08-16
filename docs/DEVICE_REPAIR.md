@@ -2,7 +2,7 @@
 
 `deploy/repair-devices.sh` 用于设备拔插、服务卡死或稳定节点暂时不可用后的可重复恢复。它以 **停止并重新启动对应 systemd user service** 为主要手段，再刷新 udev、重新枚举相关节点，最后执行只读验收。
 
-**先测后修**：`can` 目标在执行任何停止/重启前先做只读健康探测（armd active + 7 电机 mode=0x15 + fault=0 + 静止）。原本正常时直接跑只读验收并报告「✅ 机械臂服务正常」，不重启服务、不需要 sudo（避免高位无谓重启的坠臂风险）；只有电机异常（如 0x0B）才走停止 armd → udev 刷新 → 重启 armd → 验收报告正常的完整修复流程。
+**先测后修**：`can` 目标在执行重启前先做只读健康探测（armd active + 7 电机 mode=0x15 + fault=0 + 静止）。原本正常时直接报告「✅ 机械臂服务正常」，不重启服务；只有电机异常（如 0x0B）才执行 `systemctl --user restart armd.service` + `sleep 8` + `systemctl --user is-active` 报告正常（不需要 sudo）。不再做停止/udev 刷新/完整验收流程。
 
 ## 快速用法
 
