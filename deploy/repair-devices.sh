@@ -478,13 +478,11 @@ safety_preflight() {
         fi
     fi
 
-    if [[ "$TARGET" == can || "$TARGET" == all ]]; then
-        if ! check_arm_safety preflight-arm; then
-            if ((DRY_RUN)); then
-                log "safety=arm result=would-refuse"
-            else
-                fail 4 "不能确认机械臂静止且无 lease，未执行服务重启"
-            fi
+    if ! check_arm_safety preflight-arm; then
+        if ((DRY_RUN)); then
+            log "safety=arm result=would-refuse"
+        else
+            fail 4 "不能确认机械臂静止且无 lease，未执行服务重启"
         fi
     fi
 
@@ -812,6 +810,7 @@ verify_can() {
 }
 
 repair_c920e() {
+    check_arm_safety pre-stop-device || return $?
     stop_service overhead-camera.service 50053 || return $?
     refresh_udev || return $?
     start_service overhead-camera.service 50053 || return $?
@@ -819,6 +818,7 @@ repair_c920e() {
 }
 
 repair_realsense() {
+    check_arm_safety pre-stop-device || return $?
     stop_service camerad.service 50052 || return $?
     refresh_udev || return $?
     start_service camerad.service 50052 || return $?
