@@ -23,10 +23,20 @@ step() { printf '\n\033[1;36m========== %s ==========\033[0m\n' "$*"; }
 confirm() { read -r -p ">>> 回车继续（Ctrl-C 退出）: " _; }
 
 teach_start_lock() {
-    local gripper="${1:-}" deadline=$((SECONDS + 15)) lock_output
+    local gripper="${1:-}" deadline=$((SECONDS + 15)) start_output lock_output
+    # 这里只启动显式离合 teach，然后发 LOCK；绝不发送 DRAG。
+    # 从定死锁接管时 armd 的 TeachMotion 首帧直接进入 HOLD。
+    if start_output=$("$CLI" teach start --manual-clutch 2>&1); then
+        printf '%s\n' "$start_output"
+    elif grep -Eq '已有运动正在执行' <<<"$start_output"; then
+        echo "（teach 已在运行，跳过重复启动）"
+    else
+        printf '%s\n' "$start_output" >&2
+        echo "error: teach 启动失败" >&2
+        return 1
+    fi
+    sleep 0.25
     while ((SECONDS < deadline)); do
-        "$CLI" teach start --manual-clutch || true
-        sleep 0.25
         if [[ -n "$gripper" ]]; then
             if lock_output=$("$CLI" teach clutch lock --gripper "$gripper" 2>&1); then
                 printf '%s\n' "$lock_output"
@@ -154,7 +164,7 @@ cat <<'EOF'
 
 继续下一段录制：直接再从「阶段 2」开始（无需重新 gozero）：
   ./deploy/recordctl.sh start <下一编号> --detach
-  panthera teach start --manual-clutch && panthera teach clutch lock
+  panthera teach start --manual-clutch && panthera teach clutch lock  # 首帧 HOLD，不自动 drag
   ……
 
 收工（释放臂，请先扶住！）：

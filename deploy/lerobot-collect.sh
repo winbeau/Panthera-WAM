@@ -60,10 +60,19 @@ ensure_lease() {
 }
 
 teach_start_lock() {
-    local gripper="${1:-}" deadline=$((SECONDS + 15)) lock_output
+    local gripper="${1:-}" deadline=$((SECONDS + 15)) start_output lock_output
+    # 这里只启动显式离合 teach，然后发 LOCK；绝不发送 DRAG。
+    # 从定死锁接管时 armd 的 TeachMotion 首帧直接进入 HOLD。
+    if start_output=$("$CLI" teach start --manual-clutch 2>&1); then
+        printf '%s\n' "$start_output"
+    elif grep -Eq '已有运动正在执行' <<<"$start_output"; then
+        echo "（teach 已在运行，跳过重复启动）"
+    else
+        printf '%s\n' "$start_output" >&2
+        die "teach 启动失败"
+    fi
+    sleep 0.25
     while ((SECONDS < deadline)); do
-        "$CLI" teach start --manual-clutch || true
-        sleep 0.25
         if [[ -n "$gripper" ]]; then
             if lock_output=$("$CLI" teach clutch lock --gripper "$gripper" 2>&1); then
                 printf '%s\n' "$lock_output"
@@ -155,7 +164,7 @@ start_record() {
     kill -0 "$(cat "$pidf")" 2>/dev/null || die "录制进程未存活，看日志: $log"
     echo "==> 录制已启动 pid=$(cat "$pidf")（阻尼锁已锁定）"
     echo "==> 日志: $log"
-    echo "==> 终端 B 操作: ./deploy/lerobot-collect.sh drag / lock [--gripper 0.2]"
+    echo "==> 终端 B（开始任务动作时才操作）: ./deploy/lerobot-collect.sh drag / lock [--gripper 0.2]"
     echo "==> 动作完成后: ./deploy/lerobot-collect.sh end-record"
 }
 

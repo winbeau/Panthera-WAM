@@ -1421,7 +1421,10 @@ def teach_start(
     if not response.accepted:
         console.print(f"[red]拖动示教启动失败[/red]: {response.reject_reason}")
         raise typer.Exit(2)
-    console.print("[green]拖动示教已启动[/green]（需持续 heartbeat 保持控制权）")
+    if manual_clutch:
+        console.print("[green]显式离合示教已启动[/green]（定死锁接管时首帧直接 HOLD；需持续 heartbeat）")
+    else:
+        console.print("[green]拖动示教已启动[/green]（需持续 heartbeat 保持控制权）")
 
 
 @teach_app.command("clutch")

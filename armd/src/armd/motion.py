@@ -939,6 +939,7 @@ class TeachMotion:
         gravity_residual: float | np.ndarray = 0.0,
         auto_hold: AutoHoldConfig | None = None,
         manual_clutch: bool = False,
+        initial_hold: bool = False,
         safe_hold_time_s: float = 10.0,
     ) -> None:
         self.kp = np.asarray(kp, dtype=np.float64).copy()
@@ -974,6 +975,9 @@ class TeachMotion:
         # ---- Auto-Hold 状态机（None=默认启用；enabled=False 禁用并回退原行为）----
         self.auto_hold_cfg = auto_hold if auto_hold is not None else AutoHoldConfig()
         self.manual_clutch = bool(manual_clutch)
+        # 从定死锁 HoldPositionMotion 接管时，首个 teach 控制周期直接锚定 HOLD；
+        # 不先输出一个 DRAG（kp=0）帧。显式 LOCK/DRAG 请求优先于这个默认启动状态。
+        self._initial_hold_pending = bool(initial_hold and self.manual_clutch)
         if self.manual_clutch and not self.auto_hold_cfg.enabled:
             raise ValueError("manual_clutch 需要启用 auto-hold 位置保持")
         self._clutch_request: TeachClutchCommand | None = None
@@ -1208,11 +1212,21 @@ class TeachMotion:
         if self._hold_state is AutoHoldState.SAFE_HOLD:
             # 安全保持期间忽略新的离合命令；只由超时退出。
             clutch_request = None
+            with self._lock:
+                self._initial_hold_pending = False
+            initial_hold_pending = False
         else:
             with self._lock:
                 clutch_request = self._clutch_request
                 self._clutch_request = None
-        if clutch_request is TeachClutchCommand.LOCK:
+                initial_hold_pending = self._initial_hold_pending
+                self._initial_hold_pending = False
+        if initial_hold_pending and clutch_request is None:
+            self._q_hold = q.copy()
+            self._still_since = None
+            self._hold_kp_start = self._kp_now.copy()
+            self._enter_state(AutoHoldState.HOLD, now, "teach start (定死锁接管) -> HOLD")
+        elif clutch_request is TeachClutchCommand.LOCK:
             self._q_hold = q.copy()
             self._still_since = None
             self._hold_kp_start = self._kp_now.copy()

@@ -84,8 +84,8 @@ printf 'start\n' > /tmp/panthera-preview-color-block-021-<pid>.start
 workzero gozero --confirm --wait
 workzero show                       # 2. 只读确认（可选）
 recordctl.sh start <episode>        # 3. 开始录制（此刻仍是定死锁）
-teach start --manual-clutch          # 4. 切阻尼锁（录制/推理开始时显式切入）
-teach clutch lock                    # 5. 阻尼锁锁定当前位置
+teach start --manual-clutch          # 4. 定死锁接管时首帧直接进入阻尼锁（不自动 drag）
+teach clutch lock                    # 5. 显式确认/锁存当前位置
 teach clutch drag                    # 6. 恢复手拖，开始任务动作
 # …… 手拖动/模型动作：把方块移到目标区域上方（动作指令到此为止）……
 teach clutch lock --gripper 0.2      # 7. 目标位置闭爪 + 阻尼锁（脚本闭爪）

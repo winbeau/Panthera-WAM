@@ -566,7 +566,7 @@ def _drag_until_still_holds(clock, backend, motion, *, drag_steps: int = 5) -> N
         assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
 
 
-def test_manual_clutch_lock_samples_current_position_and_ignores_velocity() -> None:
+def test_manual_clutch_initial_hold_then_explicit_lock_samples_current_position() -> None:
     clock = FakeClock()
     backend = RecordingSimBackend(clock=clock)
     cfg = AutoHoldConfig(hold_ramp_time=0.4)
@@ -577,14 +577,23 @@ def test_manual_clutch_lock_samples_current_position_and_ignores_velocity() -> N
         fv=np.zeros(6),
         auto_hold=cfg,
         manual_clutch=True,
+        initial_hold=True,
     )
 
-    for _ in range(60):
+    clock.advance(0.005)
+    backend.refresh_state()
+    backend._velocities[:6] = 0.0
+    motion.step(backend, clock.now)
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+    assert backend.frames[-1].arm_kp == pytest.approx([0.0] * 6)
+
+    for _ in range(59):
         clock.advance(0.005)
         backend.refresh_state()
         backend._velocities[:6] = 0.0
         motion.step(backend, clock.now)
-    assert motion.auto_hold_state is AutoHoldState.DRAG
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+    assert motion.hold_position == pytest.approx([0.0] * 6)
 
     backend._positions[:6] = np.array([0.1, 1.3, 0.2, -0.1, 0.05, -0.05])
     backend._velocities[:6] = 0.1
@@ -595,7 +604,7 @@ def test_manual_clutch_lock_samples_current_position_and_ignores_velocity() -> N
     assert motion.auto_hold_state is AutoHoldState.HOLD
     assert motion.hold_position == pytest.approx(expected)
     assert backend.frames[-1].arm_position == pytest.approx(expected)
-    assert backend.frames[-1].arm_kp == pytest.approx([0.0] * 6)
+    assert backend.frames[-1].arm_kp == pytest.approx(MANUAL_CLUTCH_KP_HOLD)
 
     for _ in range(16):
         clock.advance(0.005)
@@ -608,6 +617,25 @@ def test_manual_clutch_lock_samples_current_position_and_ignores_velocity() -> N
         np.maximum.reduce([np.asarray(cfg.kd_hold), motion.kd, MANUAL_CLUTCH_KP_HOLD * MANUAL_CLUTCH_KD_MIN_RATIO])
     )
     assert 16 * 0.005 == pytest.approx(MANUAL_CLUTCH_HOLD_RAMP_TIME_S)
+
+
+def test_manual_clutch_initial_hold_yields_to_explicit_drag() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        manual_clutch=True,
+        initial_hold=True,
+    )
+    motion.request_clutch(TeachClutchCommand.DRAG)
+    motion.step(backend, clock.now)
+
+    assert motion.auto_hold_state is AutoHoldState.DRAG
+    assert motion.hold_position is None
+    assert backend.frames[-1].arm_kp == pytest.approx([0.0] * 6)
 
 
 def test_manual_clutch_hold_anchors_compensation_at_lock_pose_and_zero_velocity() -> None:

@@ -242,7 +242,7 @@ teach 模式内有一个 Auto-Hold 状态机，负责「手拖（柔顺）↔ �
 
 | 状态 | 含义 | 进入条件 | 下发控制帧 |
 |---|---|---|---|
-| `DRAG` | 手拖：kp=0，只发重力/摩擦前馈 | teach 启动；`drag` 释放完成 | 实时 q/v 前馈 |
+| `DRAG` | 手拖：kp=0，只发重力/摩擦前馈 | 普通 teach 启动；`drag` 释放完成 | 实时 q/v 前馈 |
 | `STILL_DETECT` | 自动模式：疑似松手（速度已低但未确认） | 全关节 \|v\| < `still_velocity_threshold` | 同 DRAG |
 | `HOLD` | 锁位：位置刚度保持 | 自动：静止持续 `still_duration`；显式：`lock` 命令 | 锚定 q_hold + kp_hold |
 | `RELEASE` | 平滑退出 HOLD（kp 渐变回 0） | 自动：任一关节 \|v\| > `release_velocity_threshold`；显式：`drag` 命令 | kp/kd 渐变 |
@@ -254,6 +254,8 @@ teach 模式内有一个 Auto-Hold 状态机，负责「手拖（柔顺）↔ �
   重力残差驱动的慢漂移与真实手推在低速下不可区分，因此自动判定**不保证**任意位形松手即停。
 - **显式离合（推荐采集使用）**：`lock`/`drag` 命令直接驱动 HOLD/RELEASE，**不依赖速度**；
   松手/继续拖由操作员意图决定，锁位可靠。teach-cal.sh 启动时自动带 `--manual-clutch`。
+  从 GoWorkZero/MoveL 的定死锁接管时，首个 teach 控制周期直接锚定 HOLD，**不会先进入
+  DRAG**；从空闲启动的普通 teach 保持 DRAG 语义。采集脚本随后仍显式发送 `lock` 做确认/锁存。
 
 ```bash
 ./deploy/teach-cal.sh                  # 启动显式离合 teach（重启 armd + 拉起）

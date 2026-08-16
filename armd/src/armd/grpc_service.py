@@ -1902,6 +1902,10 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         gate_reason = await self._teach_contract_gate(mit=True)
         if gate_reason:
             return arm_pb2.TeachStartResponse(accepted=False, reject_reason=gate_reason)
+        # 只有从 GoWorkZero/MoveL 的定死锁接管时，teach 才需要首帧直接 HOLD；
+        # 从空闲启动的普通 teach 保持原有 DRAG 语义，避免改变标定工具行为。
+        manual_clutch = bool(request.manual_clutch) or self._teach_manual_clutch
+        initial_hold = self._hold_motion is not None and manual_clutch
         try:
             kp = finite_vector(request.kp, name="kp") if request.kp else np.zeros(6)
             kd = finite_vector(request.kd, name="kd") if request.kd else np.zeros(6)
@@ -1918,7 +1922,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 gravity_segmented=self._teach_gravity_segmented,
                 gravity_residual=self._teach_gravity_residual,
                 auto_hold=AutoHoldConfig() if self._auto_hold_enabled else AutoHoldConfig(enabled=False),
-                manual_clutch=bool(request.manual_clutch) or self._teach_manual_clutch,
+                manual_clutch=manual_clutch,
+                initial_hold=initial_hold,
                 safe_hold_time_s=self._teach_safe_hold_s,
             )
         except ValueError as exc:

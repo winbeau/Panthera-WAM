@@ -924,6 +924,8 @@ async def test_gozero_hold_then_teachstart_switches_to_damping_lock(workzero_sta
     await asyncio.sleep(0.3)
     assert server.arm_service._hold_motion is None
     assert server.arm_service._teach_motion is not None
+    # 从定死锁接管时首个 teach 周期直接进入 HOLD；不得先进入 DRAG。
+    assert server.arm_service._teach_motion.auto_hold_state is AutoHoldState.HOLD
     await stub.TeachClutch(
         arm_pb2.TeachClutchRequest(mode=arm_pb2.TEACH_CLUTCH_MODE_LOCK),
         metadata=metadata,
