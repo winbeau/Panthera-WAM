@@ -201,23 +201,28 @@ def test_each_frozen_loss_gate_rejects_episode() -> None:
         report[field][next(iter(report[field]))] = 1
         reasons = quality_gate_reasons(report, valid_timestamp_quality())
         if field == "missing_frames":
-            # 缺失 ≤ max(1, 0.3%·canonical) 容忍（相机偶发丢帧常态）
+            # 缺失 ≤ max(3, 2%·canonical) 容忍（相机偶发丢帧常态）
             assert field not in reasons
-            report[field][next(iter(report[field]))] = 5
+            report[field][next(iter(report[field]))] = 20
             assert field in quality_gate_reasons(report, valid_timestamp_quality())
         else:
             assert field in reasons
 
 
 def test_quality_gates_tolerate_small_tick_gap() -> None:
-    """真机：15s 录制 overhead 丢 1 帧（canonical=451, valid=450）不应判死。"""
+    """真机：15s 录制 overhead 丢 1-3 帧（canonical=451）不应判死。"""
     report = valid_sync_report()
     report["canonical_ticks"] = 451
-    report["valid_ticks"] = 450
-    report["missing_frames"]["overhead_rgb"] = 1
+    report["valid_ticks"] = 448
+    report["missing_frames"]["overhead_rgb"] = 3
     assert quality_gate_reasons(report, valid_timestamp_quality()) == []
-    report["valid_ticks"] = 440
+    report["valid_ticks"] = 430
     assert "invalid_canonical_ticks" in quality_gate_reasons(report, valid_timestamp_quality())
+    report = valid_sync_report()
+    report["canonical_ticks"] = 451
+    report["valid_ticks"] = 440
+    report["missing_frames"]["overhead_rgb"] = 12
+    assert "missing_frames" in quality_gate_reasons(report, valid_timestamp_quality())
 
 
 def test_timestamp_metadata_must_have_full_coverage() -> None:

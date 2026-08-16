@@ -192,14 +192,15 @@ def quality_gate_reasons(
     valid = int(sync_report.get("valid_ticks", -1))
     if canonical < 2:
         reasons.append("fewer_than_two_canonical_ticks")
-    # 相机帧偶发丢失是 USB/V4L2 常态（真机 15s 录制丢 1 帧 overhead），零容忍
-    # 会把整段录制判死。允许 ≤0.3% 的 tick 缺失（等价于 ~2% 相机帧），每个源的
-    # 缺失上限 max(1, 0.3%·canonical)；缺失计数仍记录在 sync_report 供下游审计。
-    if valid < canonical * 0.995:
+    # 相机帧偶发丢失是 USB/V4L2 常态（真机 overhead 每 15s 丢 1-3 帧，实测
+    # ~0.5-1%）。零容忍会把整段录制判死。允许 ≤2% 的 tick 缺失，每源缺失
+    # 上限 max(3, 2%·canonical)；staging 对缺失帧复制上一帧，时间线无空洞。
+    # 缺失计数仍记录在 sync_report 供审计。
+    if valid < canonical * 0.98:
         reasons.append("invalid_canonical_ticks")
     if int(sync_report.get("timestamp_regressions", -1)) != 0:
         reasons.append("timestamp_regression")
-    missing_tolerance = max(1, round(canonical * 0.003))
+    missing_tolerance = max(3, round(canonical * 0.02))
     for field, tolerance in (
         ("missing_frames", missing_tolerance),
         ("duplicate_frames", 0),
