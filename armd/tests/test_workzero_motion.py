@@ -436,6 +436,30 @@ def test_hold_position_motion_emits_continuous_posvel_frames() -> None:
         assert np.all(frame.arm_position == pytest.approx([0.3, 0.4, 0.5, -0.2, 0.1, -0.1]))
 
 
+def test_hold_position_motion_latches_gripper_after_first_reach() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    backend._positions[6] = 1.8
+    motion = HoldPositionMotion(
+        arm_position=np.zeros(6),
+        gripper_position=1.8,
+        gripper_velocity=1.0,
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    first = backend.frames[-1]
+    assert first.gripper_position == pytest.approx(1.8)
+    assert first.gripper_velocity == pytest.approx(0.0)
+
+    # 反馈随后因机械回弹离开容差，也不能恢复原始开爪速度/目标。
+    backend._positions[6] = 1.75
+    clock.advance(0.005)
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    second = backend.frames[-1]
+    assert second.gripper_position == pytest.approx(1.75)
+    assert second.gripper_velocity == pytest.approx(0.0)
+
+
 def test_hold_position_motion_cancel_releases_to_idle_damping() -> None:
     clock = FakeClock()
     backend = IdealServoBackend(clock=clock)

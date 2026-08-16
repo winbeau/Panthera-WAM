@@ -286,6 +286,9 @@ class HoldPositionMotion:
         if self._gripper_position is not None and not np.isfinite(self._gripper_position):
             raise ValueError("夹爪目标必须为有限数值")
         self._gripper_velocity = float(gripper_velocity)
+        # 夹爪首次进入目标容差后永久锁存：下一周期不能恢复原始开爪目标，
+        # 否则机械止点/反馈抖动会让 J7 反复以速度伺服继续向外顶。
+        self._gripper_reached = gripper_position is None
         self._max_torque = None if max_torque is None else np.asarray(max_torque, dtype=np.float64)
         self.reject_reason = ""
         self._cancel_reason: CancelReason | None = None
@@ -316,10 +319,13 @@ class HoldPositionMotion:
         )
         gripper_velocity = self._gripper_velocity
         if self._gripper_position is not None:
-            # 到位后锁定当前位置，停止外推：目标接近物理极限（如全开 99%）时
-            # 继续以速度伺服会顶住机械止点持续出力 → J7 震动/发热。
-            if abs(float(states[6].position) - self._gripper_position) <= 0.02:
-                gripper = float(states[6].position)
+            current_gripper = float(states[6].position)
+            if not self._gripper_reached and abs(current_gripper - self._gripper_position) <= 0.02:
+                self._gripper_reached = True
+            # 到位后永久锁定当前位置，停止外推：目标接近物理极限（如全开 99%）时
+            # 不能在下一周期恢复原始目标/速度，否则 J7 会反复顶机械止点。
+            if self._gripper_reached:
+                gripper = current_gripper
                 gripper_velocity = 0.0
         backend.write_frame(
             position_frame(

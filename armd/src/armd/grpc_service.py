@@ -688,7 +688,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             state = self._hardware_loop.latest_state()
             if state is None or not all(motor.valid for motor in state.motors):
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "电机状态无效或连接不完整")
-            # 开爪目标钳位到软限位上界的 95%（超过 95% 不再扩展，避免顶机械止点）
+            # 开爪目标钳位到软限位上界的 90%（超过 90% 不再扩展，避免顶机械止点）
             gripper_target = min(
                 float(pose.gripper),
                 WORKZERO_GRIPPER_TARGET_FRACTION * limits.gripper_upper,
