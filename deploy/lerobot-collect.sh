@@ -304,9 +304,17 @@ record_formal() {
     # 1) 开始 lock（定死锁→阻尼锁）
     teach_start_lock
     sleep 0.5
-    # 2) 退出保持（SAFE_HOLD 后进入 idle，腾出运动通道给 teach play）
+    # 2) 退出保持：teach stop 后进入 SAFE_HOLD（默认 10s），期间运动通道仍被
+    #    占用；等到 teach 完全退出（clutch lock 探测失败）再启动录制与回放。
     "$CLI" teach stop
-    sleep 3
+    local hold_deadline=$((SECONDS + 30))
+    while "$CLI" teach clutch lock >/dev/null 2>&1 && ((SECONDS < hold_deadline)); do
+        sleep 1
+    done
+    if "$CLI" teach clutch lock >/dev/null 2>&1; then
+        die "teach SAFE_HOLD 30s 内未退出，稍后重试本命令"
+    fi
+    echo "==> teach 已退出，运动通道空闲"
     # 3) 启动变长正式录制
     ./deploy/recordctl.sh start "$episode" --variable --max-duration-s "$max_duration_s" \
         --task "$task" --detach
