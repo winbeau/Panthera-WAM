@@ -665,6 +665,27 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         current = np.array([state.position for state in cached.motors[:6]], dtype=np.float64)
         target_positions = np.asarray(pose.joints, dtype=np.float64)
 
+        # ---- MoveL 轨迹规划：保持期间算好；rezero 时与夹爪开爪并行（缩短回位时长）----
+        small_residual = (
+            float(np.max(np.abs(target_positions - current))) <= WORKZERO_SMALL_RESIDUAL
+        )
+        motion: ContinuousTrajectoryMotion | ImmediateDoneMotion
+        plan_task: asyncio.Task[ContinuousTrajectoryMotion] | None = None
+        if small_residual:
+            # 小残差（已在工作零位）：立即 DONE，保持定死锁（不额外动作）
+            motion = ImmediateDoneMotion()
+        else:
+            # ---- MoveL 路径：FK 工作零位 → 连续插值轨迹 ----
+            plan_task = asyncio.create_task(
+                self._plan_workzero_move(
+                    current=current,
+                    target_positions=target_positions,
+                    limits=limits,
+                    timeout_s=timeout_s,
+                ),
+                name="panthera-workzero-plan",
+            )
+
         # ---- rezero：动作完成位（teach HOLD）→ 快速安全退出 teach →
         #      定死锁 + 开爪（松方块，脚本做不是模型做）→ MoveL 回工作0位 ----
         if request.reason == "post_action":
@@ -704,48 +725,26 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 )
             except RuntimeError as exc:
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
-            # 定死锁保持中先算好轨迹（避免释放后计算间隙坠臂），再释放接管
+            # 轨迹规划（plan_task）已与夹爪开爪并行进行；这里只等开爪到位。
+            # 方向感知：开爪（target>当前）越过 target-0.02 即视为到位，过冲也算。
             release_deadline = time.monotonic() + 4.0
             released = False
             while time.monotonic() < release_deadline:
                 state = self._hardware_loop.latest_state()
                 if state is not None and all(motor.valid for motor in state.motors):
-                    if abs(state.motors[6].position - gripper_target) <= 0.02:
+                    if state.motors[6].position >= gripper_target - 0.02:
                         released = True
                         break
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.02)
             if not released:
                 await context.abort(
                     grpc.StatusCode.FAILED_PRECONDITION,
                     "夹爪未在 4s 内打开到工作零位姿态；拒绝回位（可能仍抓着物体）",
                 )
-            state = self._hardware_loop.latest_state()
-            if state is None or not all(motor.valid for motor in state.motors):
-                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "电机状态无效或连接不完整")
-            current = np.array(
-                [motor.position for motor in state.motors[:6]],
-                dtype=np.float64,
-            )
 
-        # ---- 小残差（已在工作零位）：立即 DONE，保持定死锁（不额外动作） ----
-        if float(np.max(np.abs(target_positions - current))) <= WORKZERO_SMALL_RESIDUAL:
-            motion = ImmediateDoneMotion()
-        else:
-            # ---- MoveL 路径：FK 工作零位 → 连续插值轨迹（hold 保持期间算好）----
+        if plan_task is not None:
             try:
-                target_fk = await self._kinematics.call("fk", {"q": target_positions})
-                motion = await self._prepare_continuous_trajectory(
-                    current=current,
-                    current_fk=None,
-                    target_position=np.asarray(target_fk["position"]),
-                    target_rotation=np.asarray(target_fk["rotation"]),
-                    duration=None,
-                    use_spline=True,
-                    max_torque=limits.joint_torque,
-                    tolerance=0.03,
-                    settle_timeout_s=min(6.0, timeout_s),
-                    operation_name="gozero-continuous",
-                )
+                motion = await plan_task
             except ValueError as exc:
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
         # 轨迹就绪后释放定死锁并立即接管（间隙 1-2 控制周期）
@@ -769,6 +768,29 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         self._gozero_finalize_tasks.add(finalizer)
         finalizer.add_done_callback(self._gozero_finalize_tasks.discard)
         return arm_pb2.ExecutionAccepted(execution_id=execution_id)
+
+    async def _plan_workzero_move(
+        self,
+        *,
+        current: np.ndarray,
+        target_positions: np.ndarray,
+        limits,
+        timeout_s: float,
+    ) -> ContinuousTrajectoryMotion:
+        """FK 工作零位 → 连续插值轨迹（与 rezero 开爪并行执行的规划任务）。"""
+        target_fk = await self._kinematics.call("fk", {"q": target_positions})
+        return await self._prepare_continuous_trajectory(
+            current=current,
+            current_fk=None,
+            target_position=np.asarray(target_fk["position"]),
+            target_rotation=np.asarray(target_fk["rotation"]),
+            duration=None,
+            use_spline=True,
+            max_torque=limits.joint_torque,
+            tolerance=0.03,
+            settle_timeout_s=min(6.0, timeout_s),
+            operation_name="gozero-continuous",
+        )
 
     async def _start_hold_motion(
         self,

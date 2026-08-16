@@ -461,6 +461,40 @@ def test_hold_position_motion_latches_gripper_after_first_reach() -> None:
     assert second.gripper_velocity == pytest.approx(0.0)
 
 
+def test_hold_gripper_latches_on_overshoot_and_stops_pushing() -> None:
+    """回归：开爪过冲越过目标时立即锁存当前反馈并停止速度伺服——
+    方向感知到位判定（真机 J7 开爪后持续嗡嗡/顶机械止点）。"""
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    backend._positions[6] = 0.6
+    motion = HoldPositionMotion(
+        arm_position=np.zeros(6),
+        gripper_position=1.8,
+        gripper_velocity=1.0,
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    first = backend.frames[-1]
+    assert first.gripper_position == pytest.approx(1.8)
+    assert first.gripper_velocity == pytest.approx(1.0)
+
+    # 过冲越过目标：锁存当前反馈 + 速度归零，不再继续加力。
+    backend._positions[6] = 1.85
+    clock.advance(0.005)
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    second = backend.frames[-1]
+    assert second.gripper_position == pytest.approx(1.85)
+    assert second.gripper_velocity == pytest.approx(0.0)
+
+    # 锁存后即使回弹离开目标，也不恢复外推。
+    backend._positions[6] = 1.79
+    clock.advance(0.005)
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    third = backend.frames[-1]
+    assert third.gripper_position == pytest.approx(1.79)
+    assert third.gripper_velocity == pytest.approx(0.0)
+
+
 def test_hold_attach_teach_shadows_dead_lock_then_delegates_lock() -> None:
     clock = FakeClock()
     backend = RecordingSimBackend(clock=clock)
