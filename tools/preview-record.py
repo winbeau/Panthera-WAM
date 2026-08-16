@@ -191,12 +191,14 @@ def encode_camera(
                 stream.pix_fmt = "yuv420p"
                 stream.codec_context.thread_count = 2
                 stream.options = {"preset": "ultrafast", "tune": "zerolatency", "crf": "26"}
+                # 时间基设在 stream 上（frame 级 time_base 在 Pi 的 PyAV/ffmpeg
+                # 62.3.1 上会间歇性 EINVAL 拒封，实测 5/5 必现）。
+                stream.time_base = VIDEO_TIME_BASE
             if first_timestamp_ns is None:
                 first_timestamp_ns = timestamp_ns
             last_pts = video_pts(timestamp_ns, first_timestamp_ns, last_pts)
             last_timestamp_ns = timestamp_ns
             video_frame.pts = last_pts
-            video_frame.time_base = VIDEO_TIME_BASE
             for packet in stream.encode(video_frame):
                 container.mux(packet)
             count += 1

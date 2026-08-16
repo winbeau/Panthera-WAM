@@ -67,7 +67,7 @@ teach_start_lock() {
         if [[ -n "$gripper" ]]; then
             if lock_output=$("$CLI" teach clutch lock --gripper "$gripper" 2>&1); then
                 printf '%s\n' "$lock_output"
-                if grep -Eq 'state=(drag|hold|still_detect|release)' <<<"$lock_output"; then
+                if grep -Eq 'state=hold' <<<"$lock_output"; then
                     return 0
                 fi
             else
@@ -75,7 +75,7 @@ teach_start_lock() {
             fi
         elif lock_output=$("$CLI" teach clutch lock 2>&1); then
             printf '%s\n' "$lock_output"
-            if grep -Eq 'state=(drag|hold|still_detect|release)' <<<"$lock_output"; then
+            if grep -Eq 'state=hold' <<<"$lock_output"; then
                 return 0
             fi
         else
