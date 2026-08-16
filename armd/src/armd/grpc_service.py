@@ -714,14 +714,16 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 float(pose.gripper),
                 WORKZERO_GRIPPER_TARGET_FRACTION * limits.gripper_upper,
             )
-            # 定死锁：POS-VEL 保持帧把臂锁在当前位形，同时快速开爪（松方块）
+            # 定死锁：POS-VEL 保持帧把臂锁在当前位形，同时开爪（松方块）。
+            # 开爪速度 0.6：全速 1.0 的伺服噪声大（用户反馈“嗡嗡”），方向
+            # 感知锁存已保证到位后不再加力。
             try:
                 await self._start_hold_motion(
                     arm_position=np.array(
                         [motor.position for motor in state.motors[:6]], dtype=np.float64
                     ),
                     gripper_position=gripper_target,
-                    gripper_velocity=1.0,
+                    gripper_velocity=0.6,
                 )
             except RuntimeError as exc:
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
@@ -882,7 +884,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             await self._start_hold_motion(
                 arm_position=np.asarray(pose.joints, dtype=np.float64),
                 gripper_position=gripper_target,
-                gripper_velocity=1.0,
+                gripper_velocity=0.6,
             )
         except RuntimeError as exc:
             logger.warning("workzero 定死锁启动失败：%s", exc)
