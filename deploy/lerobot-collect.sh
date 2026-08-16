@@ -328,7 +328,7 @@ record_formal() {
     # 3) 启动变长正式录制
     ./deploy/recordctl.sh start "$episode" --variable --max-duration-s "$max_duration_s" \
         --task "$task" --detach \
-        || formal_abort "collectord 启动失败，看日志: $STATE_DIR/../panthera-recordctl/$episode/log"
+        || { ./deploy/recordctl.sh stop "$episode" >/dev/null 2>&1 || true; formal_abort "collectord 启动失败，看日志: $STATE_DIR/../panthera-recordctl/$episode/log"; }
     local collect_deadline=$((SECONDS + 15)) collect_ok=0
     while ((SECONDS < collect_deadline)); do
         local status_output
@@ -350,9 +350,19 @@ record_formal() {
     fv=$(printf '%s\n' "$params" | sed -n 's/^fv=//p')
     echo "==> teach play 参数: kp=$kp kd=$kd fc=$fc fv=$fv"
     echo "==> 回放轨迹: $replay"
-    "$CLI" teach play "$replay" --mode mit \
+    # TeachPlay 路径校验要求轨迹位于 PANTHERA_TEACH_DIR 内；复制一份进去回放。
+    local teach_dir="${PANTHERA_TEACH_DIR:-$HOME/.local/share/panthera/teach}"
+    if [[ -f "$HOME/.config/panthera-wam/armd.env" ]]; then
+        local env_teach_dir
+        env_teach_dir=$(sed -n 's/^PANTHERA_TEACH_DIR=//p' "$HOME/.config/panthera-wam/armd.env" | tail -1)
+        [[ -n "$env_teach_dir" ]] && teach_dir="$env_teach_dir"
+    fi
+    mkdir -p "$teach_dir"
+    local play_file="$teach_dir/$(basename "$replay")"
+    cp -f "$replay" "$play_file"
+    "$CLI" teach play "$play_file" --mode mit \
         --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" \
-        || formal_abort "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"
+        || { ./deploy/recordctl.sh stop "$episode" >/dev/null 2>&1 || true; formal_abort "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"; }
     # 5) 结束 lock（阻尼锁 + 闭爪 10%）
     teach_start_lock "$CLOSE_GRIPPER"
     # 6) 优雅结束录制 + 验收
