@@ -30,6 +30,8 @@ usage() {
 start 选项：
   --duration-s SEC       目标示范时长，默认 30（固定模式）
   --margin-s SEC         采集尾部对齐余量，默认 5
+  --variable             变长模式：窗口即实际动作时长，stop 立即优雅收尾
+  --max-duration-s SEC   变长模式安全上限，默认 180
   --collection-root DIR  默认 ~/panthera-data
   --task TEXT            默认 color-block 任务文本
   --operator NAME        默认当前用户
@@ -39,6 +41,8 @@ start 选项：
   --detach               启动后不进入日志监看
 
 定长契约：30 s => 901 canonical ticks => 900 training frames。
+变长模式：无固定 tick 数，episode 窗口 = stop 时刻之前的全部公共对齐窗口；
+--max-duration-s 只是安全上限，到点自动收尾（不再等 stop）。
 stop 发送 SIGUSR1；不会 kill 转码，也不会停止 teach/heartbeat。
 EOF
 }
@@ -192,11 +196,14 @@ start_episode() {
     shift
     local duration_s=30 margin_s=5 task="$task_default" operator="$operator_default"
     local root="$root_default" calibration="" identity="" commit no_depth=0 detach=0
+    local variable=0 max_duration_s=180
 
     while (($#)); do
         case "$1" in
             --duration-s) duration_s=${2:?missing value for --duration-s}; shift 2 ;;
             --margin-s) margin_s=${2:?missing value for --margin-s}; shift 2 ;;
+            --variable) variable=1; shift ;;
+            --max-duration-s) max_duration_s=${2:?missing value for --max-duration-s}; shift 2 ;;
             --collection-root) root=${2:?missing value for --collection-root}; shift 2 ;;
             --task) task=${2:?missing value for --task}; shift 2 ;;
             --operator) operator=${2:?missing value for --operator}; shift 2 ;;
@@ -211,6 +218,7 @@ start_episode() {
     done
     [[ "$duration_s" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "error: duration 必须为正数" >&2; exit 2; }
     [[ "$margin_s" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "error: margin 必须为非负数" >&2; exit 2; }
+    [[ "$max_duration_s" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "error: max-duration 必须为正数" >&2; exit 2; }
     [[ -n "$calibration" ]] || calibration="$root/calibration.json"
     [[ -n "$identity" ]] || identity="$root/identity.json"
     [[ -n "${commit:-}" ]] || commit=$(git -C "$repo_root" rev-parse HEAD)
@@ -242,6 +250,8 @@ start_episode() {
         printf 'ROOT=%q\n' "$root"
         printf 'DURATION_S=%q\n' "$duration_s"
         printf 'MARGIN_S=%q\n' "$margin_s"
+        printf 'VARIABLE=%q\n' "$variable"
+        printf 'MAX_DURATION_S=%q\n' "$max_duration_s"
         printf 'STARTED_AT=%q\n' "$(date -Is)"
     } >"$(meta_file "$episode")"
     printf '%s\n' "$root" >"$(root_file "$episode")"
@@ -256,19 +266,28 @@ start_episode() {
         --panthera-commit "$commit"
         --calibration "$calibration"
         --identity "$identity"
-        --fixed-duration-s "$duration_s"
-        --fixed-margin-s "$margin_s"
     )
+    if ((variable == 1)); then
+        cmd+=(--duration-s "$max_duration_s")
+    else
+        cmd+=(--fixed-duration-s "$duration_s" --fixed-margin-s "$margin_s")
+    fi
     if ((no_depth == 0)); then
         cmd+=(--capture-depth)
     fi
     local venv_python="$repo_root/.venv/bin/python"
     local fixed_ticks training_frames
-    fixed_ticks=$("$venv_python" -c 'import math,sys; v=float(sys.argv[1])*30; print(round(v)+1 if math.isclose(v, round(v), abs_tol=1e-6) else (_ for _ in ()).throw(SystemExit("duration must be an integer multiple of 1/30 s")))' "$duration_s")
-    training_frames=$((fixed_ticks - 1))
+    if ((variable == 0)); then
+        fixed_ticks=$("$venv_python" -c 'import math,sys; v=float(sys.argv[1])*30; print(round(v)+1 if math.isclose(v, round(v), abs_tol=1e-6) else (_ for _ in ()).throw(SystemExit("duration must be an integer multiple of 1/30 s")))' "$duration_s")
+        training_frames=$((fixed_ticks - 1))
+    fi
 
-    echo "==> 启动定长录制：$episode"
-    echo "==> 契约：${duration_s}s -> ${fixed_ticks} canonical ticks -> ${training_frames} training frames"
+    echo "==> 启动录制：$episode（$([ "$variable" = 1 ] && echo 变长 || echo 定长)）"
+    if ((variable == 1)); then
+        echo "==> 变长模式：窗口 = stop 前的全部动作；安全上限 ${max_duration_s}s"
+    else
+        echo "==> 契约：${duration_s}s -> ${fixed_ticks} canonical ticks -> ${training_frames} training frames"
+    fi
     echo "==> 录制余量：${margin_s}s；日志：$log"
     nohup "${cmd[@]}" >"$log" 2>&1 < /dev/null &
     pid=$!
