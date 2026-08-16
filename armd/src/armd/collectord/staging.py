@@ -140,7 +140,10 @@ def validate_staging_contents(
         _finite_vector7(state.get("position"), field=f"sample[{index}].state.position")
         _finite_vector7(state.get("velocity"), field=f"sample[{index}].state.velocity")
         if sample.get("sync_ok") is not True or sample.get("sync_reasons") != []:
-            raise ValueError(f"sample[{index}] failed synchronization gates")
+            # 容忍的缺失 tick：staging 已复制上一帧 overhead（overhead_frame_duplicated），
+            # sync_report 已记录缺失计数；其余行必须完全同步。
+            if not sample.get("overhead_frame_duplicated"):
+                raise ValueError(f"sample[{index}] failed synchronization gates")
 
         for camera_key in camera_keys:
             camera = sample.get(camera_key)
@@ -163,7 +166,10 @@ def validate_staging_contents(
             clock_domain = str(camera["device_clock_domain"])
             stream_instance_id = str(camera.get("stream_instance_id", ""))
             previous = previous_camera.get(camera_key)
-            if previous is not None:
+            duplicated = camera_key == "overhead_rgb" and bool(
+                sample.get("overhead_frame_duplicated")
+            )
+            if previous is not None and not duplicated:
                 (
                     previous_sequence,
                     previous_receive,
