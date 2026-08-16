@@ -26,6 +26,9 @@ from .teach import PlaybackFrame
 logger = logging.getLogger(__name__)
 
 POSITION_HOLD_SPEED = 0.1
+# 示教回放末点收敛爬行速度：回放前馈 kp≈0 会累积漂移，终点误差可能达
+# 0.1-0.3 rad；2s@0.1 无法收敛（真机 FAILED 已见），改用有限速度爬向录制终点。
+PLAYBACK_SETTLE_SPEED = 0.8
 JOG_FRESHNESS_S = 0.25
 JOG_LIMIT_MARGIN = 0.02
 # Jog is deliberately implemented as a short position/velocity target rather
@@ -1351,7 +1354,7 @@ class TeachPlaybackMotion:
         gripper_kp: float,
         gripper_kd: float,
         start_timeout_s: float = 30.0,
-        settle_timeout_s: float = 2.0,
+        settle_timeout_s: float = 15.0,
         gravity_scale: float | np.ndarray = 1.0,
         gravity_scale_high: float | np.ndarray | None = None,
         gravity_breakpoint: float | np.ndarray | None = None,
@@ -1491,7 +1494,7 @@ class TeachPlaybackMotion:
                 position_frame(
                     backend,
                     arm_position=target.position,
-                    arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                    arm_velocity=np.full(6, PLAYBACK_SETTLE_SPEED),
                     gripper_position=gripper_target,
                 )
             )
@@ -1506,7 +1509,7 @@ class TeachPlaybackMotion:
             position_frame(
                 backend,
                 arm_position=target.position,
-                arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                arm_velocity=np.full(6, PLAYBACK_SETTLE_SPEED),
                 gripper_position=gripper_target,
             )
         )
