@@ -769,13 +769,18 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     positions.append(result["positions"][-1])
                     velocities.append(result["velocities"][-1])
                     timestamps.append(result["timestamps"][-1])
+            # 末端强制减速：末点零速锁定（SDK 语义），倒二点减半，
+            # 避免轨迹末端残余速度冲过目标/冲击 settle 切换。
+            velocities[-1] = np.zeros(6)
+            if len(velocities) > 1:
+                velocities[-2] = np.asarray(velocities[-2]) * 0.5
             motion = CartesianTrajectoryMotion(
-                positions=[np.asarray(value) for value in result["positions"]],
-                velocities=[np.asarray(value) for value in result["velocities"]],
-                timestamps=list(result["timestamps"]),
+                positions=[np.asarray(value) for value in positions],
+                velocities=[np.asarray(value) for value in velocities],
+                timestamps=timestamps,
                 max_torque=limits.joint_torque,
-                tolerance=0.01,  # 工作零位到位容差（0.57°）
-                settle_timeout_s=min(4.0, timeout_s),
+                tolerance=0.03,  # 工作零位到位容差（1.7°，高位形 PID 稳态可达）
+                settle_timeout_s=min(6.0, timeout_s),
                 operation_name="gozero-movel",
             )
         accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
@@ -832,8 +837,26 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             result = await asyncio.wrap_future(completion)
         except (asyncio.CancelledError, RuntimeError):
             return
-        if result is not MotionStepResult.DONE:
-            logger.warning("workzero 回位未完成（%s），保持现状不动作", result.value)
+        if result is MotionStepResult.CANCELLED:
+            # 取消/EStop：不自动保持（现有语义：柔顺/停止）
+            logger.warning("workzero 回位已取消，不启动保持")
+            return
+        if result is MotionStepResult.FAILED:
+            # 安全：失败也保持当前位置（定死锁），绝不因停止发帧坠臂
+            logger.error("workzero 回位失败，保持当前位置防止坠臂")
+            state = self._hardware_loop.latest_state()
+            if state is None or not all(motor.valid for motor in state.motors):
+                return
+            try:
+                await self._start_hold_motion(
+                    arm_position=np.array(
+                        [motor.position for motor in state.motors[:6]], dtype=np.float64
+                    ),
+                    gripper_position=float(state.motors[6].position),
+                    gripper_velocity=0.1,
+                )
+            except RuntimeError as exc:
+                logger.warning("workzero 失败保持启动失败：%s", exc)
             return
         try:
             await self._start_hold_motion(
