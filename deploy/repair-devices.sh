@@ -93,11 +93,17 @@ log() {
 }
 
 log_multiline() {
-    local text=$1 line
-    while IFS= read -r line; do
-        [[ -n "$line" ]] || continue
-        log "output=$(printf '%q' "$line")"
-    done <<<"$text"
+    local text=$1 lines first
+    [[ -z "$text" ]] && return 0
+    lines=$(printf '%s\n' "$text" | grep -c . || true)
+    if ((lines <= 1)); then
+        log "output=$(printf '%q' "$text")"
+        return 0
+    fi
+    first=$(printf '%s\n' "$text" | head -1)
+    # 多行输出只打印一行摘要（控制台不刷屏），完整内容原样追加进日志文件。
+    log "output=$(printf '%q' "$first") …(共 $lines 行，完整输出已追加到日志文件)"
+    printf '%s\n' "$text" >>"$LOG_PATH"
 }
 
 run_cmd() {
