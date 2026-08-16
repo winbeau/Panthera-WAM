@@ -90,6 +90,21 @@ cd ~/Panthera-WAM
 
 当前 H0 真机门仍需单独通过：此前 7 个电机为 `mode=0x0B`，即使三个 service 为 `active` 也不能视为硬件健康；未通过 H0 前不得执行 `setzero`、`gozero`、`rezero` 或正式采集。
 
+### 代码更新与进程重启（教训：没重启会一直回环找 bug）
+
+```bash
+cd ~/Panthera-WAM && git pull --ff-only origin main      # 只更新磁盘文件
+systemctl --user show armd.service -p ActiveEnterTimestamp   # 核对进程启动时间
+./deploy/lerobot-collect.sh rezero && ./deploy/lerobot-collect.sh zero-home  # 回低位
+systemctl --user restart armd.service                   # 低位下才允许重启
+```
+
+- `git pull` **不会热加载**正在运行的 armd/camerad 进程；修复后真机症状不变，第一步先比对
+  `ActiveEnterTimestamp`（进程启动时间）与最后一次 pull 的时间戳——旧进程先重启再复测，
+  禁止对旧进程反复回环找 bug（实例：start-record 的 `state=drag` 连查多轮，根因是 armd 未重启）。
+- armd 重启前必须把臂放回初始低位（`rezero` → `zero-home`）；高位定死锁/阻尼锁下重启会
+  中断持续帧流，150ms 看门狗坠臂。
+
 ## Legacy WSL 部署
 
 ```bash
@@ -125,6 +140,7 @@ wpf\tools\run-tests.cmd
 - EStop 不需要 lease；固件 watchdog 默认 150ms。
 - `calibrate zero` 虽不产生运动，但会重定义坐标零点，必须按验收文档在最后执行并完成恢复。
 - **真机运动前先读 [`docs/JOINT_CONTROL.md`](docs/JOINT_CONTROL.md)**：单关节 jog 速度须 ≥0.3 rad/s（低于摩擦死区/单次目标帧会触发固件锁死 0x0B，需重启 armd 恢复），**move/movej 当前固件不可用**，`--vel` 用逗号分隔，运动命令前先 acquire + 后台 heartbeat。
+- **armd 重启前必须把臂回初始低位**（`rezero` → `zero-home`）：高位定死锁/阻尼锁下重启会中断持续帧流，150ms 看门狗坠臂；且 `git pull` 不会热加载运行中的 armd，修复后症状不变先核进程启动时间（`systemctl --user show armd.service -p ActiveEnterTimestamp`）再重启。
 - **示教标定**：`deploy/teach-cal.sh` 增量调参（kp,kd,fc,fv,scale），**定稿配置** J1(0,0.4,0.05,0.02,0.85*) J2(0,0.55,0.15,0.06,0.85) J3(0,0.6,0.15,0.06,1.15) J4(0,0.4,0.15,0.03,1.0) J5(0,0.15,0.02,0.01,0.85*) J6(0,0.08,0.02,0.01,0.85*)（*转动轴 scale 无效），详见 [`docs/JOINT_CONTROL.md`](docs/JOINT_CONTROL.md) §6。
 
 详细架构决策见 [`docs/FINAL_PLAN.md`](docs/FINAL_PLAN.md)。

@@ -66,3 +66,5 @@ USB/UVC 稳定别名中的 `251323070051` 不得传给 `enable_device`。metadat
 - armd/CLI：Python 3.10+，类型标注，pytest 全走 `--sim`；WPF：.NET 9，CommunityToolkit.Mvvm，csproj 压制 `WPF0001`（ThemeMode 实验性 API，已知已接受）。
 - 提交信息中文，前缀 `feat:/fix:/docs:/test:/chore:`，一个里程碑验收项一个 PR 粒度的 commit。
 - FINAL_PLAN「风险与开放问题」里列的"实现前必须核实"事项（pinocchio 双实例化、`set_reset_zero` 语义、继承层签名、MotorState 字段），在触及对应模块前先核实并把结论回写进 FINAL_PLAN。
+- **Pi 上 `git pull` 只更新磁盘文件，不会热加载正在运行的 armd/camerad 进程**（`uv run --package panthera-armd armd` 是启动时装载代码）。修复后真机症状不变时，第一步先比对 `systemctl --user show armd.service -p ActiveEnterTimestamp`（进程启动时间）与最后一次 pull 的时间戳；进程旧 → 先重启再复测，**禁止对旧进程反复回环找 bug**（实例：start-record 的 `state=drag` 连查多轮，根因就是 armd 未重启，新代码根本没在跑）。
+- **armd 重启必须在臂回到初始低位之后**（`rezero` → `zero-home`）：高位定死锁/阻尼锁状态下重启会中断持续帧流，150ms 看门狗坠臂（已发生 2 次事故）；高位发现需要重启时先回低位。
