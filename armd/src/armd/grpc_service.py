@@ -1563,7 +1563,16 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
 
     async def MoveL(self, request, context):
         if self._hardware_loop.has_active_motion:
-            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
+            if self._hold_motion is not None:
+                # 定死锁 → 新运动接管：释放保持帧，MoveL 下一周期接管
+                await self._release_hold_motion()
+                if self._hardware_loop.has_active_motion:
+                    await context.abort(
+                        grpc.StatusCode.FAILED_PRECONDITION,
+                        "定死锁释放超时，MoveL 未启动",
+                    )
+            else:
+                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
         current = await self._request_joint_angles([], context)
         current_fk = await self._kinematics.call("fk", {"q": current})
         try:

@@ -21,10 +21,11 @@ step "前置检查（只读）"
 import json, sys
 data = json.load(sys.stdin)
 motors = data if isinstance(data, list) else list(data.get("joints", [])) + [data.get("gripper", {})]
+# 正常模式：0x15（阻尼）、0x90（POS-VEL 保持）、0xB0（MIT）等；0x0B 才是异常（堵转锁死）
 bad = [m.get("name") for m in motors
-       if not m.get("valid") or int(m.get("fault", 0)) != 0 or int(m.get("mode", -1)) != 0x15]
+       if not m.get("valid") or int(m.get("fault", 0)) != 0 or int(m.get("mode", -1)) == 0x0B]
 assert len(motors) == 7 and not bad, f"电机异常: {bad}"
-print("7 电机正常（valid/fault=0/mode=0x15）")'
+print("7 电机正常（valid/fault=0/mode≠0x0B）")'
 "$CLI" control status --json | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
