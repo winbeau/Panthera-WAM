@@ -320,6 +320,7 @@ def test_teach_request_clutch_requires_manual_clutch() -> None:
 @pytest_asyncio.fixture
 async def workzero_stack(tmp_path, monkeypatch):
     monkeypatch.setenv("PANTHERA_WORK_ZERO_PATH", str(tmp_path / "work-zero.json"))
+    monkeypatch.setenv("PANTHERA_WORKZERO_ENABLED", "1")
     monkeypatch.setenv("PANTHERA_TEACH_DIR", str(tmp_path / "teach"))
     loop = HardwareLoop(SimBackend, control_hz=200.0)
     loop.start()
@@ -327,7 +328,37 @@ async def workzero_stack(tmp_path, monkeypatch):
         loop,
         bind="127.0.0.1:0",
         lease_timeout_s=60.0,
-        teach_safe_hold_s=2.0,
+        teach_safe_hold_s=0.6,
+    )
+    await server.start()
+    channel = grpc.aio.insecure_channel(
+        f"127.0.0.1:{server.port}",
+        options=(("grpc.enable_http_proxy", 0),),
+    )
+    await channel.channel_ready()
+    stub = arm_pb2_grpc.ArmServiceStub(channel)
+    acquired = await stub.AcquireControl(arm_pb2.AcquireControlRequest(client_id="workzero-test"))
+    metadata = ((LEASE_METADATA_KEY, acquired.lease_token),)
+    try:
+        yield loop, stub, metadata, server, tmp_path
+    finally:
+        await channel.close()
+        await server.stop()
+        loop.stop()
+
+
+@pytest_asyncio.fixture
+async def workzero_gate_off_stack(tmp_path, monkeypatch):
+    """与 workzero_stack 相同但默认关闭 PANTHERA_WORKZERO_ENABLED。"""
+    monkeypatch.setenv("PANTHERA_WORK_ZERO_PATH", str(tmp_path / "work-zero.json"))
+    monkeypatch.setenv("PANTHERA_TEACH_DIR", str(tmp_path / "teach"))
+    loop = HardwareLoop(SimBackend, control_hz=200.0)
+    loop.start()
+    server = ArmdServer(
+        loop,
+        bind="127.0.0.1:0",
+        lease_timeout_s=60.0,
+        teach_safe_hold_s=0.6,
     )
     await server.start()
     channel = grpc.aio.insecure_channel(
@@ -461,14 +492,16 @@ async def test_setworkzero_full_flow_and_drag_keeps_file(workzero_stack) -> None
 
 
 @pytest.mark.asyncio
-async def test_gozero_unimplemented_until_p3(workzero_stack) -> None:
-    _, stub, metadata, _, _ = workzero_stack
+async def test_gozero_feature_gate_and_reason_validation(workzero_gate_off_stack) -> None:
+    _, stub, metadata, _, _ = workzero_gate_off_stack
+    # 默认 feature gate 关闭：拒绝，不是 UNIMPLEMENTED（P3 已实现）
     with pytest.raises(grpc.RpcError) as exc_info:
         await stub.GoWorkZero(
             arm_pb2.GoWorkZeroRequest(confirm=True, reason="gozero"),
             metadata=metadata,
         )
-    assert exc_info.value.code() == grpc.StatusCode.UNIMPLEMENTED
+    assert exc_info.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+    assert "未启用" in exc_info.value.details()
     with pytest.raises(grpc.RpcError) as exc_info:
         await stub.GoWorkZero(
             arm_pb2.GoWorkZeroRequest(confirm=True, reason="bad"),
@@ -493,6 +526,11 @@ def _move_sim_arm(backend) -> None:
     backend._positions[:6] = np.array([0.2, 0.3, 0.4, -0.2, 0.1, -0.3], dtype=np.float64)
 
 
+def _move_sim_arm_elsewhere(backend) -> None:
+    # 摆到另一组位形（与工作零位不同）
+    backend._positions[:6] = np.array([0.1, 0.5, 0.6, -0.3, 0.2, -0.1], dtype=np.float64)
+
+
 async def asyncio_until(predicate, timeout_s: float) -> None:
     import asyncio
     import time
@@ -502,3 +540,99 @@ async def asyncio_until(predicate, timeout_s: float) -> None:
         if predicate():
             return
         await asyncio.sleep(0.02)
+
+
+# ---------------------------------------------------------- P3 GoWorkZero gRPC
+
+
+@pytest.mark.asyncio
+async def test_gozero_rejects_without_pose(workzero_stack) -> None:
+    _, stub, metadata, _, _ = workzero_stack
+    with pytest.raises(grpc.RpcError) as exc_info:
+        await stub.GoWorkZero(arm_pb2.GoWorkZeroRequest(confirm=True), metadata=metadata)
+    assert exc_info.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+    assert "尚未保存" in exc_info.value.details()
+
+
+@pytest.mark.asyncio
+async def test_gozero_rejects_while_teach_active(workzero_stack) -> None:
+    _, stub, metadata, _, _ = workzero_stack
+    await _start_teach(stub, metadata, manual_clutch=True)
+    with pytest.raises(grpc.RpcError) as exc_info:
+        await stub.GoWorkZero(arm_pb2.GoWorkZeroRequest(confirm=True), metadata=metadata)
+    assert exc_info.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+    assert "运动" in exc_info.value.details()
+
+
+@pytest.mark.asyncio
+async def test_gozero_immediate_done_when_already_at_work_zero(workzero_stack) -> None:
+    loop, stub, metadata, _, _ = workzero_stack
+    await _start_teach(stub, metadata, manual_clutch=True)
+    # 锁存当前位形（sim 初始即零位）→ 小残差路径 → MIT settle 立即收敛
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)  # 等 SAFE_HOLD 结束 + teach 清理
+    assert not loop.has_active_motion
+
+    accepted = await stub.GoWorkZero(
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="post_action"),
+        metadata=metadata,
+    )
+    assert accepted.execution_id
+    final = None
+    fractions: list[float] = []
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+        fractions.append(status.fraction)
+        if status.state in (
+            arm_pb2.EXEC_STATE_DONE,
+            arm_pb2.EXEC_STATE_FAILED,
+            arm_pb2.EXEC_STATE_CANCELLED,
+        ):
+            break
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+    assert fractions == sorted(fractions), "fraction 必须单调"
+    assert final.fraction == pytest.approx(1.0)
+    # rezero（reason=post_action）走同一 RPC，不复制运动实现
+    assert accepted.execution_id
+
+
+@pytest.mark.asyncio
+async def test_gozero_cancel_via_execution(workzero_stack) -> None:
+    loop, stub, metadata, _, _ = workzero_stack
+    await _start_teach(stub, metadata, manual_clutch=True)
+    loop.submit(_move_sim_arm).result(timeout=2.0)  # 位形 A
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)
+    assert not loop.has_active_motion
+    loop.submit(_move_sim_arm_elsewhere).result(timeout=2.0)  # 移到位形 B（≠A）
+
+    accepted = await stub.GoWorkZero(
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="gozero"),
+        metadata=metadata,
+    )
+    await asyncio.sleep(0.3)  # 让 motion 进入 RUN
+    cancelled = await stub.CancelExecution(
+        arm_pb2.CancelExecutionRequest(execution_id=accepted.execution_id),
+        metadata=metadata,
+    )
+    assert cancelled.cancelled
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+        if status.state in (
+            arm_pb2.EXEC_STATE_DONE,
+            arm_pb2.EXEC_STATE_FAILED,
+            arm_pb2.EXEC_STATE_CANCELLED,
+        ):
+            break
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_CANCELLED
+    # 取消后不会自动重启
+    assert not loop.has_active_motion

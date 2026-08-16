@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import AsyncIterator
 
@@ -53,6 +54,7 @@ from .workzero import (
     WorkZeroStore,
     WorkZeroValidationError,
 )
+from .workzero_motion import WorkZeroMotion
 
 SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
 DEFAULT_FRICTION_FC = np.array([0.20, 0.15, 0.15, 0.15, 0.04, 0.04], dtype=np.float64)
@@ -237,6 +239,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         teach_manual_clutch: bool = False,
         teach_safe_hold_s: float = 10.0,
         work_zero_store: WorkZeroStore | None = None,
+        workzero_enabled: bool | None = None,
+        workzero_real_hardware_enabled: bool | None = None,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
@@ -264,6 +268,16 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         self._teach_manual_clutch = bool(teach_manual_clutch)
         self._teach_safe_hold_s = float(teach_safe_hold_s)
         self._work_zero_store = work_zero_store if work_zero_store is not None else WorkZeroStore()
+        self._workzero_enabled = (
+            os.environ.get("PANTHERA_WORKZERO_ENABLED", "0") == "1"
+            if workzero_enabled is None
+            else bool(workzero_enabled)
+        )
+        self._workzero_real_hardware_enabled = (
+            os.environ.get("PANTHERA_WORKZERO_REAL_HARDWARE_ENABLED", "0") == "1"
+            if workzero_real_hardware_enabled is None
+            else bool(workzero_real_hardware_enabled)
+        )
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
@@ -579,10 +593,58 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "GoWorkZero 必须 confirm=true")
         if request.reason not in ("", "gozero", "post_action"):
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "reason 必须为空、gozero 或 post_action")
-        await context.abort(
-            grpc.StatusCode.UNIMPLEMENTED,
-            "GoWorkZero 运动实现将在 P3 接入（服务端连续流式 WorkZeroMotion）；当前阶段不产生运动",
+        if not self._workzero_enabled:
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                "work-zero 功能未启用（服务端 PANTHERA_WORKZERO_ENABLED=1 开启）",
+            )
+        if self._hardware_loop.has_active_motion:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
+        if self._recorder is not None:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "录制进行中，禁止回位")
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        try:
+            pose = await asyncio.to_thread(self._work_zero_store.load)
+        except WorkZeroValidationError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        if pose is None:
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                "尚未保存工作零位；请先 workzero setzero",
+            )
+        timeout_s = optional_double(request, "timeout_s", 30.0)
+        if timeout_s <= 0 or not np.isfinite(timeout_s) or timeout_s > 60.0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "timeout_s 必须位于 (0, 60]")
+        is_sim = await asyncio.wrap_future(
+            self._hardware_loop.submit(lambda backend: backend.is_sim)
         )
+        if not is_sim and not self._workzero_real_hardware_enabled:
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                "真机 WorkZeroMotion 未启用（服务端 PANTHERA_WORKZERO_REAL_HARDWARE_ENABLED=1 "
+                "且完成 P6 分级验收后才会放行）",
+            )
+        limits = await asyncio.wrap_future(
+            self._hardware_loop.submit(lambda backend: backend.limits)
+        )
+        try:
+            self._work_zero_store.validate_with_limits(pose, limits)
+        except WorkZeroValidationError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        operation_name = "rezero" if request.reason == "post_action" else "gozero"
+        try:
+            motion = WorkZeroMotion(target=pose, timeout_s=timeout_s, operation_name=operation_name)
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        execution_id = self._executions.register(motion, completion)
+        return arm_pb2.ExecutionAccepted(execution_id=execution_id)
 
     async def GetJointState(self, request, context):
         del request
