@@ -122,7 +122,9 @@ class DisconnectedBackend(RecordingSimBackend):
         return states
 
 
-def pose(*, joints: tuple[float, ...] = (0.3, 0.4, 0.5, -0.2, 0.1, -0.1), gripper: float = 0.6) -> WorkZeroPose:
+def pose(
+    *, joints: tuple[float, ...] = (0.3, 0.4, 0.5, -0.2, 0.1, -0.1), gripper: float = 0.6
+) -> WorkZeroPose:
     return WorkZeroPose(
         schema_version=1,
         joints=joints,
@@ -644,3 +646,57 @@ def test_hold_position_motion_cancel_releases_to_idle_damping() -> None:
     result = motion.step(backend, clock.now)
     assert result is MotionStepResult.CANCELLED
     assert "定死锁已释放" in motion.reject_reason
+
+
+def test_hold_set_gripper_target_reopens_after_lock() -> None:
+    # rezero 夹爪陷阱回归：复用 hold 时必须能重伺服夹爪到开爪目标；
+    # 方向感知锁存吞掉旧握持位目标会导致「夹爪未打开，拒绝回位」。
+    clock = FakeClock()
+    backend = IdealServoBackend(clock=clock)
+    backend._positions[6] = 0.03
+    motion = HoldPositionMotion(
+        arm_position=np.zeros(6),
+        gripper_position=0.03,
+        gripper_velocity=0.6,
+    )
+    for _ in range(5):
+        clock.advance(0.005)
+        backend.refresh_state()
+        assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert motion._gripper_reached is True  # 握持位已锁存
+
+    motion.set_gripper_target(1.8, 0.6)
+    assert motion._gripper_reached is False
+    assert motion._gripper_start is None
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert backend.frames[-1].gripper_position == pytest.approx(1.8)
+
+
+def test_hold_handoff_cancel_keeps_posvel_frame() -> None:
+    # Fix D：交接取消末帧仍写 POS-VEL 保持帧（不切 idle 阻尼），
+    # 高位无重力前馈的下垂窗口→抓回震颤由此消除。
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = HoldPositionMotion(arm_position=np.zeros(6), gripper_position=None)
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    motion.request_handoff()
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.CANCELLED
+    assert "定死锁已交接" in motion.reject_reason
+    assert backend.frames[-1].mode is FrameMode.POS_VEL_TQE
+
+    # 普通取消仍走 idle 阻尼（释放语义不变）
+    motion2 = HoldPositionMotion(arm_position=np.zeros(6), gripper_position=None)
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion2.step(backend, clock.now) is MotionStepResult.RUNNING
+    motion2.request_cancel(CancelReason.CLIENT)
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion2.step(backend, clock.now) is MotionStepResult.CANCELLED
+    assert backend.frames[-1].mode is not FrameMode.POS_VEL_TQE

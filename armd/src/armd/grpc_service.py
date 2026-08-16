@@ -326,9 +326,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             return ""
         if self._allow_unverified_teach is False:
             return TEACH_CONTRACT_GATE_REASON
-        is_sim = await asyncio.wrap_future(
-            self._hardware_loop.submit(lambda backend: backend.is_sim)
-        )
+        is_sim = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.is_sim))
         if is_sim:
             return ""
         return TEACH_CONTRACT_GATE_REASON
@@ -528,9 +526,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             pose=self._work_zero_pose_message(pose),
         )
         try:
-            limits = await asyncio.wrap_future(
-                self._hardware_loop.submit(lambda backend: backend.limits)
-            )
+            limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
             self._work_zero_store.validate_with_limits(pose, limits)
         except WorkZeroValidationError as exc:
             response.reject_reason = str(exc)
@@ -585,9 +581,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             source=WORK_ZERO_SOURCE_TEACH_CLUTCH_LOCK,
         )
         try:
-            limits = await asyncio.wrap_future(
-                self._hardware_loop.submit(lambda backend: backend.limits)
-            )
+            limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
             await asyncio.to_thread(self._work_zero_store.save, pose, limits)
         except WorkZeroValidationError as exc:
             return arm_pb2.SetWorkZeroResponse(accepted=False, reject_reason=str(exc))
@@ -648,18 +642,14 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         timeout_s = optional_double(request, "timeout_s", 30.0)
         if timeout_s <= 0 or not np.isfinite(timeout_s) or timeout_s > 60.0:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "timeout_s 必须位于 (0, 60]")
-        is_sim = await asyncio.wrap_future(
-            self._hardware_loop.submit(lambda backend: backend.is_sim)
-        )
+        is_sim = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.is_sim))
         if not is_sim and not self._workzero_real_hardware_enabled:
             await context.abort(
                 grpc.StatusCode.FAILED_PRECONDITION,
                 "真机 WorkZeroMotion 未启用（服务端 PANTHERA_WORKZERO_REAL_HARDWARE_ENABLED=1 "
                 "且完成 P6 分级验收后才会放行）",
             )
-        limits = await asyncio.wrap_future(
-            self._hardware_loop.submit(lambda backend: backend.limits)
-        )
+        limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
         try:
             self._work_zero_store.validate_with_limits(pose, limits)
         except WorkZeroValidationError as exc:
@@ -676,9 +666,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             float(pose.gripper),
             WORKZERO_GRIPPER_TARGET_FRACTION * limits.gripper_upper,
         )
-        small_residual = (
-            float(np.max(np.abs(target_positions - current))) <= WORKZERO_SMALL_RESIDUAL
-        )
+        small_residual = float(np.max(np.abs(target_positions - current))) <= WORKZERO_SMALL_RESIDUAL
         motion: ContinuousTrajectoryMotion | ImmediateDoneMotion
         plan_task: asyncio.Task[ContinuousTrajectoryMotion] | None = None
         if small_residual:
@@ -748,6 +736,14 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     )
                 except RuntimeError as exc:
                     await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+            else:
+                # 复用运行中的定死锁 hold（重试语义）：臂保持帧不中断，仅把
+                # 夹爪重新伺服到开爪目标。不重伺服则旧握持位目标永不下发开爪
+                # 命令（真机卡死「夹爪未打开，拒绝回位」）。
+                try:
+                    self._hold_motion.set_gripper_target(gripper_target, 0.6)
+                except ValueError as exc:
+                    await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
             # 轨迹规划（plan_task）已与夹爪开爪并行进行；这里只等开爪到位。
             # 方向感知：开爪（target>当前）越过 target-0.02 即视为到位，过冲也算。
             # 真机实测：0.2→1.8 @0.6 理论 2.7s，加伺服爬升/夹持负载后 4s
@@ -767,14 +763,43 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     "夹爪未在 4s 内打开到工作零位姿态；拒绝回位（可能仍抓着物体）",
                 )
 
+        # rezero 交接后位形可能因 SAFE_HOLD/保持切换发生微小漂移：用新 hold
+        # 建立后的实测位形重规划，MoveL 首帧与真实位形对齐，消除起步阶跃
+        # （震颤放大器之一）。
+        if request.reason == "post_action" and plan_task is not None:
+            stale_task = plan_task
+
+            def _discard(task: asyncio.Task) -> None:
+                try:
+                    task.exception()
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            stale_task.add_done_callback(_discard)
+            stale_task.cancel()
+            cached = self._hardware_loop.latest_state()
+            if cached is None or not all(state.valid for state in cached.motors[:6]):
+                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "关节状态无效或连接不完整")
+            current = np.array([state.position for state in cached.motors[:6]], dtype=np.float64)
+            plan_task = asyncio.create_task(
+                self._plan_workzero_move(
+                    current=current,
+                    target_positions=target_positions,
+                    limits=limits,
+                    timeout_s=timeout_s,
+                    gripper_position=gripper_target,
+                ),
+                name="panthera-workzero-plan",
+            )
+
         if plan_task is not None:
             try:
                 motion = await plan_task
             except ValueError as exc:
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
-        # 轨迹就绪后释放定死锁并立即接管（间隙 1-2 控制周期）
+        # 轨迹就绪后释放定死锁并立即接管（交接模式：末帧仍 POS-VEL 保持，间隙无下垂）
         if self._hardware_loop.has_active_motion and self._hold_motion is not None:
-            await self._release_hold_motion()
+            await self._release_hold_motion(handoff=True)
             if self._hardware_loop.has_active_motion:
                 await context.abort(
                     grpc.StatusCode.FAILED_PRECONDITION,
@@ -858,14 +883,21 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 self._hold_motion = None
                 self._hold_completion = None
 
-    async def _release_hold_motion(self) -> None:
-        """释放定死锁：受控取消保持帧（下一操作或 TeachStart 立即接管）。"""
+    async def _release_hold_motion(self, *, handoff: bool = False) -> None:
+        """释放定死锁：受控取消保持帧（下一操作或 TeachStart 立即接管）。
+
+        handoff=True（回位 MoveL 接管）时末帧仍写 POS-VEL 保持帧、不进入
+        idle 阻尼，避免高位无重力前馈的下垂窗口。
+        """
         motion = self._hold_motion
         self._hold_motion = None
         self._hold_completion = None
         if motion is None or not self._hardware_loop.has_active_motion:
             return
-        motion.request_cancel(CancelReason.CLIENT)
+        if handoff:
+            motion.request_handoff()
+        else:
+            motion.request_cancel(CancelReason.CLIENT)
         deadline = time.monotonic() + 1.0
         while self._hardware_loop.has_active_motion and time.monotonic() < deadline:
             await asyncio.sleep(0.02)
@@ -884,9 +916,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             # 取消/EStop：不自动保持（现有语义：柔顺/停止）
             logger.warning("workzero 回位已取消，不启动保持")
             return
-        limits = await asyncio.wrap_future(
-            self._hardware_loop.submit(lambda backend: backend.limits)
-        )
+        limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
         gripper_target = min(
             float(pose.gripper),
             WORKZERO_GRIPPER_TARGET_FRACTION * limits.gripper_upper,
@@ -899,9 +929,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 return
             try:
                 await self._start_hold_motion(
-                    arm_position=np.array(
-                        [motor.position for motor in state.motors[:6]], dtype=np.float64
-                    ),
+                    arm_position=np.array([motor.position for motor in state.motors[:6]], dtype=np.float64),
                     gripper_position=float(state.motors[6].position),
                     gripper_velocity=0.1,
                 )
@@ -2057,12 +2085,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         try:
             motion.request_clutch(command)
             if request.HasField("gripper_position"):
-                limits = await asyncio.wrap_future(
-                    self._hardware_loop.submit(lambda backend: backend.limits)
-                )
-                if not (
-                    limits.gripper_lower <= request.gripper_position <= limits.gripper_upper
-                ):
+                limits = await asyncio.wrap_future(self._hardware_loop.submit(lambda backend: backend.limits))
+                if not (limits.gripper_lower <= request.gripper_position <= limits.gripper_upper):
                     await context.abort(
                         grpc.StatusCode.INVALID_ARGUMENT,
                         f"gripper_position 超出软限位 "
@@ -2161,11 +2185,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         if self._hardware_loop.has_active_motion:
             # 只允许接管「显式离合 teach 且当前 HOLD」：阻尼锁→回放直接切换，
             # 中间不经过空闲阻尼（臂下垂/回放起点肘飞的真机根因）。
-            if (
-                teach is None
-                or not teach.manual_clutch
-                or teach.auto_hold_state is not AutoHoldState.HOLD
-            ):
+            if teach is None or not teach.manual_clutch or teach.auto_hold_state is not AutoHoldState.HOLD:
                 await context.abort(
                     grpc.StatusCode.FAILED_PRECONDITION,
                     "已有运动正在执行（回放接管需 teach HOLD，请先 lock）",
@@ -2285,13 +2305,15 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         FAILED/CANCELLED 不进入定死锁（调用方 formal_abort 会恢复阻尼锁）。
         """
         try:
-            await asyncio.wrap_future(completion)
+            result = await asyncio.wrap_future(completion)
         except BaseException:
             return
+        if result is not MotionStepResult.DONE:
+            # 返回值型 FAILED/CANCELLED 不进入定死锁（调用方 formal_abort 会
+            # 恢复阻尼锁）；只对异常型失败走上面的 except 路径。
+            return
         target = motion.frames[-1]
-        gripper_position = (
-            float(target.gripper_position) if target.gripper_position is not None else None
-        )
+        gripper_position = float(target.gripper_position) if target.gripper_position is not None else None
         try:
             await self._start_hold_motion(
                 arm_position=np.asarray(target.position, dtype=np.float64),

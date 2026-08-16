@@ -165,6 +165,19 @@ def _gravity_params(
     return low.copy(), high_array.copy(), breakpoint_array.copy()
 
 
+def clip_arm_position(backend: Backend, arm_position: np.ndarray) -> np.ndarray:
+    """把臂目标位形收进软限位（preview 手拖可越过限位，回放命令必须合法）。
+
+    与真实后端 _validate_frame_limits 的拒绝不同，这里在写帧边界 clip 后
+    继续下发，避免越限帧触发硬停止（150ms 看门狗下垂风险）。
+    """
+    values = np.asarray(arm_position, dtype=np.float64)
+    clipped = np.clip(values, backend.limits.joint_lower, backend.limits.joint_upper)
+    if not np.array_equal(values, clipped):
+        logger.warning("arm_position 越限已 clip: %s -> %s", values, clipped)
+    return clipped
+
+
 def position_frame(
     backend: Backend,
     *,
@@ -176,12 +189,13 @@ def position_frame(
     gripper_max_torque: float | None = None,
     enforce_gripper_velocity_limit: bool = True,
 ) -> JointFrame:
+    safe_arm_position = clip_arm_position(backend, arm_position)
     safe_gripper_position = float(
         np.clip(gripper_position, backend.limits.gripper_lower, backend.limits.gripper_upper)
     )
     return JointFrame(
         mode=FrameMode.POS_VEL_TQE,
-        arm_position=arm_position,
+        arm_position=safe_arm_position,
         arm_velocity=arm_velocity,
         arm_max_torque=backend.limits.joint_torque if arm_max_torque is None else arm_max_torque,
         gripper_position=safe_gripper_position,
@@ -301,6 +315,7 @@ class HoldPositionMotion:
         self._max_torque = None if max_torque is None else np.asarray(max_torque, dtype=np.float64)
         self.reject_reason = ""
         self._cancel_reason: CancelReason | None = None
+        self._handoff = False
         self._lock = threading.Lock()
 
     def request_cancel(self, reason: CancelReason) -> None:
@@ -312,6 +327,29 @@ class HoldPositionMotion:
                 teach.request_cancel(reason)
                 return
             self._cancel_reason = reason
+
+    def request_handoff(self) -> None:
+        """交接取消：下一操作立即接管时使用。末帧仍写 POS-VEL 保持帧，
+        不进入 idle 阻尼（避免高位无重力前馈的下垂窗口→抓回震颤）。"""
+        with self._lock:
+            self._cancel_reason = CancelReason.CLIENT
+            self._handoff = True
+
+    def set_gripper_target(self, gripper_position: float, gripper_velocity: float) -> None:
+        """复用运行中的 hold 时重伺服夹爪（rezero 开爪）：重置方向感知锁存。
+
+        不复用锁存的旧目标（如握持位）会让开爪命令永不下发（真机卡死
+        「夹爪未打开，拒绝回位」）。
+        """
+        value = float(gripper_position)
+        vel = float(gripper_velocity)
+        if not np.isfinite(value) or not np.isfinite(vel):
+            raise ValueError("夹爪目标必须为有限数值")
+        with self._lock:
+            self._gripper_position = value
+            self._gripper_velocity = vel
+            self._gripper_reached = False
+            self._gripper_start = None
 
     def request_attach_teach(self, teach: TeachMotion) -> None:
         """双锁接管：定死锁帧保持每周期发送，同时 teach 影子步进武装 HOLD
@@ -364,6 +402,11 @@ class HoldPositionMotion:
                 self.reject_reason = teach.reject_reason
             return result
         if cancel_reason is not None:
+            if self._handoff:
+                # 交接：写最后一帧 POS-VEL 保持帧后退出，不切 idle 阻尼
+                self._write_hold_frame(backend, states)
+                self.reject_reason = f"定死锁已交接: {cancel_reason.value}"
+                return MotionStepResult.CANCELLED
             backend.enter_idle_damping()
             backend.maintain_idle()
             self.reject_reason = f"定死锁已释放: {cancel_reason.value}"
@@ -1088,7 +1131,9 @@ class TeachMotion:
                 # 避免承重关节失去前馈后直接坠落。
                 self._q_hold = positions.copy()
                 self._still_since = None
-                self._hold_kp_start = np.zeros(6, dtype=np.float64)
+                # 与其它 HOLD 入口一致：从当前 kp 起步，不从 0 崩塌。
+                # 真机实测：kp 60→0 让承重轴下坠再欠阻尼抓回（大幅震颤）。
+                self._hold_kp_start = self._kp_now.copy()
                 hold_duration = WORKZERO_QUICK_SAFE_HOLD_S if self._quick_safe_hold else self.safe_hold_time_s
                 self._safe_hold_until = now + hold_duration
                 self._enter_state(
@@ -1098,7 +1143,42 @@ class TeachMotion:
                 )
             if not (self._hold_state is AutoHoldState.SAFE_HOLD and now < (self._safe_hold_until or 0.0)):
                 if not shadow:
-                    backend.write_frame(idle_damping_frame(backend.limits, positions, states[6].position))
+                    if self.manual_clutch and self._q_hold is not None and np.any(self._kp_now > 0.0):
+                        # SAFE_HOLD 超时退出：末帧保持重力前馈 + 位置刚度锚定
+                        # （不再写 idle_damping——无前馈软帧会让承重轴在新 hold
+                        # 接管前下垂，抓回即震颤；真机实测）。
+                        exit_torque = backend.compensation_torque(
+                            self._q_hold,
+                            np.zeros(6),
+                            self.fc,
+                            self.fv,
+                            self.vel_threshold,
+                            self.gravity_scale,
+                            self.gravity_scale_high if self.gravity_segmented else None,
+                            self.gravity_breakpoint if self.gravity_segmented else None,
+                        )
+                        exit_torque = np.clip(
+                            exit_torque + self.gravity_residual, -self.tau_limit, self.tau_limit
+                        )
+                        backend.write_frame(
+                            JointFrame(
+                                mode=FrameMode.POS_VEL_TQE_KP_KD,
+                                arm_position=self._q_hold.copy(),
+                                arm_velocity=np.zeros(6),
+                                arm_torque=exit_torque,
+                                arm_kp=self._kp_now.copy(),
+                                arm_kd=(
+                                    self._manual_kd_hold.copy() if self.manual_clutch else self.kd.copy()
+                                ),
+                                gripper_position=float(states[6].position),
+                                gripper_velocity=0.0,
+                                gripper_torque=0.0,
+                                gripper_kp=0.0,
+                                gripper_kd=0.0,
+                            )
+                        )
+                    else:
+                        backend.write_frame(idle_damping_frame(backend.limits, positions, states[6].position))
                 self.reject_reason = f"示教已停止: {cancel_reason.value}"
                 return MotionStepResult.CANCELLED
 
@@ -1163,7 +1243,7 @@ class TeachMotion:
             backend.write_frame(
                 JointFrame(
                     mode=FrameMode.POS_VEL_TQE_KP_KD,
-                    arm_position=cmd_positions,
+                    arm_position=clip_arm_position(backend, cmd_positions),
                     arm_velocity=cmd_velocities,
                     arm_torque=torque,
                     arm_kp=kp,
@@ -1579,7 +1659,7 @@ class TeachPlaybackMotion:
         backend.write_frame(
             JointFrame(
                 mode=FrameMode.POS_VEL_TQE_KP_KD,
-                arm_position=arm_position,
+                arm_position=clip_arm_position(backend, arm_position),
                 arm_velocity=arm_velocity,
                 arm_torque=torque,
                 arm_kp=self.kp,

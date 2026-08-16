@@ -855,9 +855,71 @@ def test_manual_clutch_cancel_enters_safe_hold_then_limps() -> None:
         backend.refresh_state()
     result = motion.step(backend, clock.now)
     assert result is MotionStepResult.CANCELLED
+    # SAFE_HOLD 退出末帧：重力前馈 + 满刚度锚定（不写 idle_damping 软帧）
     assert backend.frames[-1].mode is FrameMode.POS_VEL_TQE_KP_KD
-    assert backend.frames[-1].arm_kp == pytest.approx([0.0] * 6)
-    assert backend.frames[-1].arm_torque == pytest.approx([0.0] * 6)
+    assert backend.frames[-1].arm_kp == pytest.approx(MANUAL_CLUTCH_KP_HOLD, abs=0.05)
+    assert backend.frames[-1].arm_torque == pytest.approx(pose)
+
+
+def test_safe_hold_from_hold_preserves_kp_on_first_frame() -> None:
+    # Fix A 回归：从 HOLD 取消进 SAFE_HOLD，首帧保持满刚度，不从 0 崩塌
+    # （kp 60→0 会让承重轴下坠再欠阻尼抓回，真机大幅震颤根因）。
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.array([0.4, 2.0, 0.6, 0.4, 0.15, 0.08]),
+        fc=np.full(6, 0.15),
+        fv=np.full(6, 0.06),
+        manual_clutch=True,
+        safe_hold_time_s=0.2,
+    )
+    pose = np.array([0.1, 1.3, 0.2, -0.1, 0.05, -0.05])
+    backend._positions[:6] = pose
+    motion.request_clutch(TeachClutchCommand.LOCK)
+    for _ in range(30):  # 0.15s > 0.08s ramp：kp 爬满 HOLD
+        clock.advance(0.005)
+        backend.refresh_state()
+        motion.step(backend, clock.now)
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+
+    motion.request_cancel(CancelReason.CLIENT)
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert motion.auto_hold_state is AutoHoldState.SAFE_HOLD
+    assert backend.frames[-1].arm_kp == pytest.approx(MANUAL_CLUTCH_KP_HOLD, abs=0.05)
+
+
+def test_teach_playback_move_to_start_clips_out_of_limit_first_frame() -> None:
+    # 越限回放回归：preview 手拖可录出 J4=-1.6041（软限位 -1.6），回放目标
+    # 必须在写帧边界 clip，而不是触发硬停止 FAILED（真机 fraction 1.0 崩溃）。
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    first = np.array([0.0, 0.0, 0.0, -1.6041, 0.0, 0.0])
+    current = np.array([0.0, 0.0, 0.0, -1.0, 0.0, 0.0])
+    backend._positions[:6] = current
+    backend._positions[6] = 1.79
+    motion = _make_posvel_playback(
+        [
+            PlaybackFrame(
+                timestamp_s=0.0,
+                position=first,
+                velocity=np.zeros(6),
+                gripper_position=1.79,
+                gripper_velocity=0.0,
+            ),
+            PlaybackFrame(
+                timestamp_s=0.01,
+                position=first,
+                velocity=np.zeros(6),
+                gripper_position=1.79,
+                gripper_velocity=0.0,
+            ),
+        ]
+    )
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert backend.frames[-1].arm_position[3] == pytest.approx(backend.limits.joint_lower[3])
 
 
 def test_manual_clutch_safe_hold_rejects_new_clutch_commands() -> None:
