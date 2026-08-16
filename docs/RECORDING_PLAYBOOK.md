@@ -25,6 +25,55 @@
 
 旧的 `000002`、`000003` 可能是 899 ticks，这是旧流程的历史数据；不要混淆为新定长契约。
 
+## 0.5 preview-arm：等待式 preview 录制启动器（work-zero 方案）
+
+`deploy/preview-arm.sh` 把「手工创建 FIFO + 后台 read + exec preview-record.sh」
+封装为可重复脚本：
+
+```bash
+cd ~/Panthera-WAM
+./deploy/preview-arm.sh color-block 021 --duration-s 30 --rate-hz 8
+# 输出：
+#   PREVIEW_ARMED
+#   start_fifo=/tmp/panthera-preview-color-block-021-<pid>.start
+#   log_path=/tmp/panthera-preview-color-block-021-<pid>.log
+printf 'start\n' > /tmp/panthera-preview-color-block-021-<pid>.start
+```
+
+- `PREVIEW_ARMED` 只表示「等待中」，**不表示录制已开始、也不表示工作零位已就绪**；
+- 收到 `start` 后才执行 `deploy/preview-record.sh`；`CAPTURE_STARTED` 仍由 recorder
+  的 state+wrist+overhead 三路流质量门产生；
+- 脚本不发送任何 arm 控制命令，**不是 zeroing 控制器**；录制前先把机械臂稳定在
+  工作零位（正式流程为 `workzero gozero` 之后，见 `docs/JOINT_CONTROL.md` §7）；
+- 已存在成功/失败目录时直接拒绝，绝不覆盖；recorder 失败时保留 /tmp 日志与
+  唯一 FIFO/staging 线索；脚本从不主动 kill 正在收尾的 recorder；
+- preview.json 增加 action-only 契约字段（见 §0.6）。
+
+## 0.6 preview 的 action-only 契约字段
+
+`preview.json` 在不破坏旧字段的前提下增加：
+
+```json
+{
+  "motion_scope": "task_action_only",
+  "work_zero_required": true,
+  "gozero_excluded": true,
+  "rezero_excluded": true,
+  "capture_start_condition": "state+wrist+overhead",
+  "action_window": {
+    "start_sequence": 0,
+    "end_sequence": 0,
+    "start_monotonic_ns": 0,
+    "end_monotonic_ns": 0
+  }
+}
+```
+
+- `action_window` 取录制轨迹 jsonl 的**真实首尾行**（首尾 sequence 与 Pi 单调时钟），
+  空文件或损坏时缺省不填，绝不猜测或伪造边界；
+- 旧 preview 没有这些字段时不被回填为成功，由后续 packager/validator 标记
+  legacy/rejected（P4 落地）。
+
 ## 1. 每次录制前检查
 
 ```bash

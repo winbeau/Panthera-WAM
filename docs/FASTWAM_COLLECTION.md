@@ -76,6 +76,21 @@ The marker is created only after the target mount, sustained write throughput, f
 `SIGUSR1` requests graceful finish; `SIGTERM` aborts and retains `FAILED.json`. Default endpoints
 are Pi-local ports 50051/50052/50053. Camera roles and configured serials are checked before recording.
 
+## Action-only window contract (work-zero)
+
+每次任务会话严格拆分为 `gozero → settle → ACTION → commit → rezero`（见
+`docs/WORKZERO_IMPLEMENTATION_PLAN.md` 与 `docs/JOINT_CONTROL.md` §7）：
+
+- preview 与正式 episode 只记录 **ACTION 窗口**；gozero/rezero、启动准备、失败收尾
+  与任务无关的回零动作永不进入训练 action；
+- preview.json / episode manifest 携带 `motion_scope=task_action_only`、
+  `gozero_excluded/rezero_excluded=true` 与 action_window 起止
+  sequence/monotonic 字段（P1 已落 preview.json，正式 episode 在 P4 落地）；
+- 901 canonical ticks / 900 training frames 只由 action 窗口生成；
+  窗口裁剪必须发生在 canonical ticks 形成之前，或由 packager 明确按
+  action window 裁剪后重建 901/900，不允许先混入回零帧再静默丢弃；
+- 无 action_window 或字段缺失的旧 preview 标记 legacy/rejected，不回填为成功。
+
 ## Upload each complete episode to Hugging Face
 
 The fixed interchange repository is the Hugging Face **dataset** repo

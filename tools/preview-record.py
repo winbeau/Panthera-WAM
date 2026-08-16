@@ -285,6 +285,33 @@ def make_replay_trajectory(raw_path: Path, replay_path: Path) -> None:
         os.fsync(target.fileno())
 
 
+def read_first_last_rows(path: Path) -> tuple[dict[str, object], dict[str, object]] | None:
+    """Read the first and last JSON rows of a trajectory jsonl file.
+
+    These are the real recorded action-window boundaries (sequence and
+    Pi-monotonic timestamp of the first/last written frame).  Empty or
+    malformed files return None so callers never fabricate boundaries.
+    """
+    try:
+        with path.open(encoding="utf-8") as handle:
+            first_line = handle.readline()
+            if not first_line.strip():
+                return None
+            first = json.loads(first_line)
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            if size == 0:
+                return None
+            block = min(size, 65536)
+            handle.seek(size - block)
+            lines = handle.read().splitlines()
+            last = json.loads(lines[-1]) if lines else first
+            return first, last
+    except (OSError, ValueError):
+        return None
+
+
+
 def main() -> int:
     args = parse_args()
     validate_args(args)
@@ -435,6 +462,23 @@ def main() -> int:
             and counts.get("overhead", 0) >= max(1, int(args.duration_s * args.rate_hz * 0.75))
         ),
     }
+    # action-only 窗口契约（work-zero 方案 WZ-3，见 docs/FINAL_PLAN.md）：
+    # preview 只记录任务动作窗口；gozero/rezero 与启动准备永不进入训练 action。
+    # action_window 只在真实轨迹首尾行可确定时填写，绝不猜测或伪造边界。
+    metadata["motion_scope"] = "task_action_only"
+    metadata["work_zero_required"] = True
+    metadata["gozero_excluded"] = True
+    metadata["rezero_excluded"] = True
+    metadata["capture_start_condition"] = "state+wrist+overhead"
+    bounds = read_first_last_rows(trajectory_output)
+    if bounds is not None:
+        first, last = bounds
+        metadata["action_window"] = {
+            "start_sequence": int(first["sequence"]),
+            "end_sequence": int(last["sequence"]),
+            "start_monotonic_ns": int(first["sampled_monotonic_ns"]),
+            "end_monotonic_ns": int(last["sampled_monotonic_ns"]),
+        }
     metadata_output.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if errors:
         for error in errors:

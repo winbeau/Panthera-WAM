@@ -205,6 +205,25 @@ D405 使用 vendored librealsense RSUSB/libusb 后端，由 WSL `camerad` 独占
 机械臂与相机服务共享 Linux 生命周期，但不共享 gRPC 端口。
 安装、采集和故障定位流程见 [`docs/D405_WORKFLOW.md`](../docs/D405_WORKFLOW.md)。
 
+## preview-arm：等待式 preview 录制启动器（work-zero 方案）
+
+`deploy/preview-arm.sh` 封装「创建 FIFO → 后台等待 → 收到 `start` 才启动
+`preview-record.sh`」的流程：
+
+```bash
+cd ~/Panthera-WAM
+./deploy/preview-arm.sh color-block 021 --duration-s 30 --rate-hz 8
+# 输出 PREVIEW_ARMED / start_fifo=... / log_path=...；此时不录制、不计时
+printf 'start\n' > /tmp/panthera-preview-color-block-021-<pid>.start
+```
+
+- 脚本**不发送任何 arm 控制命令**，不是 zeroing 控制器；录制前请先把机械臂
+  稳定在工作零位（正式流程：`workzero gozero` 之后，见 `docs/JOINT_CONTROL.md` §7）。
+- `CAPTURE_STARTED` 仍由 `preview-record.sh` 的三路流质量门产生；
+  成功与否以 recorder 退出码与 `preview.json` 为准，不使用日志文本猜测。
+- 已存在的目标目录一律拒绝，绝不覆盖历史成功/失败数据；失败保留 /tmp 日志。
+- 参数与环境变量覆盖见脚本头部 usage。
+
 ## 安全约束
 
 - 服务启动和状态读取不代表获准执行运动。
