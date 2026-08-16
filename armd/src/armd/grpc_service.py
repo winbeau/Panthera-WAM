@@ -14,7 +14,6 @@ from panthera_arm import arm_pb2, arm_pb2_grpc
 
 from .backend import (
     IDLE_DAMPING_KD,
-    Backend,
     BackendError,
     BackendLimits,
     FrameMode,
@@ -28,16 +27,15 @@ from .kinematics import KinematicsWorker
 from .motion import (
     CartesianTrajectoryMotion,
     GripperPositionMotion,
+    HoldPositionMotion,
     JointJogMotion,
     JointMITMotion,
     JointPositionMotion,
-    POSITION_HOLD_SPEED,
     TEACH_TAU_LIMIT,
     TeachClutchCommand,
     TeachMotion,
     TeachPlaybackMotion,
     AutoHoldConfig,
-    position_frame,
 )
 from .policy import (
     PolicyChunkMotion,
@@ -284,6 +282,9 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             if workzero_real_hardware_enabled is None
             else bool(workzero_real_hardware_enabled)
         )
+        # gozero 到位后的定死锁保持 motion（长期运行直到 TeachStart 替换/lease 释放）
+        self._hold_motion: HoldPositionMotion | None = None
+        self._hold_completion = None
         # gozero 到位后的 teach-lock finalizer 任务集；close 时统一取消
         self._gozero_finalize_tasks: set[asyncio.Task[None]] = set()
         self._started_at = time.monotonic()
@@ -682,16 +683,16 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             state = self._hardware_loop.latest_state()
             if state is None or not all(motor.valid for motor in state.motors):
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "电机状态无效或连接不完整")
-            # 定死锁：POS-VEL 帧把臂锁在当前位形，同时快速开爪（松方块）
+            # 定死锁：POS-VEL 保持帧把臂锁在当前位形，同时快速开爪（松方块）
             try:
-                await self._workzero_hold_and_open(
+                await self._start_hold_motion(
                     arm_position=np.array(
                         [motor.position for motor in state.motors[:6]], dtype=np.float64
                     ),
-                    gripper_target=pose.gripper,
+                    gripper_position=pose.gripper,
                     gripper_velocity=1.0,
                 )
-            except (BackendError, LimitViolationError, ValueError) as exc:
+            except RuntimeError as exc:
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
             release_deadline = time.monotonic() + 4.0
             released = False
@@ -707,8 +708,13 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     grpc.StatusCode.FAILED_PRECONDITION,
                     "夹爪未在 4s 内打开到工作零位姿态；拒绝回位（可能仍抓着物体）",
                 )
+            # 释放定死锁，让位给 MoveL（下一控制周期 POS-VEL 轨迹帧接管）
+            await self._release_hold_motion()
+            state = self._hardware_loop.latest_state()
+            if state is None or not all(motor.valid for motor in state.motors):
+                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "电机状态无效或连接不完整")
             current = np.array(
-                [motor.position for motor in self._hardware_loop.latest_state().motors[:6]],
+                [motor.position for motor in state.motors[:6]],
                 dtype=np.float64,
             )
 
@@ -749,6 +755,20 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     grpc.StatusCode.FAILED_PRECONDITION,
                     f"工作零位笛卡尔路径仅完成 {result['fraction'] * 100:.1f}%",
                 )
+            # 真机调优：100Hz 逐点更新让固件跟随颤动，抽稀到 20Hz（0.05s/帧），
+            # 保持末点；速度仍按 limits 规划（用户要求偏快）。
+            positions = result["positions"]
+            velocities = result["velocities"]
+            timestamps = list(result["timestamps"])
+            if len(positions) > 2:
+                step = max(1, round(0.05 / max(timestamps[1] - timestamps[0], 1e-6)))
+                positions = positions[::step]
+                velocities = velocities[::step]
+                timestamps = timestamps[::step]
+                if positions[-1] is not result["positions"][-1]:
+                    positions.append(result["positions"][-1])
+                    velocities.append(result["velocities"][-1])
+                    timestamps.append(result["timestamps"][-1])
             motion = CartesianTrajectoryMotion(
                 positions=[np.asarray(value) for value in result["positions"]],
                 velocities=[np.asarray(value) for value in result["velocities"]],
@@ -772,41 +792,41 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         finalizer.add_done_callback(self._gozero_finalize_tasks.discard)
         return arm_pb2.ExecutionAccepted(execution_id=execution_id)
 
-    async def _workzero_hold_and_open(
+    async def _start_hold_motion(
         self,
         *,
         arm_position: np.ndarray,
-        gripper_target: float,
+        gripper_position: float,
         gripper_velocity: float,
     ) -> None:
-        """定死锁 + 开爪：单帧 POS-VEL（arm 目标保持 + 夹爪快速伺服）。
+        """启动定死锁保持 motion（每控制周期 POS-VEL 帧，夹爪可选快速伺服）。"""
+        motion = HoldPositionMotion(
+            arm_position=arm_position,
+            gripper_position=gripper_position,
+            gripper_velocity=gripper_velocity,
+        )
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        await asyncio.wrap_future(accepted)
+        self._hold_motion = motion
+        self._hold_completion = completion
 
-        write_frame 会把 idle_mode 清为 None，之后 HardwareLoop 不再写空闲帧，
-        固件持续执行本帧：6 关节 PID 刚性保持（定死锁），夹爪按目标伺服。
-        """
-
-        def hold_and_open(backend: Backend) -> None:
-            states = backend.read_all()
-            if len(states) != 7 or not all(state.valid for state in states):
-                raise BackendError("电机状态无效或连接不完整")
-            backend.write_frame(
-                position_frame(
-                    backend,
-                    arm_position=arm_position,
-                    arm_velocity=np.full(6, POSITION_HOLD_SPEED),
-                    gripper_position=gripper_target,
-                    gripper_velocity=gripper_velocity,
-                    gripper_max_torque=backend.limits.gripper_torque,
-                )
-            )
-
-        await asyncio.wrap_future(self._hardware_loop.submit(hold_and_open))
+    async def _release_hold_motion(self) -> None:
+        """释放定死锁：受控取消保持帧（下一操作或 TeachStart 立即接管）。"""
+        motion = self._hold_motion
+        self._hold_motion = None
+        self._hold_completion = None
+        if motion is None or not self._hardware_loop.has_active_motion:
+            return
+        motion.request_cancel(CancelReason.CLIENT)
+        deadline = time.monotonic() + 1.0
+        while self._hardware_loop.has_active_motion and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
 
     async def _gozero_finalize(self, completion, pose: WorkZeroPose) -> None:
-        """回位到位后：定死锁 + 开爪（固件保持工作零位，夹爪快速伺服）。
+        """回位到位后：启动定死锁保持 + 快速开爪（每周期 POS-VEL 帧，看门狗安全）。
 
-        不再自动切 teach（阻尼锁）：定死锁是 gozero 的终止状态，录制/推理
-        开始时由操作者显式 TeachStart+lock 切换（WZ-2 定死锁/阻尼锁语义）。
+        定死锁是 gozero 的终止状态；录制/推理开始时由 TeachStart 显式替换为
+        阻尼锁（WZ-2 定死锁/阻尼锁语义）。
         """
         try:
             result = await asyncio.wrap_future(completion)
@@ -816,13 +836,13 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             logger.warning("workzero 回位未完成（%s），保持现状不动作", result.value)
             return
         try:
-            await self._workzero_hold_and_open(
+            await self._start_hold_motion(
                 arm_position=np.asarray(pose.joints, dtype=np.float64),
-                gripper_target=pose.gripper,
+                gripper_position=pose.gripper,
                 gripper_velocity=1.0,
             )
-        except (BackendError, LimitViolationError, ValueError) as exc:
-            logger.warning("workzero 定死锁+开爪失败：%s", exc)
+        except RuntimeError as exc:
+            logger.warning("workzero 定死锁启动失败：%s", exc)
             return
         release_deadline = time.monotonic() + 4.0
         while time.monotonic() < release_deadline:
@@ -1809,10 +1829,19 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
     async def TeachStart(self, request, context):
         await self._refresh_teach_motion()
         if self._hardware_loop.has_active_motion:
-            return arm_pb2.TeachStartResponse(
-                accepted=False,
-                reject_reason="已有运动正在执行",
-            )
+            if self._hold_motion is not None:
+                # 定死锁 → 阻尼锁切换：释放保持帧，teach 下一周期接管
+                await self._release_hold_motion()
+                if self._hardware_loop.has_active_motion:
+                    return arm_pb2.TeachStartResponse(
+                        accepted=False,
+                        reject_reason="定死锁释放超时，teach 未启动",
+                    )
+            else:
+                return arm_pb2.TeachStartResponse(
+                    accepted=False,
+                    reject_reason="已有运动正在执行",
+                )
         gate_reason = await self._teach_contract_gate(mit=True)
         if gate_reason:
             return arm_pb2.TeachStartResponse(accepted=False, reject_reason=gate_reason)

@@ -12,6 +12,7 @@ from armd.hardware_loop import CancelReason, MotionStepResult
 from armd.motion import (
     AutoHoldConfig,
     AutoHoldState,
+    HoldPositionMotion,
     TeachClutchCommand,
     TeachMotion,
 )
@@ -410,3 +411,37 @@ def test_teach_cancel_quick_shortens_safe_hold() -> None:
     clock.advance(0.35)
     result = motion.step(backend, clock.now)
     assert result is MotionStepResult.CANCELLED
+
+
+# ------------------------------------------------- HoldPositionMotion（定死锁）
+
+
+def test_hold_position_motion_emits_continuous_posvel_frames() -> None:
+    clock = FakeClock()
+    backend = IdealServoBackend(clock=clock)
+    motion = HoldPositionMotion(
+        arm_position=np.array([0.3, 0.4, 0.5, -0.2, 0.1, -0.1]),
+        gripper_position=1.9,
+        gripper_velocity=1.0,
+    )
+    for _ in range(20):
+        assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+        clock.advance(0.005)
+    # 每周期都是 POS-VEL 完整保持帧（看门狗安全），夹爪目标快速伺服
+    assert len(backend.frames) >= 20
+    for frame in backend.frames[-5:]:
+        assert frame.mode is FrameMode.POS_VEL_TQE
+        assert frame.gripper_position == pytest.approx(1.9)
+        assert frame.gripper_velocity == pytest.approx(1.0)
+        assert np.all(frame.arm_position == pytest.approx([0.3, 0.4, 0.5, -0.2, 0.1, -0.1]))
+
+
+def test_hold_position_motion_cancel_releases_to_idle_damping() -> None:
+    clock = FakeClock()
+    backend = IdealServoBackend(clock=clock)
+    motion = HoldPositionMotion(arm_position=np.zeros(6), gripper_position=None)
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    motion.request_cancel(CancelReason.CLIENT)
+    result = motion.step(backend, clock.now)
+    assert result is MotionStepResult.CANCELLED
+    assert "定死锁已释放" in motion.reject_reason

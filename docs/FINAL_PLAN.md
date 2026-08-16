@@ -666,8 +666,15 @@ POS-VEL 逐点轨迹，M0-2：1cm 误差 1.73mm）。
 - **阻尼锁**：teach lock（HOLD）——MIT 帧 kp=20 + 标定重力前馈，掰一下能复位；
   录制/推理开始时由操作者显式 `teach start --manual-clutch` + `teach clutch lock` 切入。
 
+**真机修订 2（2026-08-16 第二次实测）**：
+- 「停止发帧靠固件保持末帧」在固件 150ms 看门狗下不成立——MoveL DONE 后不再发帧，
+  150ms 内看门狗进入阻尼，臂下垂。定死锁改为 **HoldPositionMotion**：长期运行
+  motion，每控制周期持续发 POS-VEL 保持帧（看门狗安全），由 TeachStart 自动替换
+  为阻尼锁，lease 释放/watchdog 时受控取消；
+- MoveL 轨迹发帧率由 100Hz 抽稀到 20Hz（0.05s/帧）消除固件跟随颤动（用户实测反馈）。
+
 ```text
-gozero：初始位 → MoveL→工作0位 → 定死锁+开爪（POS-VEL 末帧保持 + 夹爪快速伺服）
+gozero：初始位 → MoveL→工作0位（20Hz 轨迹点）→ 定死锁 HoldPositionMotion + 快速开爪
 rezero：动作完成位(teach HOLD) → 快速退出 teach（0.3s SAFE_HOLD）
         → 定死锁+开爪（松方块，脚本做不是模型做）→ MoveL→工作0位 → 定死锁
 ```

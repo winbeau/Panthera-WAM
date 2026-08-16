@@ -877,3 +877,56 @@ async def test_rezero_rejects_without_teach_hold(workzero_stack) -> None:
         )
     assert exc_info.value.code() == grpc.StatusCode.FAILED_PRECONDITION
     assert "teach HOLD" in exc_info.value.details()
+
+
+@pytest.mark.asyncio
+async def test_gozero_hold_then_teachstart_switches_to_damping_lock(workzero_stack) -> None:
+    """gozero 结束态：定死锁 hold motion 持续运行；TeachStart 自动替换为阻尼锁。"""
+    loop, stub, metadata, server, _ = workzero_stack
+    from armd.motion import AutoHoldState, HoldPositionMotion
+
+    await _start_teach(stub, metadata, manual_clutch=True)
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)
+    assert not loop.has_active_motion
+
+    accepted = await stub.GoWorkZero(
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="gozero"),
+        metadata=metadata,
+    )
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+        if status.state in (
+            arm_pb2.EXEC_STATE_DONE,
+            arm_pb2.EXEC_STATE_FAILED,
+            arm_pb2.EXEC_STATE_CANCELLED,
+        ):
+            break
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+    await asyncio.sleep(1.0)
+    # 定死锁：hold motion 持续运行（每周期 POS-VEL 帧，看门狗安全）
+    assert loop.has_active_motion
+    hold = server.arm_service._hold_motion
+    assert hold is not None and isinstance(hold, HoldPositionMotion)
+    assert server.arm_service._teach_motion is None
+
+    # 定死锁 → 阻尼锁：TeachStart 自动释放 hold 并启动 teach
+    response = await stub.TeachStart(
+        arm_pb2.TeachStartRequest(manual_clutch=True),
+        metadata=metadata,
+    )
+    assert response.accepted, response.reject_reason
+    await asyncio.sleep(0.3)
+    assert server.arm_service._hold_motion is None
+    assert server.arm_service._teach_motion is not None
+    await stub.TeachClutch(
+        arm_pb2.TeachClutchRequest(mode=arm_pb2.TEACH_CLUTCH_MODE_LOCK),
+        metadata=metadata,
+    )
+    await asyncio.sleep(0.2)
+    assert server.arm_service._teach_motion.auto_hold_state is AutoHoldState.HOLD

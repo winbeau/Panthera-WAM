@@ -259,6 +259,75 @@ def hold_current_position(backend: Backend) -> None:
     )
 
 
+class HoldPositionMotion:
+    """定死锁：每控制周期持续发 POS-VEL 保持帧。
+
+    固件看门狗（150ms）要求持续帧流——任何「停止发帧靠固件保持末帧」的
+    方案都会在看门狗超时后进入阻尼下垂。因此定死锁必须是一个长期运行的
+    motion：6 关节刚性保持工作位形（可附带夹爪目标），直到被显式取消
+    （TeachStart 切换阻尼锁 / lease 释放 / watchdog）。
+    """
+
+    def __init__(
+        self,
+        *,
+        arm_position: np.ndarray,
+        gripper_position: float | None = None,
+        gripper_velocity: float = POSITION_HOLD_SPEED,
+        max_torque: np.ndarray | None = None,
+    ) -> None:
+        values = np.asarray(arm_position, dtype=np.float64)
+        if values.shape != (6,) or not np.all(np.isfinite(values)):
+            raise ValueError("HoldPositionMotion 目标必须包含 6 个有限数值")
+        self._arm_position = values.copy()
+        self._gripper_position = (
+            None if gripper_position is None else float(gripper_position)
+        )
+        if self._gripper_position is not None and not np.isfinite(self._gripper_position):
+            raise ValueError("夹爪目标必须为有限数值")
+        self._gripper_velocity = float(gripper_velocity)
+        self._max_torque = None if max_torque is None else np.asarray(max_torque, dtype=np.float64)
+        self.reject_reason = ""
+        self._cancel_reason: CancelReason | None = None
+        self._lock = threading.Lock()
+
+    def request_cancel(self, reason: CancelReason) -> None:
+        with self._lock:
+            self._cancel_reason = reason
+
+    def step(self, backend: Backend, now: float) -> MotionStepResult:
+        del now
+        states = backend.read_all()
+        if len(states) != 7 or not all(state.valid for state in states):
+            backend.stop()
+            self.reject_reason = "电机状态无效或连接不完整"
+            return MotionStepResult.FAILED
+        with self._lock:
+            cancel_reason = self._cancel_reason
+        if cancel_reason is not None:
+            backend.enter_idle_damping()
+            backend.maintain_idle()
+            self.reject_reason = f"定死锁已释放: {cancel_reason.value}"
+            return MotionStepResult.CANCELLED
+        gripper = (
+            self._gripper_position
+            if self._gripper_position is not None
+            else float(states[6].position)
+        )
+        backend.write_frame(
+            position_frame(
+                backend,
+                arm_position=self._arm_position,
+                arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                gripper_position=gripper,
+                gripper_velocity=self._gripper_velocity,
+                arm_max_torque=self._max_torque,
+                gripper_max_torque=backend.limits.gripper_torque,
+            )
+        )
+        return MotionStepResult.RUNNING
+
+
 class GripperPositionMotion:
     """受限 MIT 夹爪位置运动；机械臂始终保持零刚度阻尼。"""
 
