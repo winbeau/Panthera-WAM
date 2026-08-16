@@ -15,6 +15,9 @@
 #   ./deploy/lerobot-collect.sh record-formal color-block-000011 \
 #       ~/panthera-data/preview/color-block_021/replay_trajectory_021.jsonl
 #
+# 仅回放不录制（聚焦臂移动：无 collectord、不写盘、不造数据；结束直接 rezero）：
+#   ./deploy/lerobot-collect.sh run-record ~/panthera-data/preview/color-block_021/replay_trajectory_021.jsonl
+#
 # 其它：
 #   ./deploy/lerobot-collect.sh zero-home                  # 工作0位复位初始0位（收工前必做）
 #   ./deploy/lerobot-collect.sh status [EP]                # 电机/lease/episode 状态
@@ -39,16 +42,16 @@ die() { echo "error: $*" >&2; exit 1; }
 step() { printf '\n\033[1;36m========== %s ==========\033[0m\n' "$*"; }
 warn() { printf '\n\033[1;33m⚠ %s\033[0m\n' "$*"; }
 
-# record-formal 专用中断：定死锁已卸下后任何失败都必须先恢复阻尼锁
+# record-formal/run-record 专用中断：定死锁已卸下后任何失败都必须先恢复阻尼锁
 # （teach HOLD），否则臂在高位只剩空闲阻尼会下垂。
 formal_abort() {
-    warn "record-formal 中断：先恢复阻尼锁（teach HOLD）再退出"
+    warn "${FORMAL_FLOW_LABEL:-record-formal} 中断：先恢复阻尼锁（teach HOLD）再退出"
     teach_start_lock || true
     die "$1"
 }
 
 usage() {
-    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -428,6 +431,54 @@ record_formal() {
     echo "==> 上传: ./deploy/lerobot-collect.sh hf-upload $episode"
 }
 
+run_record() {
+    # 仅回放不录制：复用 record-formal 的 teach play 链路，但完全不启动
+    # collectord——不录制、不写盘、不造数据，只验证/演示机械臂动作。
+    local replay="${1:?用法: run-record <replay-jsonl>}"
+    shift || true
+    FORMAL_FLOW_LABEL="run-record"
+    [[ -f "$replay" ]] || die "回放轨迹不存在: $replay"
+    ensure_cli; preflight; ensure_lease
+
+    step "run-record：定死锁→阻尼锁 → teach play 回放 → 直接 rezero"
+    warn "机械臂将自动回放录制动作：确认人在场、工作空间无障碍、E-stop 可触达"
+    # 1) 开始 lock（定死锁→阻尼锁）。与 record-formal 完全相同的接管路径：
+    #    TeachMotion 首帧直接进入 HOLD——不肘飞、不位移（真机已验证）。
+    #    不传 --gripper：夹爪保持当前开度（1.8 开），全程不闭爪。
+    teach_start_lock
+    # 2) teach play：把录制的动作来一遍（posvel + hold-on-done，与 record-formal 一致）
+    local params
+    params=$(_teach_cal_lists)
+    local kp kd fc fv
+    kp=$(printf '%s\n' "$params" | sed -n 's/^kp=//p')
+    kd=$(printf '%s\n' "$params" | sed -n 's/^kd=//p')
+    fc=$(printf '%s\n' "$params" | sed -n 's/^fc=//p')
+    fv=$(printf '%s\n' "$params" | sed -n 's/^fv=//p')
+    echo "==> teach play 参数: kp=$kp kd=$kd fc=$fc fv=$fv"
+    echo "==> 回放轨迹: $replay"
+    local teach_dir="${PANTHERA_TEACH_DIR:-$HOME/.local/share/panthera/teach}"
+    if [[ -f "$HOME/.config/panthera-wam/armd.env" ]]; then
+        local env_teach_dir
+        env_teach_dir=$(sed -n 's/^PANTHERA_TEACH_DIR=//p' "$HOME/.config/panthera-wam/armd.env" | tail -1)
+        [[ -n "$env_teach_dir" ]] && teach_dir="$env_teach_dir"
+    fi
+    mkdir -p "$teach_dir"
+    local play_file="$teach_dir/$(basename "$replay")"
+    cp -f "$replay" "$play_file"
+    "$CLI" teach play "$play_file" --mode posvel --hold-on-done \
+        --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" \
+        || formal_abort "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"
+    # 3) 不结束 lock、不闭爪：直接 rezero。hold-on-done 已留下定死锁 hold，
+    #    GoWorkZero post_action 支持从 hold 定死锁直接接管（重试语义已真机验证）。
+    step "自动 rezero：开爪松方块 → MoveL 回工作0位 → 定死锁"
+    if ! do_rezero; then
+        formal_abort "自动 rezero 失败（臂可能仍在动作完成位，阻尼锁已恢复）；人工确认后重试 ./deploy/lerobot-collect.sh rezero"
+    fi
+    sleep 1
+    "$CLI" state get || true
+    echo "==> run-record 完成（臂已回工作0位，定死锁；未录制任何数据）"
+}
+
 # ---------------------------------------------------------------- status/verify/hf
 status() {
     ensure_cli
@@ -466,6 +517,7 @@ case "$command" in
     end-record) end_record ;;
     rezero) rezero ;;
     record-formal) record_formal "$@" ;;
+    run-record) run_record "$@" ;;
     status) status "$@" ;;
     verify) verify "$@" ;;
     hf-upload) hf_upload "$@" ;;

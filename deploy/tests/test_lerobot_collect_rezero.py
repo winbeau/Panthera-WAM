@@ -48,7 +48,12 @@ FAKE_PANTHERA = textwrap.dedent(
         case "${2:-}" in
           start) echo "teach started" ;;
           clutch) echo "state=hold ${4:-}" ;;
-          play) echo "play done" ;;
+          play)
+            if [[ -f "$FAKE_FLAGS/play_fail" ]]; then
+              echo "teach play failed" >&2
+              exit 1
+            fi
+            echo "play done" ;;
           *) echo "fake panthera: unknown teach ${2:-}" >&2; exit 2 ;;
         esac ;;
       workzero)
@@ -228,5 +233,61 @@ def test_rezero_fail_falls_back_to_formal_abort(tmp_path):
     assert "自动 rezero 失败" in proc.stdout + proc.stderr
     assert "record-formal 中断" in proc.stdout  # formal_abort 的 warn
     # rezero 失败后恢复 teach 阻尼锁（teach clutch lock 在 rezero 调用之后）
+    lock_lines = [i for i, l in enumerate(calls) if l.startswith("panthera teach clutch lock")]
+    assert lock_lines and max(lock_lines) > calls.index(rezero_call(calls))
+
+
+# ---------------------------------------------------------------- run-record
+
+
+def run_run_record(tmp_path, flags=()):
+    repo, home, flags_dir, calls, replay = build_fake_repo(tmp_path, flags)
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CALLS_LOG": str(calls),
+        "FAKE_FLAGS": str(flags_dir),
+        "RECORD_FORMAL_COMPLETE_TIMEOUT_S": "2",
+    }
+    proc = subprocess.run(
+        ["bash", str(repo / "deploy" / "lerobot-collect.sh"), "run-record", str(replay)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    call_lines = calls.read_text().splitlines() if calls.exists() else []
+    return proc, call_lines
+
+
+def test_run_record_replays_and_directly_rezeros_without_recording(tmp_path):
+    proc, calls = run_run_record(tmp_path, flags=())
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "run-record 完成" in proc.stdout
+    assert rezero_call(calls) in calls
+    # 只动臂：完全不碰 recordctl（无录制、无写盘、不造数据）
+    assert not any("recordctl" in line for line in calls)
+    # 全程不闭爪：不允许出现 --gripper 的 end-lock（只有步骤 1 的无参数 lock）
+    assert not any("--gripper" in line for line in calls)
+    assert any(line == "panthera teach clutch lock" for line in calls)
+    # 回放完成后再 rezero（直接 rezero，无中间 teach 操作）
+    play_index = next(i for i, l in enumerate(calls) if l.startswith("panthera teach play"))
+    assert play_index < calls.index(rezero_call(calls))
+
+
+def test_run_record_play_fail_restores_damped_lock(tmp_path):
+    proc, calls = run_run_record(tmp_path, flags=("play_fail",))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "run-record 中断" in proc.stdout  # formal_abort 的 warn（run-record 标签）
+    assert "teach play 失败" in proc.stdout + proc.stderr
+    assert rezero_call(calls) not in calls
+    assert any(line == "panthera teach clutch lock" for line in calls)
+
+
+def test_run_record_rezero_fail_restores_damped_lock(tmp_path):
+    proc, calls = run_run_record(tmp_path, flags=("rezero_fail",))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "自动 rezero 失败" in proc.stdout + proc.stderr
+    assert "run-record 中断" in proc.stdout
     lock_lines = [i for i, l in enumerate(calls) if l.startswith("panthera teach clutch lock")]
     assert lock_lines and max(lock_lines) > calls.index(rezero_call(calls))
