@@ -83,6 +83,21 @@ class ArmServiceStub:
                 request_serializer=arm__pb2.SetZeroRequest.SerializeToString,
                 response_deserializer=arm__pb2.SetZeroResponse.FromString,
                 _registered_method=True)
+        self.GetWorkZero = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/GetWorkZero',
+                request_serializer=arm__pb2.Empty.SerializeToString,
+                response_deserializer=arm__pb2.GetWorkZeroResponse.FromString,
+                _registered_method=True)
+        self.SetWorkZero = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/SetWorkZero',
+                request_serializer=arm__pb2.SetWorkZeroRequest.SerializeToString,
+                response_deserializer=arm__pb2.SetWorkZeroResponse.FromString,
+                _registered_method=True)
+        self.GoWorkZero = channel.unary_unary(
+                '/panthera.arm.v1.ArmService/GoWorkZero',
+                request_serializer=arm__pb2.GoWorkZeroRequest.SerializeToString,
+                response_deserializer=arm__pb2.ExecutionAccepted.FromString,
+                _registered_method=True)
         self.GetJointState = channel.unary_unary(
                 '/panthera.arm.v1.ArmService/GetJointState',
                 request_serializer=arm__pb2.Empty.SerializeToString,
@@ -336,6 +351,28 @@ class ArmServiceServicer:
 
     def SetZero(self, request, context):
         """需持锁 + confirm
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetWorkZero(self, request, context):
+        """---------- 工作零位（work-zero 方案）----------
+        只读，无 lease
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetWorkZero(self, request, context):
+        """需 lease + active teach lock
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GoWorkZero(self, request, context):
+        """需 lease + confirm；P3 前 UNIMPLEMENTED
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -635,6 +672,21 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     servicer.SetZero,
                     request_deserializer=arm__pb2.SetZeroRequest.FromString,
                     response_serializer=arm__pb2.SetZeroResponse.SerializeToString,
+            ),
+            'GetWorkZero': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetWorkZero,
+                    request_deserializer=arm__pb2.Empty.FromString,
+                    response_serializer=arm__pb2.GetWorkZeroResponse.SerializeToString,
+            ),
+            'SetWorkZero': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetWorkZero,
+                    request_deserializer=arm__pb2.SetWorkZeroRequest.FromString,
+                    response_serializer=arm__pb2.SetWorkZeroResponse.SerializeToString,
+            ),
+            'GoWorkZero': grpc.unary_unary_rpc_method_handler(
+                    servicer.GoWorkZero,
+                    request_deserializer=arm__pb2.GoWorkZeroRequest.FromString,
+                    response_serializer=arm__pb2.ExecutionAccepted.SerializeToString,
             ),
             'GetJointState': grpc.unary_unary_rpc_method_handler(
                     servicer.GetJointState,
@@ -1069,6 +1121,87 @@ class ArmService:
             '/panthera.arm.v1.ArmService/SetZero',
             arm__pb2.SetZeroRequest.SerializeToString,
             arm__pb2.SetZeroResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetWorkZero(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/GetWorkZero',
+            arm__pb2.Empty.SerializeToString,
+            arm__pb2.GetWorkZeroResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetWorkZero(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/SetWorkZero',
+            arm__pb2.SetWorkZeroRequest.SerializeToString,
+            arm__pb2.SetWorkZeroResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GoWorkZero(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/panthera.arm.v1.ArmService/GoWorkZero',
+            arm__pb2.GoWorkZeroRequest.SerializeToString,
+            arm__pb2.ExecutionAccepted.FromString,
             options,
             channel_credentials,
             insecure,

@@ -66,6 +66,18 @@ class TeachClutchCommand(str, enum.Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class TeachLockSnapshot:
+    """显式 manual-clutch LOCK 被控制循环消费时，从**同一** `read_all()`
+    样本捕获的 7 轴姿态（6 关节 + 夹爪）。只读复制，不暴露可变 ndarray。"""
+
+    generation: int
+    joints: tuple[float, ...]  # exactly 6
+    gripper: float
+    captured_monotonic_ns: int
+    state: AutoHoldState  # 捕获时刻的状态（显式 lock 后恒为 HOLD）
+
+
+@dataclass(frozen=True, slots=True)
 class AutoHoldConfig:
     """Auto-Hold（静止自动锁位）配置：松手检测 + 位置保持 + 平滑退出。
 
@@ -797,6 +809,8 @@ class TeachMotion:
         if self.manual_clutch and not self.auto_hold_cfg.enabled:
             raise ValueError("manual_clutch 需要启用 auto-hold 位置保持")
         self._clutch_request: TeachClutchCommand | None = None
+        self._lock_generation = 0
+        self._lock_snapshot: TeachLockSnapshot | None = None
         self._hold_state = AutoHoldState.DRAG
         self._state_since: float | None = None
         self._still_since: float | None = None
@@ -820,6 +834,18 @@ class TeachMotion:
         self._safe_hold_until: float | None = None
         self._filtered_velocity = np.zeros(6, dtype=np.float64)
         self._velocity_filter_updated_at: float | None = None
+
+    @property
+    def lock_generation(self) -> int:
+        """显式 LOCK 被控制循环消费的次数；SetWorkZero 以此确认锁存生效。"""
+        with self._lock:
+            return self._lock_generation
+
+    @property
+    def lock_snapshot(self) -> TeachLockSnapshot | None:
+        """最近一次显式 LOCK 的 7 轴同样本快照（只读副本）。"""
+        with self._lock:
+            return self._lock_snapshot
 
     @property
     def auto_hold_state(self) -> AutoHoldState:
@@ -884,7 +910,9 @@ class TeachMotion:
                 return MotionStepResult.CANCELLED
 
         if self.auto_hold_cfg.enabled:
-            kp, kd, cmd_positions, cmd_velocities = self._auto_hold_step(positions, velocities, now)
+            kp, kd, cmd_positions, cmd_velocities = self._auto_hold_step(
+                positions, velocities, states[6].position, now
+            )
         else:
             kp, kd, cmd_positions, cmd_velocities = self.kp, self.kd, positions, np.zeros(6)
 
@@ -944,6 +972,7 @@ class TeachMotion:
         self,
         q: np.ndarray,
         v: np.ndarray,
+        gripper_position: float,
         now: float,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Auto-Hold 状态机推进；返回 (kp, kd, pos_cmd, vel_cmd)。
@@ -964,6 +993,16 @@ class TeachMotion:
             self._still_since = None
             self._hold_kp_start = self._kp_now.copy()
             self._enter_state(AutoHoldState.HOLD, now, "显式 lock -> HOLD (锁定当前位置)")
+            # 显式 lock 消费：generation +1 并捕获同一 read_all 样本的 7 轴快照。
+            # SetWorkZero 只认这个样本，禁止用多个独立 RPC 拼接 arm/gripper。
+            self._lock_generation += 1
+            self._lock_snapshot = TeachLockSnapshot(
+                generation=self._lock_generation,
+                joints=tuple(float(value) for value in q),
+                gripper=float(gripper_position),
+                captured_monotonic_ns=round(now * 1_000_000_000),
+                state=AutoHoldState.HOLD,
+            )
         elif clutch_request is TeachClutchCommand.DRAG:
             self._still_since = None
             if self._hold_state in {AutoHoldState.HOLD, AutoHoldState.RELEASE}:

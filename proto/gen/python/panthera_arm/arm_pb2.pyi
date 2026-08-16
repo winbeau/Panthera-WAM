@@ -215,6 +215,70 @@ class SetZeroResponse(_message.Message):
     reject_reason: str
     def __init__(self, accepted: _Optional[bool] = ..., persisted: _Optional[bool] = ..., reject_reason: _Optional[str] = ...) -> None: ...
 
+class WorkZeroPose(_message.Message):
+    __slots__ = ("schema_version", "joints", "gripper", "captured_at_ms", "sampled_monotonic_ns", "state_sequence", "stream_instance_id", "source")
+    SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
+    JOINTS_FIELD_NUMBER: _ClassVar[int]
+    GRIPPER_FIELD_NUMBER: _ClassVar[int]
+    CAPTURED_AT_MS_FIELD_NUMBER: _ClassVar[int]
+    SAMPLED_MONOTONIC_NS_FIELD_NUMBER: _ClassVar[int]
+    STATE_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    STREAM_INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    schema_version: int
+    joints: _containers.RepeatedScalarFieldContainer[float]
+    gripper: float
+    captured_at_ms: int
+    sampled_monotonic_ns: int
+    state_sequence: int
+    stream_instance_id: str
+    source: str
+    def __init__(self, schema_version: _Optional[int] = ..., joints: _Optional[_Iterable[float]] = ..., gripper: _Optional[float] = ..., captured_at_ms: _Optional[int] = ..., sampled_monotonic_ns: _Optional[int] = ..., state_sequence: _Optional[int] = ..., stream_instance_id: _Optional[str] = ..., source: _Optional[str] = ...) -> None: ...
+
+class GetWorkZeroResponse(_message.Message):
+    __slots__ = ("exists", "pose", "reject_reason")
+    EXISTS_FIELD_NUMBER: _ClassVar[int]
+    POSE_FIELD_NUMBER: _ClassVar[int]
+    REJECT_REASON_FIELD_NUMBER: _ClassVar[int]
+    exists: bool
+    pose: WorkZeroPose
+    reject_reason: str
+    def __init__(self, exists: _Optional[bool] = ..., pose: _Optional[_Union[WorkZeroPose, _Mapping]] = ..., reject_reason: _Optional[str] = ...) -> None: ...
+
+class SetWorkZeroRequest(_message.Message):
+    __slots__ = ("confirm", "lock_wait_timeout_s")
+    CONFIRM_FIELD_NUMBER: _ClassVar[int]
+    LOCK_WAIT_TIMEOUT_S_FIELD_NUMBER: _ClassVar[int]
+    confirm: bool
+    lock_wait_timeout_s: float
+    def __init__(self, confirm: _Optional[bool] = ..., lock_wait_timeout_s: _Optional[float] = ...) -> None: ...
+
+class SetWorkZeroResponse(_message.Message):
+    __slots__ = ("accepted", "saved", "pose", "lock_generation", "reject_reason")
+    ACCEPTED_FIELD_NUMBER: _ClassVar[int]
+    SAVED_FIELD_NUMBER: _ClassVar[int]
+    POSE_FIELD_NUMBER: _ClassVar[int]
+    LOCK_GENERATION_FIELD_NUMBER: _ClassVar[int]
+    REJECT_REASON_FIELD_NUMBER: _ClassVar[int]
+    accepted: bool
+    saved: bool
+    pose: WorkZeroPose
+    lock_generation: int
+    reject_reason: str
+    def __init__(self, accepted: _Optional[bool] = ..., saved: _Optional[bool] = ..., pose: _Optional[_Union[WorkZeroPose, _Mapping]] = ..., lock_generation: _Optional[int] = ..., reject_reason: _Optional[str] = ...) -> None: ...
+
+class GoWorkZeroRequest(_message.Message):
+    __slots__ = ("confirm", "wait", "timeout_s", "reason")
+    CONFIRM_FIELD_NUMBER: _ClassVar[int]
+    WAIT_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_S_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    confirm: bool
+    wait: bool
+    timeout_s: float
+    reason: str
+    def __init__(self, confirm: _Optional[bool] = ..., wait: _Optional[bool] = ..., timeout_s: _Optional[float] = ..., reason: _Optional[str] = ...) -> None: ...
+
 class MotorState(_message.Message):
     __slots__ = ("name", "motor_id", "position", "velocity", "torque", "motor_time", "mode", "fault", "pos_limit_flag", "tor_limit_flag", "valid")
     NAME_FIELD_NUMBER: _ClassVar[int]

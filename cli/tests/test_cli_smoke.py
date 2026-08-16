@@ -67,6 +67,10 @@ EXPECTED_COMMANDS = {
     "teach record stop",
     "teach start",
     "teach stop",
+    "workzero gozero",
+    "workzero rezero",
+    "workzero setzero",
+    "workzero show",
 }
 
 

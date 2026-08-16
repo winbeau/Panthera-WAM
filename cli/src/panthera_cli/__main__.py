@@ -47,6 +47,7 @@ trajectory_app = typer.Typer(no_args_is_help=True)
 teach_app = typer.Typer(no_args_is_help=True)
 teach_record_app = typer.Typer(no_args_is_help=True)
 dataset_app = typer.Typer(no_args_is_help=True)
+workzero_app = typer.Typer(no_args_is_help=True, help="应用层工作零位（work-zero 方案）")
 app.add_typer(control_app, name="control")
 app.add_typer(estop_app, name="estop")
 app.add_typer(safety_app, name="safety")
@@ -64,6 +65,7 @@ app.add_typer(trajectory_app, name="trajectory")
 app.add_typer(teach_app, name="teach")
 teach_app.add_typer(teach_record_app, name="record")
 app.add_typer(dataset_app, name="dataset")
+app.add_typer(workzero_app, name="workzero")
 safety_app.add_typer(limits_app, name="limits")
 console = Console()
 
@@ -747,6 +749,138 @@ def calibrate_zero(
         raise typer.Exit(2)
     persistence = "已持久化" if response.persisted else "仅本次上电有效"
     console.print(f"[green]当前物理位置已重定义为零[/green]（{persistence}）")
+
+
+@workzero_app.command("show")
+def workzero_show(
+    target: str | None = typer.Option(None, "--target", help="armd 端点，默认读环境/lease"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """读取已保存的工作零位（只读，无需 lease）。"""
+    channel, stub = create_stub(target)
+    try:
+        response = stub.GetWorkZero(arm_pb2.Empty())
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if not response.exists:
+        message = "尚未保存工作零位"
+        if response.reject_reason:
+            message += f"（{response.reject_reason}）"
+        console.print(f"[yellow]{message}[/yellow]")
+        raise typer.Exit(1)
+    pose = response.pose
+    data = {
+        "schema_version": pose.schema_version,
+        "joints": list(pose.joints),
+        "gripper": pose.gripper,
+        "captured_at_ms": pose.captured_at_ms,
+        "sampled_monotonic_ns": (
+            pose.sampled_monotonic_ns if pose.HasField("sampled_monotonic_ns") else None
+        ),
+        "stream_instance_id": pose.stream_instance_id,
+        "source": pose.source,
+    }
+    if as_json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    else:
+        console.print(f"工作零位（schema v{pose.schema_version}，source={pose.source}）")
+        console.print(f"  joints: {[round(value, 4) for value in pose.joints]}")
+        console.print(f"  gripper: {pose.gripper:.4f}")
+        if pose.HasField("sampled_monotonic_ns"):
+            console.print(f"  采样时刻(单调 ns): {pose.sampled_monotonic_ns}")
+    if response.reject_reason:
+        console.print(f"[yellow]警告[/yellow]: {response.reject_reason}")
+        raise typer.Exit(3)
+
+
+@workzero_app.command("setzero")
+def workzero_setzero(
+    confirm: bool = typer.Option(False, "--confirm"),
+    lock_wait_timeout: float = typer.Option(2.0, "--lock-wait-timeout", min=0.1, max=10.0),
+    target: str | None = typer.Option(None, "--target", help="armd 端点，默认读环境/lease"),
+) -> None:
+    """从 active teach 的显式 lock 样本保存工作零位（需 lease + manual-clutch teach）。
+
+    setzero 只保存姿态，不改变硬件零点、不主动移动机械臂；
+    不调用 calibrate zero / set_reset_zero。
+    """
+    if not confirm:
+        console.print("[red]必须显式传入 --confirm[/red]")
+        raise typer.Exit(2)
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        with maintain_heartbeat(lease):
+            response = stub.SetWorkZero(
+                arm_pb2.SetWorkZeroRequest(confirm=True, lock_wait_timeout_s=lock_wait_timeout),
+                metadata=lease_metadata(lease),
+            )
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if not response.accepted:
+        console.print(f"[red]保存工作零位被拒绝[/red]: {response.reject_reason}")
+        raise typer.Exit(2)
+    pose = response.pose
+    console.print(f"[green]工作零位已保存[/green]（lock generation={response.lock_generation}）")
+    console.print(f"  joints: {[round(value, 4) for value in pose.joints]}")
+    console.print(f"  gripper: {pose.gripper:.4f}")
+    if pose.HasField("sampled_monotonic_ns"):
+        console.print(f"  采样时刻(单调 ns): {pose.sampled_monotonic_ns}")
+
+
+@workzero_app.command("gozero")
+def workzero_gozero(
+    confirm: bool = typer.Option(False, "--confirm"),
+    wait: bool = typer.Option(False, "--wait"),
+    reason: str = typer.Option("gozero", "--reason", help="gozero 或 post_action(rezero)"),
+    target: str | None = typer.Option(None, "--target", help="armd 端点，默认读环境/lease"),
+) -> None:
+    """进入/回到工作零位。
+
+    运动由服务端连续流式 WorkZeroMotion 执行（P3 接入）；当前阶段服务端返回
+    UNIMPLEMENTED，CLI 如实透传，不伪装成已运动。
+    """
+    if not confirm:
+        console.print("[red]必须显式传入 --confirm[/red]")
+        raise typer.Exit(2)
+    if reason not in ("gozero", "post_action"):
+        console.print("[red]reason 必须为 gozero 或 post_action[/red]")
+        raise typer.Exit(2)
+    lease = load_lease()
+    channel, stub = create_stub(lease.endpoint)
+    try:
+        with maintain_heartbeat(lease) if wait else nullcontext():
+            accepted = stub.GoWorkZero(
+                arm_pb2.GoWorkZeroRequest(confirm=True, wait=wait, reason=reason),
+                metadata=lease_metadata(lease),
+            )
+            console.print(f"execution_id={accepted.execution_id}")
+            if wait:
+                final = _watch_execution(stub, accepted.execution_id)
+    except grpc.RpcError as exc:
+        fail_rpc(exc)
+    finally:
+        channel.close()
+    if wait and final.state != arm_pb2.EXEC_STATE_DONE:
+        console.print(f"[yellow]workzero 终态={arm_pb2.ExecState.Name(final.state)}[/yellow]")
+        raise typer.Exit(2)
+
+
+@workzero_app.command("rezero")
+def workzero_rezero(
+    confirm: bool = typer.Option(False, "--confirm"),
+    wait: bool = typer.Option(False, "--wait"),
+    target: str | None = typer.Option(None, "--target", help="armd 端点，默认读环境/lease"),
+) -> None:
+    """任务动作结束后回到工作零位；调用同一 GoWorkZero（reason=post_action）。
+
+    不复制第二套运动实现；只有数据 COMPLETE 提交后才允许调用。
+    """
+    workzero_gozero(confirm=confirm, wait=wait, reason="post_action", target=target)
 
 
 @joint_app.command("move")

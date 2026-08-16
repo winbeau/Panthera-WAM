@@ -46,6 +46,13 @@ from .safety import apply_watchdog_stop
 from .state import gripper_state_message, joint_state_message, robot_state_message
 from .state_tap import StateTapDataLoss
 from .teach import TapTrajectoryRecorder, TeachStore, load_raw_frames, prepare_playback_frames
+from .workzero import (
+    WORK_ZERO_SCHEMA_VERSION,
+    WORK_ZERO_SOURCE_TEACH_CLUTCH_LOCK,
+    WorkZeroPose,
+    WorkZeroStore,
+    WorkZeroValidationError,
+)
 
 SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
 DEFAULT_FRICTION_FC = np.array([0.20, 0.15, 0.15, 0.15, 0.04, 0.04], dtype=np.float64)
@@ -85,6 +92,8 @@ LEASE_PROTECTED_METHODS = {
     "TeachRecordStop",
     "TeachPlay",
     "CancelExecution",
+    "SetWorkZero",
+    "GoWorkZero",
 }
 
 ESTOP_BLOCKED_METHODS = LEASE_PROTECTED_METHODS - {
@@ -227,6 +236,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         auto_hold_enabled: bool = True,
         teach_manual_clutch: bool = False,
         teach_safe_hold_s: float = 10.0,
+        work_zero_store: WorkZeroStore | None = None,
     ) -> None:
         self._hardware_loop = hardware_loop
         self._leases = leases
@@ -253,6 +263,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         self._auto_hold_enabled = bool(auto_hold_enabled)
         self._teach_manual_clutch = bool(teach_manual_clutch)
         self._teach_safe_hold_s = float(teach_safe_hold_s)
+        self._work_zero_store = work_zero_store if work_zero_store is not None else WorkZeroStore()
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
@@ -457,6 +468,120 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             accepted=accepted,
             persisted=persisted,
             reject_reason=reject_reason,
+        )
+
+    @staticmethod
+    def _work_zero_pose_message(pose: WorkZeroPose) -> arm_pb2.WorkZeroPose:
+        message = arm_pb2.WorkZeroPose(
+            schema_version=pose.schema_version,
+            joints=pose.joints,
+            gripper=pose.gripper,
+            captured_at_ms=pose.captured_at_ms,
+            stream_instance_id=pose.stream_instance_id,
+            source=pose.source,
+        )
+        if pose.sampled_monotonic_ns is not None:
+            message.sampled_monotonic_ns = pose.sampled_monotonic_ns
+        if pose.state_sequence is not None:
+            message.state_sequence = pose.state_sequence
+        return message
+
+    async def GetWorkZero(self, request, context):
+        del request, context
+        try:
+            pose = await asyncio.to_thread(self._work_zero_store.load)
+        except WorkZeroValidationError as exc:
+            return arm_pb2.GetWorkZeroResponse(exists=False, reject_reason=str(exc))
+        if pose is None:
+            return arm_pb2.GetWorkZeroResponse(exists=False)
+        response = arm_pb2.GetWorkZeroResponse(
+            exists=True,
+            pose=self._work_zero_pose_message(pose),
+        )
+        try:
+            limits = await asyncio.wrap_future(
+                self._hardware_loop.submit(lambda backend: backend.limits)
+            )
+            self._work_zero_store.validate_with_limits(pose, limits)
+        except WorkZeroValidationError as exc:
+            response.reject_reason = str(exc)
+        return response
+
+    async def SetWorkZero(self, request, context):
+        if not request.confirm:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "SetWorkZero 必须 confirm=true")
+        await self._refresh_teach_motion()
+        motion = self._teach_motion
+        if motion is None:
+            return arm_pb2.SetWorkZeroResponse(
+                accepted=False,
+                reject_reason="当前没有运行中的 teach；请先启动显式离合示教（teach start --manual-clutch）",
+            )
+        if not motion.manual_clutch:
+            return arm_pb2.SetWorkZeroResponse(
+                accepted=False,
+                reject_reason="当前 teach 未启用显式 clutch，不能保存工作零位",
+            )
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        timeout_s = optional_double(request, "lock_wait_timeout_s", 2.0)
+        if timeout_s <= 0 or not np.isfinite(timeout_s) or timeout_s > 10.0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "lock_wait_timeout_s 必须位于 (0, 10]")
+        generation_before = motion.lock_generation
+        motion.request_clutch(TeachClutchCommand.LOCK)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline and motion.lock_generation <= generation_before:
+            await asyncio.sleep(0.02)
+        if motion.lock_generation <= generation_before:
+            return arm_pb2.SetWorkZeroResponse(
+                accepted=False,
+                reject_reason="等待 lock generation 超时：teach 控制循环未消费 LOCK，请确认 teach 正在运行",
+            )
+        snapshot = motion.lock_snapshot
+        if snapshot is None:
+            return arm_pb2.SetWorkZeroResponse(
+                accepted=False,
+                reject_reason="lock snapshot 不可用",
+            )
+        cached = self._hardware_loop.latest_state()
+        pose = WorkZeroPose(
+            schema_version=WORK_ZERO_SCHEMA_VERSION,
+            joints=snapshot.joints,
+            gripper=snapshot.gripper,
+            captured_at_ms=int(time.time() * 1000),
+            sampled_monotonic_ns=snapshot.captured_monotonic_ns,
+            state_sequence=None,
+            stream_instance_id=cached.stream_instance_id if cached is not None else "",
+            source=WORK_ZERO_SOURCE_TEACH_CLUTCH_LOCK,
+        )
+        try:
+            limits = await asyncio.wrap_future(
+                self._hardware_loop.submit(lambda backend: backend.limits)
+            )
+            await asyncio.to_thread(self._work_zero_store.save, pose, limits)
+        except WorkZeroValidationError as exc:
+            return arm_pb2.SetWorkZeroResponse(accepted=False, reject_reason=str(exc))
+        except OSError as exc:
+            return arm_pb2.SetWorkZeroResponse(
+                accepted=False,
+                reject_reason=f"工作零位文件保存失败: {exc}",
+            )
+        return arm_pb2.SetWorkZeroResponse(
+            accepted=True,
+            saved=True,
+            pose=self._work_zero_pose_message(pose),
+            lock_generation=snapshot.generation,
+        )
+
+    async def GoWorkZero(self, request, context):
+        if not request.confirm:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "GoWorkZero 必须 confirm=true")
+        if request.reason not in ("", "gozero", "post_action"):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "reason 必须为空、gozero 或 post_action")
+        await context.abort(
+            grpc.StatusCode.UNIMPLEMENTED,
+            "GoWorkZero 运动实现将在 P3 接入（服务端连续流式 WorkZeroMotion）；当前阶段不产生运动",
         )
 
     async def GetJointState(self, request, context):

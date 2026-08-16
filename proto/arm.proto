@@ -115,6 +115,51 @@ message SetZeroResponse {
 }
 
 // ============================================================
+// 工作零位（work-zero 方案，docs/FINAL_PLAN.md WZ-1/WZ-6）
+// ============================================================
+// workzero 是**应用层工作姿态**，不是硬件 encoder zero：
+//   - 不调用 SDK set_reset_zero / backend.set_zero / SetZero RPC；
+//   - setzero 依赖 active teach + 显式 manual clutch lock 的同一 7 轴状态样本；
+//   - gozero/rezero 由服务端连续流式 WorkZeroMotion 执行（P3 接入；
+//     在实现完成前 GoWorkZero 返回明确 UNIMPLEMENTED，不伪装成已运动）。
+
+message WorkZeroPose {
+  int32 schema_version = 1;
+  repeated double joints = 2;        // len=6，来自同一 lock 样本
+  double gripper = 3;                // 同一 lock 样本的夹爪位置
+  int64 captured_at_ms = 4;          // wall-clock 保存时刻
+  optional int64 sampled_monotonic_ns = 5;  // Pi 单调时钟（lock 样本时刻）
+  optional uint64 state_sequence = 6;       // 若可得
+  string stream_instance_id = 7;     // 来源元数据，不作为 stale 授权依据
+  string source = 8;                 // 第一版固定 teach-clutch-lock
+}
+
+message GetWorkZeroResponse {
+  bool exists = 1;
+  WorkZeroPose pose = 2;
+  string reject_reason = 3;         // 加载/校验失败时的结构化原因
+}
+
+message SetWorkZeroRequest {
+  bool confirm = 1;                 // 服务端判定，不只是客户端提示
+  optional double lock_wait_timeout_s = 2;  // 未设 → 2.0
+}
+message SetWorkZeroResponse {
+  bool accepted = 1;
+  bool saved = 2;
+  WorkZeroPose pose = 3;
+  uint64 lock_generation = 4;
+  string reject_reason = 5;
+}
+
+message GoWorkZeroRequest {
+  bool confirm = 1;                 // 服务端判定
+  bool wait = 2;                    // true → 观察 execution 到终态
+  optional double timeout_s = 3;    // 服务端上限内的保守超时
+  string reason = 4;                // 空/gozero；post_action=rezero（同一 RPC，不复制第二套运动）
+}
+
+// ============================================================
 // 状态查询
 // ============================================================
 
@@ -569,6 +614,11 @@ service ArmService {
   rpc ClearEStop(ClearEStopRequest) returns (EStopResponse);                    // 需持锁 + confirm
   rpc GetSoftLimits(Empty) returns (SoftLimits);                                // 只读
   rpc SetZero(SetZeroRequest) returns (SetZeroResponse);                        // 需持锁 + confirm
+
+  // ---------- 工作零位（work-zero 方案）----------
+  rpc GetWorkZero(Empty) returns (GetWorkZeroResponse);                         // 只读，无 lease
+  rpc SetWorkZero(SetWorkZeroRequest) returns (SetWorkZeroResponse);            // 需 lease + active teach lock
+  rpc GoWorkZero(GoWorkZeroRequest) returns (ExecutionAccepted);                // 需 lease + confirm；P3 前 UNIMPLEMENTED
 
   // ---------- 状态（全部只读，无需 lease）----------
   rpc GetJointState(Empty) returns (JointState);
