@@ -1569,7 +1569,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 operation_name="moveL",
             )
         except ValueError as exc:
-            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         if self._hardware_loop.has_active_motion:
             if self._hold_motion is not None:
                 # 定死锁 → 新运动接管：轨迹已就绪，释放后立即 start（间隙 1-2 周期）
