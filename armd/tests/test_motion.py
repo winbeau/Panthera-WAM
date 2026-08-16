@@ -1109,7 +1109,7 @@ def test_teach_playback_posvel_interpolates_and_preserves_signed_velocity() -> N
                 position=start,
                 velocity=np.array([-0.5, 0.0, 0.0, 0.0, 0.0, 0.0]),
                 gripper_position=1.79,
-                gripper_velocity=0.0,
+                gripper_velocity=-0.7,
             ),
             PlaybackFrame(
                 timestamp_s=0.01,
@@ -1124,10 +1124,12 @@ def test_teach_playback_posvel_interpolates_and_preserves_signed_velocity() -> N
     # 首步：起点已到位 → 直接进入回放（不写帧）
     assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
     assert backend.frames == []
-    # elapsed=0：alpha=0 → 起点位形 + 符号速度（不得 abs / 不得 1e-3 下限）
+    # elapsed=0：alpha=0 → 起点位形 + 符号速度（臂速度不得 abs / 不得 1e-3 下限）；
+    # 夹爪速度按真机后端约束取非负幅值 + 1e-3 下限（真机曾因此 ValueError 崩溃）
     assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
     assert backend.frames[0].arm_position[0] == pytest.approx(start[0])
     assert backend.frames[0].arm_velocity[0] == pytest.approx(-0.5)
+    assert backend.frames[0].gripper_velocity == pytest.approx(0.7)
 
     # 中点：相邻帧插值（目标小步推进，而非采样点阶跃）
     clock.advance(0.005)
@@ -1135,3 +1137,4 @@ def test_teach_playback_posvel_interpolates_and_preserves_signed_velocity() -> N
     assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
     assert backend.frames[-1].arm_position[0] == pytest.approx(-0.005)
     assert backend.frames[-1].arm_velocity[0] == pytest.approx(-0.25)
+    assert backend.frames[-1].gripper_velocity == pytest.approx(0.35)

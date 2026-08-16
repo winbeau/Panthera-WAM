@@ -1552,16 +1552,15 @@ class TeachPlaybackMotion:
         )
         grip_velocity = gripper_velocity if gripper_velocity is not None else frame.gripper_velocity
         if self.mode == "posvel":
-            # 符号速度 + 零速度锁定（对齐官方 SDK/FINAL_PLAN 语义）：
-            # 不做 abs、不加 1e-3 下限；固件按有符号 int16 处理速度方向，
-            # 零速度帧即位置 PID 锁定。
+            # 臂速度：有符号（固件 int16 方向语义；零速度帧 = 位置 PID 锁定）。
+            # 夹爪速度：真机后端 POS_VEL_TQE 要求非负（幅值语义），保留 1e-3 下限。
             backend.write_frame(
                 position_frame(
                     backend,
                     arm_position=arm_position,
                     arm_velocity=arm_velocity,
                     gripper_position=grip_position,
-                    gripper_velocity=grip_velocity,
+                    gripper_velocity=max(abs(grip_velocity), 1e-3),
                     enforce_gripper_velocity_limit=False,
                 )
             )
