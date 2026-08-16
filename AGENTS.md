@@ -13,10 +13,12 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 6. `docs/CLI_PLAN.md` / `docs/WPF_PLAN.md` — 两侧的展开细节。
 7. `docs/CAMERA_DEVICES.md` — Pi 5 上 C920e/D405 的稳定设备别名、序列号与采集约束。
 8. `docs/mockups/mockup-C-fluent-cockpit.html` — **WPF 已定稿的视觉基准**（驾驶舱式：中央 SVG 雷达俯视图 + 左右圆形关节仪表 + jog pod）。A/B 两稿仅作参考。
+9. `docs/DEVICE_REPAIR.md` — Pi 5 设备拔插后的 `repair-devices.sh` 恢复顺序、udev/ttyACM 映射、只读验收和安全退出码。
 
 ## 已敲定的决策（不要重新讨论）
 
 - 架构：Raspberry Pi 5 ARM64 独占 Panthera-HT、D405 与 C920e → `armd:50051` / `camerad:50052` → gRPC+protobuf（Pi IP 或 SSH 隧道）→ 客户端 = `panthera-cli`（typer）+ WPF 终端（.NET 9 Fluent，ThemeMode 三态主题）。WSL2 仅保留兼容回退。
+- 设备恢复：`deploy/repair-devices.sh c920e|realsense|can|all` 以 stop/start service 为主，按目标刷新 udev 和 `ttyACM*`，只做实际帧/状态验收；真实执行必须带 `--yes`，不得把它当作运动或 H0 绕过工具。
 - armd 执行模型：HardwareLoop 单线程独占 `Panthera` 对象，**非阻塞逐周期步进**——严禁调用 SDK 的 `iswait=True`/`moveL()`/回放等内部阻塞循环。moveL 真机验证后改用 `Joint_Pos_Vel(iswait=False)` 逐点下发 + 末点保位收敛；SDK/MIT 路径在当前固件上跟踪失败。EStop 可抢占（实测 7.73ms）。
 - 安全层：AcquireControl 控制权 lease（gRPC metadata 统一拦截）、watchdog 按控制模式分级停止、jog 用指令新鲜度窗口兜底（关节 250ms）、软限位入队前预检、EStop 直通不需持锁。
 - 里程碑顺序硬约束：**M0 三项架构 spike 全过才允许开工 v1**（见 FINAL_PLAN「阶段 0」）。
@@ -32,6 +34,7 @@ Panthera-HT 六轴机械臂（高擎 HighTorque）的控制底座与 World Actio
 | Windows 侧 busid | 仅用于 WSL 兼容回退；当前主路径不经 usbipd，busid 不得写入长期配置 |
 | 相机 | 俯视 Logitech C920e；腕部 Intel RealSense D405（USB/UVC `251323070051`，librealsense SDK `260422273428`） |
 | Pi 5 相机别名 | `/home/winbeau/camera-devices/c920e` 与 `/home/winbeau/camera-devices/realsense-{depth,infrared,color}`；完整表见 `docs/CAMERA_DEVICES.md` |
+| 当前 H0 状态 | C920e/D405 服务与流状态已恢复；机械臂此前 7 电机为 `mode=0x0B`，H0 仍阻塞，不能由 service `active` 推断硬件健康 |
 | WSL2 主机 | win-wsl2 = `ssh -p 2222 winbeau@100.78.122.53`（Ubuntu 22.04 + systemd，Tailscale）。**不要在 WSL 里跑 .exe**（interop 挂死），需要 Windows 命令直连下面这台 |
 | Windows 主机 | winbeau-win = `ssh genev@100.92.156.126`（usbipd / dotnet build / WPF 运行都在这） |
 | Windows 桌面 | `/mnt/c/Users/genev/Desktop`（视觉稿在 `Desktop/Panthera-Design/`） |
@@ -54,6 +57,7 @@ USB/UVC 稳定别名中的 `251323070051` 不得传给 `enable_device`。metadat
 3. 首次真机联调顺序：读状态 → Enable → 单关节小角度（≤5°）jog → EStop 演练 → 才允许 moveJ/moveL。
 4. 真机测试脚本必须先打印将要执行的动作并二次确认；力矩限制用保守默认值。
 5. `calibrate zero`（`set_reset_zero`）语义未核实前（FINAL_PLAN 风险 §2），不得对真机调用。
+6. 设备故障恢复必须先运行 `./deploy/repair-devices.sh <target> --dry-run`；真实 `--yes` 执行前确认无示教、录制、lease、运动客户端，E-stop 可触达。若验收仍为 `mode=0x0B`，立即停止，不得用运动命令尝试解锁。
 
 ## 开发约定
 

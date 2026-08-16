@@ -73,6 +73,23 @@ git submodule update --init --recursive
 WPF 设为 `BackendMode=Remote`，机械臂端点使用 `http://<PI_IP>:50051`，相机端点使用
 `http://<PI_IP>:50052`。建议绑定 Tailscale IP；当前链路是明文 gRPC，不应直接暴露到公网。
 
+### Pi 设备故障恢复
+
+设备拔插、服务卡死或稳定节点暂时不可用时，使用统一恢复脚本；先执行只读计划，再由现场操作员显式确认真实重启：
+
+```bash
+cd ~/Panthera-WAM
+./deploy/repair-devices.sh c920e --dry-run
+./deploy/repair-devices.sh c920e --yes       # C920e / overhead-camera
+./deploy/repair-devices.sh realsense --yes   # D405 / camerad
+./deploy/repair-devices.sh can --yes         # CAN / ttyACM / armd
+./deploy/repair-devices.sh all --yes         # 多设备拔插后的完整顺序
+```
+
+脚本按目标停止并启动 systemd user service，刷新相关 udev/`ttyACM*` 映射，生成私有诊断日志和映射快照，最后读取实际相机帧、armd 状态及电机状态。它不会 acquire/release lease、发送运动或 CAN 写命令、调用 WorkZero，也不会把动态 `/dev/videoN`/`/dev/ttyACM0` 写入长期配置。详细顺序、退出码和安全门见 [`docs/DEVICE_REPAIR.md`](docs/DEVICE_REPAIR.md)。
+
+当前 H0 真机门仍需单独通过：此前 7 个电机为 `mode=0x0B`，即使三个 service 为 `active` 也不能视为硬件健康；未通过 H0 前不得执行 `setzero`、`gozero`、`rezero` 或正式采集。
+
 ## Legacy WSL 部署
 
 ```bash
