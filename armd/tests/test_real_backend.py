@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -239,6 +239,33 @@ def test_full_seven_slot_frame_uses_one_mode_and_one_flush(frame: JointFrame, co
     assert [event[0] for event in robot.events] == list(range(1, 8))
     assert {event[1] for event in robot.events} == {command}
     assert robot.flushes == 1
+
+
+def test_frame_can_disable_only_gripper_velocity_limit() -> None:
+    robot = FakeRobot()
+    backend = make_backend(robot)
+
+    with pytest.raises(LimitViolationError, match=r"gripper 速度"):
+        backend.write_frame(replace(mit_frame(), gripper_velocity=1.1))
+
+    backend.write_frame(
+        replace(
+            mit_frame(),
+            gripper_velocity=3.7,
+            enforce_gripper_velocity_limit=False,
+        )
+    )
+    gripper_command = next(event for event in robot.events if event[:2] == (7, "mit"))
+    assert gripper_command[3] == pytest.approx(3.7)
+
+    with pytest.raises(LimitViolationError, match=r"joint1 速度"):
+        backend.write_frame(
+            replace(
+                mit_frame(),
+                arm_velocity=np.array([1.1, 0.0, 0.0, 0.0, 0.0, 0.0]),
+                enforce_gripper_velocity_limit=False,
+            )
+        )
 
 
 def test_teach_clamps_out_of_range_measured_gripper_before_real_frame_validation() -> None:

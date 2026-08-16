@@ -261,8 +261,8 @@ def make_replay_trajectory(raw_path: Path, replay_path: Path) -> None:
                 continue
             row = json.loads(line)
             row["gripper_pos"] = float(np.clip(row["gripper_pos"], 0.0, 2.0))
-            # Position remains the measured path; cap only noisy velocity feed-forward.
-            row["gripper_vel"] = float(np.clip(row["gripper_vel"], -0.5, 0.5))
+            # TeachPlayback explicitly disables only the gripper velocity ceiling.
+            row["gripper_vel"] = float(row["gripper_vel"])
             target.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
         target.flush()
         os.fsync(target.fileno())

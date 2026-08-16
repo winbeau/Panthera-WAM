@@ -18,8 +18,10 @@ from armd.motion import (
     MANUAL_CLUTCH_KP_HOLD,
     JointJogMotion,
     JointPositionMotion,
+    PlaybackFrame,
     TeachClutchCommand,
     TeachMotion,
+    TeachPlaybackMotion,
     gripper_position_frame,
 )
 
@@ -97,6 +99,41 @@ def test_gripper_position_frame_uses_requested_instantaneous_torque_budget() -> 
     assert np.all(np.sign(frame.arm_torque) == [-1, 1, -1, 1, -1, 1])
     assert frame.arm_kp == pytest.approx([0.0] * 6)
     assert frame.arm_kd == pytest.approx([0.0] * 6)
+
+
+def test_teach_playback_disables_only_gripper_velocity_limit() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    backend._positions[6] = 0.2
+    motion = TeachPlaybackMotion(
+        frames=[
+            PlaybackFrame(
+                timestamp_s=0.1,
+                position=np.zeros(6),
+                velocity=np.zeros(6),
+                gripper_position=0.2,
+                gripper_velocity=3.7,
+            )
+        ],
+        mode="mit",
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        vel_threshold=0.0,
+        tau_limit=np.ones(6),
+        gripper_kp=5.0,
+        gripper_kd=0.5,
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    clock.advance(0.01)
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+
+    frame = backend.frames[-1]
+    assert frame.gripper_velocity == pytest.approx(3.7)
+    assert not frame.enforce_gripper_velocity_limit
+    assert np.all(np.abs(frame.arm_velocity) <= backend.limits.joint_velocity)
 
 
 def test_position_motion_reaches_and_holds_target() -> None:

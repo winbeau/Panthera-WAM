@@ -152,6 +152,8 @@ class JointFrame:
     arm_velocity: np.ndarray
     gripper_position: float
     gripper_velocity: float
+    # TeachPlayback 可显式取消夹爪速度上限；关节速度、夹爪位置/力矩限位仍强制。
+    enforce_gripper_velocity_limit: bool = True
     # POS_VEL_TQE 用
     arm_max_torque: np.ndarray | None = None
     gripper_max_torque: float = 0.5
@@ -184,6 +186,8 @@ class JointFrame:
         )
         if not all(np.isfinite(getattr(self, field)) for field in scalar_fields):
             raise ValueError("夹爪指令必须全部为有限数值")
+        if not isinstance(self.enforce_gripper_velocity_limit, bool):
+            raise ValueError("enforce_gripper_velocity_limit 必须是 bool")
         if self.mode is FrameMode.POS_VEL_TQE:
             if self.arm_max_torque is None:
                 raise ValueError("POS_VEL_TQE 模式必须提供 arm_max_torque")

@@ -155,6 +155,7 @@ def position_frame(
     gripper_velocity: float = POSITION_HOLD_SPEED,
     arm_max_torque: np.ndarray | None = None,
     gripper_max_torque: float | None = None,
+    enforce_gripper_velocity_limit: bool = True,
 ) -> JointFrame:
     safe_gripper_position = float(
         np.clip(gripper_position, backend.limits.gripper_lower, backend.limits.gripper_upper)
@@ -166,6 +167,7 @@ def position_frame(
         arm_max_torque=backend.limits.joint_torque if arm_max_torque is None else arm_max_torque,
         gripper_position=safe_gripper_position,
         gripper_velocity=gripper_velocity,
+        enforce_gripper_velocity_limit=enforce_gripper_velocity_limit,
         gripper_max_torque=(
             backend.limits.gripper_torque if gripper_max_torque is None else gripper_max_torque
         ),
@@ -1249,6 +1251,7 @@ class TeachPlaybackMotion:
                     arm_velocity=np.maximum(np.abs(frame.velocity), 1e-3),
                     gripper_position=gripper_position,
                     gripper_velocity=max(abs(frame.gripper_velocity), 1e-3),
+                    enforce_gripper_velocity_limit=False,
                 )
             )
             return
@@ -1273,6 +1276,7 @@ class TeachPlaybackMotion:
                 arm_kd=self.kd,
                 gripper_position=gripper_position,
                 gripper_velocity=frame.gripper_velocity,
+                enforce_gripper_velocity_limit=False,
                 gripper_torque=0.0,
                 gripper_kp=self.gripper_kp if frame.gripper_position is not None else 0.0,
                 gripper_kd=self.gripper_kd if frame.gripper_position is not None else 0.3,

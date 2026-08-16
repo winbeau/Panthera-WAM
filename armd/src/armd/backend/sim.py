@@ -260,12 +260,16 @@ class SimBackend:
         if dt == 0:
             return
 
+        velocity_limit = self._velocity_limit.copy()
+        if self._last_frame is not None and not self._last_frame.enforce_gripper_velocity_limit:
+            velocity_limit[-1] = np.inf
+
         if self._mode is FrameMode.VELOCITY:
-            velocity = np.clip(self._target_velocities, -self._velocity_limit, self._velocity_limit)
+            velocity = np.clip(self._target_velocities, -velocity_limit, velocity_limit)
             self._integrate_velocity(velocity, dt)
             self._torques.fill(0.0)
         elif self._mode is FrameMode.POS_VEL_TQE:
-            speed = np.minimum(np.abs(self._target_velocities), self._velocity_limit)
+            speed = np.minimum(np.abs(self._target_velocities), velocity_limit)
             self._approach_targets(speed, dt)
             error = self._target_positions - self._positions
             self._torques = np.clip(error * 5.0, -self._max_torque, self._max_torque)
@@ -273,7 +277,7 @@ class SimBackend:
             position_error = self._target_positions - self._positions
             desired_velocity = self._target_velocities + 0.05 * self._kp * position_error
             desired_velocity += 0.01 * self._feedforward_torque
-            velocity = np.clip(desired_velocity, -self._velocity_limit, self._velocity_limit)
+            velocity = np.clip(desired_velocity, -velocity_limit, velocity_limit)
             self._integrate_velocity(velocity, dt)
             torque = self._feedforward_torque + self._kp * position_error - self._kd * self._velocities
             self._torques = np.clip(torque, -self._max_torque, self._max_torque)

@@ -443,9 +443,15 @@ class RealBackend:
             upper = np.concatenate((self.limits.joint_upper, [self.limits.gripper_upper]))
             _raise_limit_violation(positions, lower, upper, "目标位置")
 
-        velocity_limits = np.concatenate((self.limits.joint_velocity, [self.limits.gripper_velocity]))
-        velocities = np.concatenate((frame.arm_velocity, [frame.gripper_velocity]))
-        _raise_magnitude_violation(velocities, velocity_limits, "速度")
+        _raise_magnitude_violation(frame.arm_velocity, self.limits.joint_velocity, "速度")
+        if (
+            frame.enforce_gripper_velocity_limit
+            and abs(frame.gripper_velocity) > self.limits.gripper_velocity
+        ):
+            raise LimitViolationError(
+                f"gripper 速度 {frame.gripper_velocity:.6g} "
+                f"超过限值 ±{self.limits.gripper_velocity:.6g}"
+            )
 
         torque_limits = np.concatenate((self.limits.joint_torque, [self.limits.gripper_torque]))
         if frame.mode is FrameMode.POS_VEL_TQE:
