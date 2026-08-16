@@ -666,6 +666,11 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         target_positions = np.asarray(pose.joints, dtype=np.float64)
 
         # ---- MoveL 轨迹规划：保持期间算好；rezero 时与夹爪开爪并行（缩短回位时长）----
+        # 夹爪目标：随 MoveL 行程并行打开（臂到位时夹爪已到位，无单独开爪行程与噪声）
+        gripper_target = min(
+            float(pose.gripper),
+            WORKZERO_GRIPPER_TARGET_FRACTION * limits.gripper_upper,
+        )
         small_residual = (
             float(np.max(np.abs(target_positions - current))) <= WORKZERO_SMALL_RESIDUAL
         )
@@ -682,6 +687,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     target_positions=target_positions,
                     limits=limits,
                     timeout_s=timeout_s,
+                    gripper_position=gripper_target,
                 ),
                 name="panthera-workzero-plan",
             )
@@ -778,8 +784,12 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         target_positions: np.ndarray,
         limits,
         timeout_s: float,
+        gripper_position: float | None = None,
     ) -> ContinuousTrajectoryMotion:
-        """FK 工作零位 → 连续插值轨迹（与 rezero 开爪并行执行的规划任务）。"""
+        """FK 工作零位 → 连续插值轨迹（与 rezero 开爪并行执行的规划任务）。
+
+        夹爪目标随 MoveL 行程并行打开（臂到位时夹爪已到位，无单独开爪行程）。
+        """
         target_fk = await self._kinematics.call("fk", {"q": target_positions})
         return await self._prepare_continuous_trajectory(
             current=current,
@@ -792,6 +802,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             tolerance=0.03,
             settle_timeout_s=min(6.0, timeout_s),
             operation_name="gozero-continuous",
+            gripper_position=gripper_position,
         )
 
     async def _start_hold_motion(
@@ -1667,6 +1678,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         tolerance: float,
         settle_timeout_s: float,
         operation_name: str,
+        gripper_position: float | None = None,
+        gripper_velocity: float = 0.6,
     ) -> ContinuousTrajectoryMotion:
         """规划笛卡尔轨迹并构造连续插值执行 motion（gozero/MoveL 共用）。
 
@@ -1710,6 +1723,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             tolerance=tolerance,
             settle_timeout_s=settle_timeout_s,
             operation_name=operation_name,
+            gripper_position=gripper_position,
+            gripper_velocity=gripper_velocity,
         )
 
     async def RunJointTrajectory(self, request, context):

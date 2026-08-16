@@ -23,6 +23,7 @@ from armd.workzero_motion import (
     WORKZERO_KD,
     WORKZERO_KP,
     WORKZERO_SMALL_RESIDUAL,
+    ContinuousTrajectoryMotion,
     WorkZeroMotion,
     WorkZeroPhase,
 )
@@ -459,6 +460,44 @@ def test_hold_position_motion_latches_gripper_after_first_reach() -> None:
     second = backend.frames[-1]
     assert second.gripper_position == pytest.approx(1.75)
     assert second.gripper_velocity == pytest.approx(0.0)
+
+
+def test_continuous_trajectory_opens_gripper_during_motion_and_latches() -> None:
+    """gozero 夹爪目标随 MoveL 行程并行打开（臂到位时夹爪已到位，无单独
+    开爪行程）；过冲越过目标后立即锁存、速度归零。"""
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    backend._positions[6] = 0.6
+    motion = ContinuousTrajectoryMotion(
+        positions=[np.zeros(6), np.full(6, 0.5)],
+        velocities=[np.zeros(6), np.zeros(6)],
+        timestamps=[0.0, 1.0],
+        max_torque=np.full(6, 30.0),
+        gripper_position=1.8,
+        gripper_velocity=0.6,
+    )
+
+    clock.advance(0.005)
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    frame = backend.frames[-1]
+    assert frame.gripper_position == pytest.approx(1.8)
+    assert frame.gripper_velocity == pytest.approx(0.6)
+
+    # 过冲越过目标：锁存当前反馈 + 速度归零。
+    backend._positions[6] = 1.85
+    clock.advance(0.005)
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    frame = backend.frames[-1]
+    assert frame.gripper_position == pytest.approx(1.85)
+    assert frame.gripper_velocity == pytest.approx(0.0)
+
+    # 锁存后即使回弹也不恢复外推。
+    backend._positions[6] = 1.79
+    clock.advance(0.005)
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    frame = backend.frames[-1]
+    assert frame.gripper_position == pytest.approx(1.79)
+    assert frame.gripper_velocity == pytest.approx(0.0)
 
 
 def test_hold_gripper_latches_on_overshoot_and_stops_pushing() -> None:

@@ -453,6 +453,8 @@ class ContinuousTrajectoryMotion:
         tolerance: float = WORKZERO_SETTLE_TOLERANCE,
         settle_timeout_s: float = WORKZERO_SETTLE_TIMEOUT_S,
         operation_name: str = "gozero-continuous",
+        gripper_position: float | None = None,
+        gripper_velocity: float = 0.6,
     ) -> None:
         if not positions or len(positions) != len(velocities) or len(positions) != len(timestamps):
             raise ValueError("轨迹位置、速度、时间戳长度必须一致且非空")
@@ -465,6 +467,14 @@ class ContinuousTrajectoryMotion:
         self.tolerance = tolerance
         self.settle_timeout_s = settle_timeout_s
         self.operation_name = operation_name
+        # 夹爪目标与 MoveL 行程并行打开（臂到位时夹爪已到位）；方向感知锁存：
+        # 到位/过冲后保持当前反馈、速度归零，不再加力（J7 嗡嗡根因）。
+        self.gripper_position = None if gripper_position is None else float(gripper_position)
+        if self.gripper_position is not None and not np.isfinite(self.gripper_position):
+            raise ValueError("夹爪目标必须为有限数值")
+        self.gripper_velocity = float(gripper_velocity)
+        self._gripper_start: float | None = None
+        self._gripper_reached = self.gripper_position is None
         self.reject_reason = ""
         self.errors = np.full(6, np.inf, dtype=np.float64)
         self._fraction = 0.0
@@ -474,6 +484,25 @@ class ContinuousTrajectoryMotion:
         self._deceleration_step: int | None = None
         self._deceleration_velocity = np.zeros(6, dtype=np.float64)
         self._lock = threading.Lock()
+
+    def _gripper_command(self, current: float) -> tuple[float, float]:
+        """夹爪目标/速度（方向感知锁存）：到位后保持当前反馈、速度归零。"""
+        if self.gripper_position is None:
+            return current, 0.0
+        if not self._gripper_reached:
+            if self._gripper_start is None:
+                self._gripper_start = current
+            target = self.gripper_position
+            reached = abs(current - target) <= 0.02
+            if not reached and target > self._gripper_start and current >= target:
+                reached = True
+            if not reached and target < self._gripper_start and current <= target:
+                reached = True
+            if reached:
+                self._gripper_reached = True
+        if self._gripper_reached:
+            return current, 0.0
+        return self.gripper_position, self.gripper_velocity
 
     @property
     def fraction(self) -> float:
@@ -513,13 +542,17 @@ class ContinuousTrajectoryMotion:
                 self.velocities[index - 1] * (1.0 - alpha) + self.velocities[index] * alpha
             )
             self.errors = np.abs(self.positions[-1] - current)
+            gripper_command, gripper_velocity_cmd = self._gripper_command(
+                float(states[6].position)
+            )
             backend.write_frame(
                 position_frame(
                     backend,
                     arm_position=commanded,
                     arm_velocity=commanded_velocity,
                     arm_max_torque=self.max_torque,
-                    gripper_position=states[6].position,
+                    gripper_position=gripper_command,
+                    gripper_velocity=gripper_velocity_cmd,
                 )
             )
             with self._lock:
@@ -534,13 +567,17 @@ class ContinuousTrajectoryMotion:
         self.errors = np.abs(target - current)
         if self._settle_started_at is None:
             self._settle_started_at = now
+        gripper_command, gripper_velocity_cmd = self._gripper_command(
+            float(states[6].position)
+        )
         backend.write_frame(
             position_frame(
                 backend,
                 arm_position=target,
                 arm_velocity=np.zeros(6),
                 arm_max_torque=self.max_torque,
-                gripper_position=states[6].position,
+                gripper_position=gripper_command,
+                gripper_velocity=gripper_velocity_cmd,
             )
         )
         with self._lock:
