@@ -520,9 +520,9 @@ log_aliases() {
                 path=$(alias_path "$name")
                 if [[ -L "$path" ]]; then
                     resolved=$(readlink -f "$path" 2>/dev/null || true)
-                    log "alias=$path symlink=true resolved=${resolved:-unresolved} char=$([[ -c "$path" ]] && echo true || echo false)"
+                    log "alias=$path required=true symlink=true resolved=${resolved:-unresolved} char=$([[ -c "$path" ]] && echo true || echo false)"
                 else
-                    log "alias=$path symlink=false resolved=missing"
+                    log "alias=$path required=true symlink=false resolved=missing"
                 fi
             done
             ;;
@@ -531,9 +531,9 @@ log_aliases() {
                 path=$(alias_path "$name")
                 if [[ -L "$path" ]]; then
                     resolved=$(readlink -f "$path" 2>/dev/null || true)
-                    log "alias=$path symlink=true resolved=${resolved:-unresolved} char=$([[ -c "$path" ]] && echo true || echo false)"
+                    log "alias=$path required=false advisory=rsusb-v4l2 symlink=true resolved=${resolved:-unresolved} char=$([[ -c "$path" ]] && echo true || echo false)"
                 else
-                    log "alias=$path symlink=false resolved=missing"
+                    log "alias=$path required=false advisory=rsusb-v4l2 symlink=false resolved=missing"
                 fi
             done
             ;;
@@ -654,7 +654,7 @@ import json, sys
 data = json.load(sys.stdin)
 if not data.get("available") or not data.get("streaming"):
     raise SystemExit(1)
-if data.get("role") != sys.argv[1]:
+if not str(data.get("role", "")).endswith(sys.argv[1]):
     raise SystemExit(2)
 if sys.argv[1] == "WRIST" and data.get("serial") not in {"", "260422273428"}:
     raise SystemExit(3)
@@ -872,9 +872,13 @@ main() {
     parse_args "$@"
     init_log
     preflight_commands
-    exec 9>"$LOCK_FILE" 2>/dev/null || fail 3 "无法创建修复锁：$LOCK_FILE"
-    flock -n 9 || fail 4 "已有另一个 repair-devices 实例运行：$LOCK_FILE"
-    log "lock=$LOCK_FILE result=acquired"
+    if ((DRY_RUN)); then
+        log "lock=$LOCK_FILE result=skipped-dry-run"
+    else
+        exec 9>"$LOCK_FILE" 2>/dev/null || fail 3 "无法创建修复锁：$LOCK_FILE"
+        flock -n 9 || fail 4 "已有另一个 repair-devices 实例运行：$LOCK_FILE"
+        log "lock=$LOCK_FILE result=acquired"
+    fi
     safety_preflight
     prepare_privilege
 
