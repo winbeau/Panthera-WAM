@@ -61,7 +61,7 @@ if ! pgrep -f "control heartbeat" >/dev/null 2>&1; then
     nohup "$CLI" control heartbeat >/dev/null 2>&1 &
     echo "heartbeat pid=$!"
 fi
-"$CLI" cartesian movel --pos "$POS" --rpy "$RPY" --wait
+"$CLI" cartesian movel --pos "$POS" --rpy "$RPY"
 
 step "完成"
 cat <<'EOF'
