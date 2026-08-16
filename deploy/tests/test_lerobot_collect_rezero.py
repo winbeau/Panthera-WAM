@@ -66,6 +66,8 @@ FAKE_PANTHERA = textwrap.dedent(
             exit 1
           fi
           echo "rezero done"
+        elif [[ "${2:-}" == "gozero" ]]; then
+          echo "gozero done"
         else
           echo "fake panthera: unknown workzero ${2:-}" >&2; exit 2
         fi ;;
