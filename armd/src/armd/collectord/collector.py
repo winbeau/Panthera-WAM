@@ -598,6 +598,7 @@ def _staging_rows(writer: AtomicEpisodeWriter, aligned: list[AlignedSample]) -> 
             ),
             "sync_ok": sample.sync_ok,
             "sync_reasons": list(sample.sync_reasons),
+            "overhead_frame_duplicated": overhead is not sample.overhead_rgb,
         }
         if sample.wrist_depth is not None:
             depth_relative = f"wrist_depth/{sample.tick_index:06d}.png"
