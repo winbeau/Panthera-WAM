@@ -560,18 +560,22 @@ async def _camera_status(
 
 def _staging_rows(writer: AtomicEpisodeWriter, aligned: list[AlignedSample]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    previous_overhead: CameraSample | None = None
     for sample in aligned:
-        if (
-            not sample.sync_ok
-            or sample.state is None
-            or sample.overhead_rgb is None
-            or sample.wrist_rgb is None
-        ):
+        if sample.state is None or sample.wrist_rgb is None:
             raise ValueError(f"cannot stage invalid aligned sample {sample.tick_index}")
-        overhead_suffix = ".jpg" if sample.overhead_rgb.pixel_format == "jpeg" else ".png"
+        overhead = sample.overhead_rgb
+        if overhead is None:
+            # 相机偶发丢帧（质量门容忍 ≤0.3%·canonical）：复制上一帧，
+            # 时间线不留空洞；sync_reasons 保留原缺失原因供下游审计。
+            if previous_overhead is None:
+                raise ValueError(f"cannot stage invalid aligned sample {sample.tick_index}")
+            overhead = previous_overhead
+        previous_overhead = overhead
+        overhead_suffix = ".jpg" if overhead.pixel_format == "jpeg" else ".png"
         overhead_relative = f"overhead/{sample.tick_index:06d}{overhead_suffix}"
         wrist_relative = f"wrist_rgb/{sample.tick_index:06d}.png"
-        _materialize_camera_sample(sample.overhead_rgb, writer.path(overhead_relative))
+        _materialize_camera_sample(overhead, writer.path(overhead_relative))
         _materialize_camera_sample(sample.wrist_rgb, writer.path(wrist_relative))
         row = {
             "tick_index": sample.tick_index,
@@ -584,7 +588,7 @@ def _staging_rows(writer: AtomicEpisodeWriter, aligned: list[AlignedSample]) -> 
                 "interpolated": sample.state.interpolated,
                 "freshness_ns": sample.state.freshness_ns,
             },
-            "overhead_rgb": sample.overhead_rgb.staging_record(
+            "overhead_rgb": overhead.staging_record(
                 tick_monotonic_ns=sample.tick_monotonic_ns,
                 relative_path=overhead_relative,
             ),
@@ -592,8 +596,8 @@ def _staging_rows(writer: AtomicEpisodeWriter, aligned: list[AlignedSample]) -> 
                 tick_monotonic_ns=sample.tick_monotonic_ns,
                 relative_path=wrist_relative,
             ),
-            "sync_ok": True,
-            "sync_reasons": [],
+            "sync_ok": sample.sync_ok,
+            "sync_reasons": list(sample.sync_reasons),
         }
         if sample.wrist_depth is not None:
             depth_relative = f"wrist_depth/{sample.tick_index:06d}.png"
