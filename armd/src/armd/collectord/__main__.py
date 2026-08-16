@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import math
+import os
 import signal
 from pathlib import Path
 
@@ -51,6 +52,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-overhead-serial", default="")
     parser.add_argument("--expected-wrist-serial", default="260422273428")
     parser.add_argument(
+        "--stage-workers",
+        type=int,
+        default=int(os.environ.get("PANTHERA_COLLECTORD_STAGE_WORKERS", "2")),
+        help="收尾阶段（staging/校验）并行编码 worker 数，1..4，默认 2（2 核并行，预期 1.3-1.5×）",
+    )
+    parser.add_argument(
+        "--nice",
+        type=int,
+        default=int(os.environ.get("PANTHERA_COLLECTORD_NICE", "10")),
+        help="collectord 进程 nice 值（默认 10，降权；避免收尾并行抢 armd 200Hz 实时循环的 CPU）",
+    )
+    parser.add_argument(
         "--sim-allow-unapproved-root",
         action="store_true",
         help="tests/simulation only; production requires .panthera-usb3-ssd.json",
@@ -66,6 +79,8 @@ async def _run(args: argparse.Namespace) -> None:
     if args.fixed_margin_s < 0:
         raise SystemExit("--fixed-margin-s 不能为负")
 
+    if not 1 <= args.stage_workers <= 4:
+        raise SystemExit("--stage-workers 必须在 1..4 之间")
     fixed_ticks = args.fixed_ticks
     if args.fixed_duration_s is not None:
         if args.fixed_duration_s <= 0:
@@ -77,11 +92,7 @@ async def _run(args: argparse.Namespace) -> None:
         duration_s = args.fixed_duration_s + args.fixed_margin_s
     elif fixed_ticks is not None:
         target_duration_s = (fixed_ticks - 1) / FPS
-        duration_s = (
-            target_duration_s + args.fixed_margin_s
-            if args.duration_s is None
-            else args.duration_s
-        )
+        duration_s = target_duration_s + args.fixed_margin_s if args.duration_s is None else args.duration_s
     else:
         duration_s = 5.0 if args.duration_s is None else args.duration_s
 
@@ -114,7 +125,14 @@ async def _run(args: argparse.Namespace) -> None:
         allow_unapproved_root=args.sim_allow_unapproved_root,
         expected_overhead_serial=args.expected_overhead_serial,
         expected_wrist_serial=args.expected_wrist_serial,
+        stage_workers=args.stage_workers,
     )
+    # 降权（仅 Unix）：collectord 收尾阶段的 2 核并行不得饥饿 armd 的
+    # 200Hz HardwareLoop（固件 150ms 看门狗）。nice>0 是降权。
+    try:
+        os.nice(args.nice)
+    except (AttributeError, OSError, PermissionError):
+        pass
     finish_event = asyncio.Event()
     abort_event = asyncio.Event()
     loop = asyncio.get_running_loop()

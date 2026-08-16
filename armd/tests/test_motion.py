@@ -406,7 +406,15 @@ def test_teach_passes_gravity_scale_to_compensation() -> None:
             self.captured_scale: float | None = None
 
         def compensation_torque(
-            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+            self,
+            q,
+            v,
+            fc,
+            fv,
+            vel_threshold,
+            gravity_scale=1.0,
+            gravity_scale_high=None,
+            gravity_breakpoint=None,
         ):
             self.captured_scale = gravity_scale
             return np.zeros(6)
@@ -440,7 +448,15 @@ def test_teach_passes_segmented_gravity_scale_to_compensation() -> None:
             self.captured: tuple | None = None
 
         def compensation_torque(
-            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+            self,
+            q,
+            v,
+            fc,
+            fv,
+            vel_threshold,
+            gravity_scale=1.0,
+            gravity_scale_high=None,
+            gravity_breakpoint=None,
         ):
             self.captured = (gravity_scale, gravity_scale_high, gravity_breakpoint)
             return np.zeros(6)
@@ -479,7 +495,15 @@ def test_teach_disables_segmented_gravity_by_default() -> None:
             self.captured: tuple | None = None
 
         def compensation_torque(
-            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+            self,
+            q,
+            v,
+            fc,
+            fv,
+            vel_threshold,
+            gravity_scale=1.0,
+            gravity_scale_high=None,
+            gravity_breakpoint=None,
         ):
             self.captured = (gravity_scale, gravity_scale_high, gravity_breakpoint)
             return np.zeros(6)
@@ -503,7 +527,15 @@ def test_teach_disables_segmented_gravity_by_default() -> None:
 def test_teach_adds_continuous_gravity_residual_before_limit() -> None:
     class ResidualRecordingBackend(SimBackend):
         def compensation_torque(
-            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+            self,
+            q,
+            v,
+            fc,
+            fv,
+            vel_threshold,
+            gravity_scale=1.0,
+            gravity_scale_high=None,
+            gravity_breakpoint=None,
         ):
             return np.full(6, 0.25)
 
@@ -523,7 +555,15 @@ def test_teach_adds_continuous_gravity_residual_before_limit() -> None:
 def test_teach_residual_is_continuous_across_zero_crossing() -> None:
     class ContinuousGravityBackend(RecordingSimBackend):
         def compensation_torque(
-            self, q, v, fc, fv, vel_threshold, gravity_scale=1.0, gravity_scale_high=None, gravity_breakpoint=None
+            self,
+            q,
+            v,
+            fc,
+            fv,
+            vel_threshold,
+            gravity_scale=1.0,
+            gravity_scale_high=None,
+            gravity_breakpoint=None,
         ):
             # 连续的近似过轴曲线；测试不允许出现断点式跳变。
             return np.array([0.0, 0.6 - float(q[1]), 0.0, 0.0, 0.0, 0.0])
@@ -632,7 +672,9 @@ def test_manual_clutch_initial_hold_then_explicit_lock_samples_current_position(
     assert motion.auto_hold_state is AutoHoldState.HOLD
     assert backend.frames[-1].arm_kp == pytest.approx(MANUAL_CLUTCH_KP_HOLD, abs=0.05)
     assert backend.frames[-1].arm_kd == pytest.approx(
-        np.maximum.reduce([np.asarray(cfg.kd_hold), motion.kd, MANUAL_CLUTCH_KP_HOLD * MANUAL_CLUTCH_KD_MIN_RATIO])
+        np.maximum.reduce(
+            [np.asarray(cfg.kd_hold), motion.kd, MANUAL_CLUTCH_KP_HOLD * MANUAL_CLUTCH_KD_MIN_RATIO]
+        )
     )
     assert 16 * 0.005 == pytest.approx(MANUAL_CLUTCH_HOLD_RAMP_TIME_S)
 
@@ -995,3 +1037,101 @@ def test_auto_hold_hold_does_not_depend_on_zero_gravity_residual() -> None:
     drift = np.abs(backend._positions[:6] - hold)
     # 残差 0.1 Nm 由 kp=1.0 抵消，稳态偏移约 0.02 rad（Sim MIT 增益 0.05）
     assert np.all(drift < 0.05)
+
+
+def _make_posvel_playback(frames) -> TeachPlaybackMotion:
+    return TeachPlaybackMotion(
+        frames=frames,
+        mode="posvel",
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        vel_threshold=0.0,
+        tau_limit=np.ones(6),
+        gripper_kp=5.0,
+        gripper_kd=0.5,
+    )
+
+
+def test_teach_playback_move_to_start_engages_small_offset() -> None:
+    # 真机震颤根因回归：轨迹首帧与当前位形只差 ~0.0108 rad（J2）时，
+    # 旧的 0.05 容差会跳过起点移动，回放第一帧就是位置阶跃。
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    first = np.array([-0.666, 1.0028, 1.026, -1.006, 0.034, -0.009])
+    current = np.array([-0.666, 0.992, 1.026, -1.006, 0.034, -0.009])
+    backend._positions[:6] = current
+    backend._positions[6] = 1.79
+    motion = _make_posvel_playback(
+        [
+            PlaybackFrame(
+                timestamp_s=0.0,
+                position=first,
+                velocity=np.zeros(6),
+                gripper_position=1.79,
+                gripper_velocity=0.0,
+            ),
+            PlaybackFrame(
+                timestamp_s=0.01,
+                position=first,
+                velocity=np.zeros(6),
+                gripper_position=1.79,
+                gripper_velocity=0.0,
+            ),
+        ]
+    )
+
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    # 0.0108 > 0.003：起点移动阶段必须生效，不能直接进入回放
+    assert motion._playback_started_at is None
+    assert backend.frames[-1].arm_position[1] == pytest.approx(first[1])
+
+    # 到位后进入回放（起点移动只写目标，不跳变）
+    backend._positions[:6] = first
+    clock.advance(0.01)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert motion._playback_started_at is not None
+
+
+def test_teach_playback_posvel_interpolates_and_preserves_signed_velocity() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    start = np.zeros(6)
+    target = np.array([-0.01, 0.0, 0.0, 0.0, 0.0, 0.0])
+    backend._positions[:6] = start
+    backend._positions[6] = 1.79
+    motion = _make_posvel_playback(
+        [
+            PlaybackFrame(
+                timestamp_s=0.0,
+                position=start,
+                velocity=np.array([-0.5, 0.0, 0.0, 0.0, 0.0, 0.0]),
+                gripper_position=1.79,
+                gripper_velocity=0.0,
+            ),
+            PlaybackFrame(
+                timestamp_s=0.01,
+                position=target,
+                velocity=np.zeros(6),
+                gripper_position=1.79,
+                gripper_velocity=0.0,
+            ),
+        ]
+    )
+
+    # 首步：起点已到位 → 直接进入回放（不写帧）
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert backend.frames == []
+    # elapsed=0：alpha=0 → 起点位形 + 符号速度（不得 abs / 不得 1e-3 下限）
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert backend.frames[0].arm_position[0] == pytest.approx(start[0])
+    assert backend.frames[0].arm_velocity[0] == pytest.approx(-0.5)
+
+    # 中点：相邻帧插值（目标小步推进，而非采样点阶跃）
+    clock.advance(0.005)
+    backend.refresh_state()
+    assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert backend.frames[-1].arm_position[0] == pytest.approx(-0.005)
+    assert backend.frames[-1].arm_velocity[0] == pytest.approx(-0.25)

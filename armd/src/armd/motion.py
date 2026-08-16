@@ -285,9 +285,7 @@ class HoldPositionMotion:
         if values.shape != (6,) or not np.all(np.isfinite(values)):
             raise ValueError("HoldPositionMotion 目标必须包含 6 个有限数值")
         self._arm_position = values.copy()
-        self._gripper_position = (
-            None if gripper_position is None else float(gripper_position)
-        )
+        self._gripper_position = None if gripper_position is None else float(gripper_position)
         if self._gripper_position is not None and not np.isfinite(self._gripper_position):
             raise ValueError("夹爪目标必须为有限数值")
         self._gripper_velocity = float(gripper_velocity)
@@ -375,11 +373,7 @@ class HoldPositionMotion:
 
     def _write_hold_frame(self, backend: Backend, states) -> None:
         """写一帧定死锁保持帧（POS-VEL，夹爪到位持久锁存语义不变）。"""
-        gripper = (
-            self._gripper_position
-            if self._gripper_position is not None
-            else float(states[6].position)
-        )
+        gripper = self._gripper_position if self._gripper_position is not None else float(states[6].position)
         gripper_velocity = self._gripper_velocity
         if self._gripper_position is not None:
             current_gripper = float(states[6].position)
@@ -1075,9 +1069,7 @@ class TeachMotion:
         with self._lock:
             self._cancel_reason = reason
 
-    def step(
-        self, backend: Backend, now: float, *, shadow: bool = False
-    ) -> MotionStepResult:
+    def step(self, backend: Backend, now: float, *, shadow: bool = False) -> MotionStepResult:
         """推进 teach 状态机。shadow=True（双锁影子阶段）只推进内部状态与
         锁位锚定，不写任何帧；由 HoldPositionMotion 继续写定死锁帧。"""
         states = backend.read_all()
@@ -1097,20 +1089,16 @@ class TeachMotion:
                 self._q_hold = positions.copy()
                 self._still_since = None
                 self._hold_kp_start = np.zeros(6, dtype=np.float64)
-                hold_duration = (
-                    WORKZERO_QUICK_SAFE_HOLD_S if self._quick_safe_hold else self.safe_hold_time_s
-                )
+                hold_duration = WORKZERO_QUICK_SAFE_HOLD_S if self._quick_safe_hold else self.safe_hold_time_s
                 self._safe_hold_until = now + hold_duration
                 self._enter_state(
                     AutoHoldState.SAFE_HOLD,
                     now,
-                    f"cancel -> SAFE_HOLD ({cancel_reason.value}, {self.safe_hold_time_s:g}s)",
+                    f"cancel -> SAFE_HOLD ({cancel_reason.value}, {hold_duration:g}s)",
                 )
             if not (self._hold_state is AutoHoldState.SAFE_HOLD and now < (self._safe_hold_until or 0.0)):
                 if not shadow:
-                    backend.write_frame(
-                        idle_damping_frame(backend.limits, positions, states[6].position)
-                    )
+                    backend.write_frame(idle_damping_frame(backend.limits, positions, states[6].position))
                 self.reject_reason = f"示教已停止: {cancel_reason.value}"
                 return MotionStepResult.CANCELLED
 
@@ -1123,11 +1111,16 @@ class TeachMotion:
 
         # HOLD/RELEASE/SAFE_HOLD 的前馈锚定在锁定位形：重力项不能随漂移后的 q 追着走，
         # 摩擦项也不能把当前漂移速度变成同方向助推。DRAG 仍使用实时 q/v。
-        if self.manual_clutch and self._q_hold is not None and self._hold_state in {
-            AutoHoldState.HOLD,
-            AutoHoldState.RELEASE,
-            AutoHoldState.SAFE_HOLD,
-        }:
+        if (
+            self.manual_clutch
+            and self._q_hold is not None
+            and self._hold_state
+            in {
+                AutoHoldState.HOLD,
+                AutoHoldState.RELEASE,
+                AutoHoldState.SAFE_HOLD,
+            }
+        ):
             compensation_position = self._q_hold
             compensation_velocity = np.zeros(6, dtype=np.float64)
         else:
@@ -1151,21 +1144,15 @@ class TeachMotion:
         limits = backend.limits
         gripper_current = float(states[6].position)
         if gripper_target is None:
-            gripper_command = float(
-                np.clip(gripper_current, limits.gripper_lower, limits.gripper_upper)
-            )
+            gripper_command = float(np.clip(gripper_current, limits.gripper_lower, limits.gripper_upper))
             gripper_kp_cmd = 0.0
             gripper_kd_cmd = 0.0
         else:
-            gripper_command = float(
-                np.clip(gripper_target, limits.gripper_lower, limits.gripper_upper)
-            )
+            gripper_command = float(np.clip(gripper_target, limits.gripper_lower, limits.gripper_upper))
             if abs(gripper_current - gripper_command) <= self._gripper_target_tolerance:
                 with self._lock:
                     self._gripper_target = None
-                gripper_command = float(
-                    np.clip(gripper_current, limits.gripper_lower, limits.gripper_upper)
-                )
+                gripper_command = float(np.clip(gripper_current, limits.gripper_lower, limits.gripper_upper))
                 gripper_kp_cmd = 0.0
                 gripper_kd_cmd = 0.0
             else:
@@ -1443,8 +1430,11 @@ class TeachPlaybackMotion:
     ) -> MotionStepResult:
         first = self.frames[0]
         gripper_target = first.gripper_position if first.gripper_position is not None else states[6].position
-        arm_reached = np.all(np.abs(first.position - current) <= 0.05)
-        gripper_reached = abs(gripper_target - states[6].position) <= 0.05
+        # 起点到位容差收紧到 0.003 rad（> 编码器量化 π/2000≈0.0016）：
+        # 旧的 0.05 会跳过轨迹首帧与当前位形的 ~0.01 rad 偏移，导致回放
+        # 第一帧就是位置阶跃 → 固件 PID 追赶冲击（真机震颤根因之一）。
+        arm_reached = np.all(np.abs(first.position - current) <= 0.003)
+        gripper_reached = abs(gripper_target - states[6].position) <= 0.003
         if arm_reached and gripper_reached:
             self._playback_started_at = now
             return MotionStepResult.RUNNING
@@ -1474,11 +1464,38 @@ class TeachPlaybackMotion:
         assert self._playback_started_at is not None
         elapsed = now - self._playback_started_at
         timestamps = [frame.timestamp_s for frame in self.frames]
-        index = min(int(np.searchsorted(timestamps, elapsed, side="right")), len(self.frames) - 1)
+        # ---- 连续插值（与 ContinuousTrajectoryMotion 同一机制）----
+        # posvel 逐点跳变会让固件 POS-VEL PID 在每个 100Hz 采样点都追赶
+        # 冲击（真机震颤）；相邻帧 alpha 插值后每控制周期目标小步推进，
+        # 与 gozero 已真机验证的平滑路径一致。顺带修正原 searchsorted
+        # off-by-one（首帧实际取到 frames[1]，整体提前 10ms）。
+        index = int(np.searchsorted(timestamps, elapsed, side="right"))
+        index = min(max(index, 1), len(self.frames) - 1)
+        t0 = timestamps[index - 1]
+        t1 = timestamps[index]
+        alpha = (elapsed - t0) / max(t1 - t0, np.finfo(np.float64).eps)
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+        previous = self.frames[index - 1]
         frame = self.frames[index]
-        self._last_velocity = frame.velocity.copy()
+        commanded = previous.position * (1.0 - alpha) + frame.position * alpha
+        commanded_velocity = previous.velocity * (1.0 - alpha) + frame.velocity * alpha
+        if previous.gripper_position is not None and frame.gripper_position is not None:
+            gripper_position = previous.gripper_position * (1.0 - alpha) + frame.gripper_position * alpha
+            gripper_velocity = previous.gripper_velocity * (1.0 - alpha) + frame.gripper_velocity * alpha
+        else:
+            gripper_position = frame.gripper_position
+            gripper_velocity = frame.gripper_velocity
+        self._last_velocity = commanded_velocity.copy()
         if elapsed <= self.frames[-1].timestamp_s:
-            self._write_playback_frame(backend, states, frame)
+            self._write_playback_frame(
+                backend,
+                states,
+                frame,
+                commanded=commanded,
+                commanded_velocity=commanded_velocity,
+                gripper_position=gripper_position,
+                gripper_velocity=gripper_velocity,
+            )
             with self._lock:
                 self._fraction = max(self._fraction, (index + 1) / len(self.frames))
             return MotionStepResult.RUNNING
@@ -1515,25 +1532,43 @@ class TeachPlaybackMotion:
         )
         return MotionStepResult.RUNNING
 
-    def _write_playback_frame(self, backend: Backend, states, frame: PlaybackFrame) -> None:
-        gripper_position = (
-            frame.gripper_position if frame.gripper_position is not None else states[6].position
+    def _write_playback_frame(
+        self,
+        backend: Backend,
+        states,
+        frame: PlaybackFrame,
+        *,
+        commanded: np.ndarray | None = None,
+        commanded_velocity: np.ndarray | None = None,
+        gripper_position: float | None = None,
+        gripper_velocity: float | None = None,
+    ) -> None:
+        arm_position = commanded if commanded is not None else frame.position
+        arm_velocity = commanded_velocity if commanded_velocity is not None else frame.velocity
+        grip_position = (
+            gripper_position
+            if gripper_position is not None
+            else (frame.gripper_position if frame.gripper_position is not None else states[6].position)
         )
+        grip_velocity = gripper_velocity if gripper_velocity is not None else frame.gripper_velocity
         if self.mode == "posvel":
+            # 符号速度 + 零速度锁定（对齐官方 SDK/FINAL_PLAN 语义）：
+            # 不做 abs、不加 1e-3 下限；固件按有符号 int16 处理速度方向，
+            # 零速度帧即位置 PID 锁定。
             backend.write_frame(
                 position_frame(
                     backend,
-                    arm_position=frame.position,
-                    arm_velocity=np.maximum(np.abs(frame.velocity), 1e-3),
-                    gripper_position=gripper_position,
-                    gripper_velocity=max(abs(frame.gripper_velocity), 1e-3),
+                    arm_position=arm_position,
+                    arm_velocity=arm_velocity,
+                    gripper_position=grip_position,
+                    gripper_velocity=grip_velocity,
                     enforce_gripper_velocity_limit=False,
                 )
             )
             return
         torque = backend.compensation_torque(
-            frame.position,
-            frame.velocity,
+            arm_position,
+            arm_velocity,
             self.fc,
             self.fv,
             self.vel_threshold,
@@ -1545,13 +1580,13 @@ class TeachPlaybackMotion:
         backend.write_frame(
             JointFrame(
                 mode=FrameMode.POS_VEL_TQE_KP_KD,
-                arm_position=frame.position,
-                arm_velocity=frame.velocity,
+                arm_position=arm_position,
+                arm_velocity=arm_velocity,
                 arm_torque=torque,
                 arm_kp=self.kp,
                 arm_kd=self.kd,
-                gripper_position=gripper_position,
-                gripper_velocity=frame.gripper_velocity,
+                gripper_position=grip_position,
+                gripper_velocity=grip_velocity,
                 enforce_gripper_velocity_limit=False,
                 gripper_torque=0.0,
                 gripper_kp=self.gripper_kp if frame.gripper_position is not None else 0.0,

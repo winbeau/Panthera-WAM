@@ -8,8 +8,11 @@ import os
 import shutil
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +50,11 @@ class CollectorConfig:
     aliases_en: tuple[str, ...] = ()
     success: bool = True
     failure_reason: str | None = None
+    # 收尾阶段（staging/校验）并行编码的 worker 数：Pi5 实测收尾 ~270s 中
+    # 有可并行的 PNG 编码 + 校验读图 CPU 段；2 核并行预期 1.3-1.5×。
+    # 有界（≤4）且只覆盖 CPU 段，写盘/fsync 保持单线程串行，不危及
+    # armd 200Hz 实时循环（进程隔离 + 阶段隔离）。
+    stage_workers: int = 2
     grpc_options: tuple[tuple[str, int], ...] = (
         ("grpc.enable_http_proxy", 0),
         ("grpc.max_receive_message_length", 16 * 1024 * 1024),
@@ -60,6 +68,8 @@ class CollectorConfig:
             raise ValueError("fixed_ticks must be at least 2")
         if len(self.panthera_wam_commit) != 40:
             raise ValueError("panthera_wam_commit must be a full Git SHA")
+        if not 1 <= self.stage_workers <= 4:
+            raise ValueError("stage_workers must be in [1, 4]")
 
 
 @dataclass(slots=True)
@@ -118,11 +128,14 @@ def _write_camera_payload(frame: camera_pb2.CameraFrame, path: Path) -> None:
     path.write_bytes(frame.data)
 
 
-def _materialize_camera_sample(sample: CameraSample, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
+def _encode_camera_sample(sample: CameraSample) -> bytes:
+    """读 spool 原始帧并编码为 PNG bytes（纯 CPU；jpeg 帧走 os.link 硬链接）。
+
+    与 _materialize_camera_sample 拆开是为了在收尾阶段用 ThreadPoolExecutor
+    并行编码（PIL/zlib 释放 GIL）；输出字节与串行版本逐位一致。
+    """
     if sample.pixel_format == "jpeg":
-        os.link(sample.path, destination)
-        return
+        raise ValueError("jpeg frames are materialized via os.link, not encoded")
     payload = sample.path.read_bytes()
     if sample.pixel_format == "rgb8":
         row_bytes = sample.width * 3
@@ -135,8 +148,9 @@ def _materialize_camera_sample(sample: CameraSample, destination: Path) -> None:
             sample.width,
             3,
         )
-        Image.fromarray(image).save(destination, format="PNG")
-        return
+        buffer = BytesIO()
+        Image.fromarray(image).save(buffer, format="PNG")
+        return buffer.getvalue()
     if sample.pixel_format == "z16":
         row_bytes = sample.width * 2
         stride = len(payload) // sample.height
@@ -145,9 +159,18 @@ def _materialize_camera_sample(sample: CameraSample, destination: Path) -> None:
         raw = np.frombuffer(payload, dtype=np.uint8)
         packed = raw.reshape(sample.height, stride)[:, :row_bytes].copy()
         image = packed.view("<u2").reshape(sample.height, sample.width)
-        Image.fromarray(image).save(destination, format="PNG")
-        return
+        buffer = BytesIO()
+        Image.fromarray(image).save(buffer, format="PNG")
+        return buffer.getvalue()
     raise ValueError(f"unsupported spooled camera pixel format: {sample.pixel_format}")
+
+
+def _materialize_camera_sample(sample: CameraSample, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if sample.pixel_format == "jpeg":
+        os.link(sample.path, destination)
+        return
+    destination.write_bytes(_encode_camera_sample(sample))
 
 
 def _camera_sample(
@@ -558,60 +581,97 @@ async def _camera_status(
     return status
 
 
-def _staging_rows(writer: AtomicEpisodeWriter, aligned: list[AlignedSample]) -> list[dict[str, Any]]:
+def _staging_rows(
+    writer: AtomicEpisodeWriter,
+    aligned: list[AlignedSample],
+    stage_workers: int = 2,
+) -> list[dict[str, Any]]:
+    """物化 staging 帧并构建 parquet 行。
+
+    收尾加速：PNG 编码（PIL→zlib 释放 GIL）用有界线程池并行；写盘仍由
+    主线程按 tick 顺序落盘（避免 SD 随机写劣化），overhead 硬链接走串行
+    快路径。行构建 / overhead_frame_duplicated 补位状态机 / staging_record
+    保持串行保序（parquet 行严格递增 + 缺帧补位审计）。
+    """
     rows: list[dict[str, Any]] = []
     previous_overhead: CameraSample | None = None
-    for sample in aligned:
-        if sample.state is None or sample.wrist_rgb is None:
-            raise ValueError(f"cannot stage invalid aligned sample {sample.tick_index}")
-        overhead = sample.overhead_rgb
-        if overhead is None:
-            # 相机偶发丢帧（质量门容忍 ≤0.3%·canonical）：复制上一帧，
-            # 时间线不留空洞；sync_reasons 保留原缺失原因供下游审计。
-            if previous_overhead is None:
+    executor = ThreadPoolExecutor(max_workers=stage_workers)
+    pending: deque[tuple[Path, Future[bytes]]] = deque()
+    try:
+        for sample in aligned:
+            if sample.state is None or sample.wrist_rgb is None:
                 raise ValueError(f"cannot stage invalid aligned sample {sample.tick_index}")
-            overhead = previous_overhead
-        previous_overhead = overhead
-        overhead_suffix = ".jpg" if overhead.pixel_format == "jpeg" else ".png"
-        overhead_relative = f"overhead/{sample.tick_index:06d}{overhead_suffix}"
-        wrist_relative = f"wrist_rgb/{sample.tick_index:06d}.png"
-        _materialize_camera_sample(overhead, writer.path(overhead_relative))
-        _materialize_camera_sample(sample.wrist_rgb, writer.path(wrist_relative))
-        row = {
-            "tick_index": sample.tick_index,
-            "tick_monotonic_ns": sample.tick_monotonic_ns,
-            "state": {
-                "position": list(sample.state.position),
-                "velocity": list(sample.state.velocity),
-                "sequence": sample.state.sequence,
-                "sampled_monotonic_ns": sample.state.sampled_monotonic_ns,
-                "interpolated": sample.state.interpolated,
-                "freshness_ns": sample.state.freshness_ns,
-            },
-            "overhead_rgb": overhead.staging_record(
-                tick_monotonic_ns=sample.tick_monotonic_ns,
-                relative_path=overhead_relative,
-            ),
-            "wrist_rgb": sample.wrist_rgb.staging_record(
-                tick_monotonic_ns=sample.tick_monotonic_ns,
-                relative_path=wrist_relative,
-            ),
-            "sync_ok": sample.sync_ok,
-            "sync_reasons": list(sample.sync_reasons),
-            "overhead_frame_duplicated": overhead is not sample.overhead_rgb,
-        }
-        if sample.wrist_depth is not None:
-            depth_relative = f"wrist_depth/{sample.tick_index:06d}.png"
-            _materialize_camera_sample(sample.wrist_depth, writer.path(depth_relative))
-            row["wrist_depth"] = {
-                **sample.wrist_depth.staging_record(
+            overhead = sample.overhead_rgb
+            if overhead is None:
+                # 相机偶发丢帧（质量门容忍 ≤0.3%·canonical）：复制上一帧，
+                # 时间线不留空洞；sync_reasons 保留原缺失原因供下游审计。
+                if previous_overhead is None:
+                    raise ValueError(f"cannot stage invalid aligned sample {sample.tick_index}")
+                overhead = previous_overhead
+            previous_overhead = overhead
+            overhead_suffix = ".jpg" if overhead.pixel_format == "jpeg" else ".png"
+            overhead_relative = f"overhead/{sample.tick_index:06d}{overhead_suffix}"
+            wrist_relative = f"wrist_rgb/{sample.tick_index:06d}.png"
+            _materialize_camera_sample(overhead, writer.path(overhead_relative))
+            pending.append(
+                (
+                    writer.path(wrist_relative),
+                    executor.submit(_encode_camera_sample, sample.wrist_rgb),
+                )
+            )
+            if sample.wrist_depth is not None:
+                depth_relative = f"wrist_depth/{sample.tick_index:06d}.png"
+                pending.append(
+                    (
+                        writer.path(depth_relative),
+                        executor.submit(_encode_camera_sample, sample.wrist_depth),
+                    )
+                )
+            # 有界在飞：超过 2×workers 就按提交顺序回收并落盘（单写线程）
+            while len(pending) > 2 * stage_workers:
+                destination, future = pending.popleft()
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(future.result())
+            row = {
+                "tick_index": sample.tick_index,
+                "tick_monotonic_ns": sample.tick_monotonic_ns,
+                "state": {
+                    "position": list(sample.state.position),
+                    "velocity": list(sample.state.velocity),
+                    "sequence": sample.state.sequence,
+                    "sampled_monotonic_ns": sample.state.sampled_monotonic_ns,
+                    "interpolated": sample.state.interpolated,
+                    "freshness_ns": sample.state.freshness_ns,
+                },
+                "overhead_rgb": overhead.staging_record(
                     tick_monotonic_ns=sample.tick_monotonic_ns,
-                    relative_path=depth_relative,
+                    relative_path=overhead_relative,
                 ),
-                "depth_scale": sample.wrist_depth.depth_scale,
-                "pixel_format": "Z16",
+                "wrist_rgb": sample.wrist_rgb.staging_record(
+                    tick_monotonic_ns=sample.tick_monotonic_ns,
+                    relative_path=wrist_relative,
+                ),
+                "sync_ok": sample.sync_ok,
+                "sync_reasons": list(sample.sync_reasons),
+                "overhead_frame_duplicated": overhead is not sample.overhead_rgb,
             }
-        rows.append(row)
+            if sample.wrist_depth is not None:
+                depth_relative = f"wrist_depth/{sample.tick_index:06d}.png"
+                row["wrist_depth"] = {
+                    **sample.wrist_depth.staging_record(
+                        tick_monotonic_ns=sample.tick_monotonic_ns,
+                        relative_path=depth_relative,
+                    ),
+                    "depth_scale": sample.wrist_depth.depth_scale,
+                    "pixel_format": "Z16",
+                }
+            rows.append(row)
+        while pending:
+            destination, future = pending.popleft()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(future.result())
+    finally:
+        executor.shutdown(wait=True)
     return rows
 
 
@@ -729,7 +789,7 @@ async def collect_episode(
                 },
             )
             raise ValueError(f"episode failed quality gates: {gate_reasons}")
-        rows = _staging_rows(writer, aligned)
+        rows = _staging_rows(writer, aligned, stage_workers=config.stage_workers)
         shutil.rmtree(raw_dir)
         finished_wall_time = time.time_ns()
         finished_monotonic_ns = time.monotonic_ns()
@@ -745,26 +805,23 @@ async def collect_episode(
             "fixed_length": {
                 "enabled": config.fixed_ticks is not None,
                 "canonical_ticks": config.fixed_ticks,
-                "duration_s": (
-                    (config.fixed_ticks - 1) / FPS if config.fixed_ticks is not None else None
-                ),
+                "duration_s": ((config.fixed_ticks - 1) / FPS if config.fixed_ticks is not None else None),
             },
             "action_semantics": ACTION_SEMANTICS,
             "action_source": "next_state_pseudo_action",
             "schema_version": SCHEMA_VERSION,
             # ---- action-only 窗口契约（work-zero 方案 WZ-3）----
             # collectord 只记录任务动作：物理边界保证 episode 在 gozero 稳定后
-            # 才开始、在 stop/COMPLETE 后才允许 rezero，因此 901/900 canonical
-            # ticks 全部属于 action window。字段是防御性声明，不做猜测回填。
+            # 才开始；stop（SIGUSR1）后 capture 即停，rezero 动作不会再进入
+            # episode，因此 rezero 可在 COMPLETE 之前执行（rezero-first 流程）。
+            # COMPLETE 只表示收尾落盘完成。字段是防御性声明，不做猜测回填。
             "motion_scope": "task_action_only",
             "gozero_excluded": True,
             "rezero_excluded": True,
             "excluded_phases": ["gozero", "rezero", "safe_hold", "startup"],
             "action_window": {
                 "start_canonical_tick": 0,
-                "end_canonical_tick": (
-                    (config.fixed_ticks - 1) if config.fixed_ticks is not None else None
-                ),
+                "end_canonical_tick": ((config.fixed_ticks - 1) if config.fixed_ticks is not None else None),
             },
             "work_zero": _work_zero_manifest(),
             "camera_state_offset_frames": camera_state_offset,
@@ -803,6 +860,7 @@ async def collect_episode(
             samples=rows,
             sync_report=sync_report,
             timestamp_quality=timestamp_quality,
+            stage_workers=config.stage_workers,
             calibration=config.calibration,
         )
     except BaseException as exc:

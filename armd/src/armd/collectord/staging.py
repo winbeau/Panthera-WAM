@@ -7,6 +7,7 @@ import json
 import math
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,18 @@ def _finite_vector7(value: Any, *, field: str) -> None:
         raise ValueError(f"{field} contains NaN or Inf")
 
 
+def _verify_image(index: int, camera_key: str, image_path: Path) -> tuple[int, str, str, tuple[int, int]]:
+    """校验单张 staging 图片并返回 (index, camera_key, mode, (height, width))。
+
+    与 validate_staging_contents 分开是为了在收尾阶段并行校验 4293 张图
+    （Image.verify 是纯 CPU/IO 读，安全并行）。
+    """
+    with Image.open(image_path) as image:
+        image.verify()
+    with Image.open(image_path) as image:
+        return index, camera_key, image.mode, (image.height, image.width)
+
+
 def validate_staging_contents(
     staging: Path,
     *,
@@ -77,6 +90,7 @@ def validate_staging_contents(
     samples: list[dict[str, Any]],
     sync_report: dict[str, Any],
     timestamp_quality: dict[str, Any],
+    stage_workers: int = 2,
 ) -> None:
     """Validate all producer-facing staging content before publishing COMPLETE."""
     if episode.get("fps") != FPS:
@@ -107,9 +121,7 @@ def validate_staging_contents(
     if isinstance(fixed_length, dict) and bool(fixed_length.get("enabled")):
         expected_ticks = int(fixed_length.get("canonical_ticks", -1))
         if expected_ticks < 2 or len(samples) != expected_ticks:
-            raise ValueError(
-                "fixed-length episode tick count does not match fixed_length.canonical_ticks"
-            )
+            raise ValueError("fixed-length episode tick count does not match fixed_length.canonical_ticks")
     if not math.isclose(float(timestamp_quality.get("coverage_fraction", 0.0)), 1.0):
         raise ValueError("timestamp coverage_fraction must be 1.0")
 
@@ -123,6 +135,7 @@ def validate_staging_contents(
     previous_state_timestamp = -1
     previous_camera: dict[str, tuple[int, int, int, float | None, int | None, str, str]] = {}
     image_shapes: dict[str, tuple[int, int]] = {}
+    verify_tasks: list[tuple[int, str, Path]] = []
     for index, sample in enumerate(samples):
         tick = int(sample.get("tick_monotonic_ns", 0))
         if tick <= previous_tick:
@@ -166,9 +179,7 @@ def validate_staging_contents(
             clock_domain = str(camera["device_clock_domain"])
             stream_instance_id = str(camera.get("stream_instance_id", ""))
             previous = previous_camera.get(camera_key)
-            duplicated = camera_key == "overhead_rgb" and bool(
-                sample.get("overhead_frame_duplicated")
-            )
+            duplicated = camera_key == "overhead_rgb" and bool(sample.get("overhead_frame_duplicated"))
             if previous is not None and not duplicated:
                 (
                     previous_sequence,
@@ -207,12 +218,16 @@ def validate_staging_contents(
             image_path = (staging / str(camera["path"])).resolve()
             if not image_path.is_relative_to(staging) or not image_path.is_file():
                 raise ValueError(f"sample[{index}].{camera_key} path is invalid")
-            with Image.open(image_path) as image:
-                image.verify()
-            with Image.open(image_path) as image:
-                if camera_key == "wrist_depth" and image.mode not in ("I;16", "I"):
-                    raise ValueError(f"sample[{index}] depth image must be 16-bit")
-                shape = (image.height, image.width)
+            verify_tasks.append((index, camera_key, image_path))
+
+    # 并行校验图片（只读、无写序问题）；序列/时间戳回归与 shape 一致性
+    # 检查仍在本函数串行完成（严格递增 + 形状不变是全局约束）。
+    if verify_tasks:
+        with ThreadPoolExecutor(max_workers=stage_workers) as pool:
+            results = list(pool.map(lambda task: _verify_image(*task), verify_tasks))
+        for index, camera_key, mode, shape in results:
+            if camera_key == "wrist_depth" and mode not in ("I;16", "I"):
+                raise ValueError(f"sample[{index}] depth image must be 16-bit")
             previous_shape = image_shapes.setdefault(camera_key, shape)
             if shape != previous_shape:
                 raise ValueError(f"sample[{index}].{camera_key} shape changed within episode")
@@ -229,9 +244,7 @@ def validate_collection_root(root: Path, *, allow_unapproved: bool = False) -> P
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"collection root is not approved; missing valid {marker_path}") from exc
     if marker.get("approved") is not True or marker.get("device_class") not in APPROVED_DEVICE_CLASSES:
-        raise ValueError(
-            f"collection root marker must approve one of {sorted(APPROVED_DEVICE_CLASSES)}"
-        )
+        raise ValueError(f"collection root marker must approve one of {sorted(APPROVED_DEVICE_CLASSES)}")
     return root
 
 
@@ -274,6 +287,7 @@ class AtomicEpisodeWriter:
         sync_report: dict[str, Any],
         timestamp_quality: dict[str, Any],
         calibration: dict[str, Any],
+        stage_workers: int = 2,
     ) -> Path:
         if self._finished:
             raise RuntimeError("episode writer is already finished")
@@ -305,6 +319,7 @@ class AtomicEpisodeWriter:
                 samples=samples,
                 sync_report=sync_report,
                 timestamp_quality=timestamp_quality,
+                stage_workers=stage_workers,
             )
         except (OSError, TypeError, ValueError) as exc:
             self.abort("staging_validation_failure", details={"error": str(exc)})

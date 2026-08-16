@@ -270,6 +270,10 @@ class SimBackend:
             self._torques.fill(0.0)
         elif self._mode is FrameMode.POS_VEL_TQE:
             speed = np.minimum(np.abs(self._target_velocities), velocity_limit)
+            # 零速度在固件语义里 = 位置 PID 锁定（仍向目标位置收敛）；
+            # 仿真用最小速度下限近似该收敛行为，避免静态段在仿真里卡死
+            # （真实语义对齐在 armd：TeachPlaybackMotion 不再对速度取 abs/加下限）。
+            speed = np.maximum(speed, 1e-3)
             self._approach_targets(speed, dt)
             error = self._target_positions - self._positions
             self._torques = np.clip(error * 5.0, -self._max_torque, self._max_torque)

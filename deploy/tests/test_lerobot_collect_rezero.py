@@ -82,15 +82,27 @@ FAKE_RECORDCTL = textwrap.dedent(
         if [[ -f "$FAKE_FLAGS/status_calls" ]]; then n=$(cat "$FAKE_FLAGS/status_calls"); fi
         n=$((n + 1)); echo "$n" > "$FAKE_FLAGS/status_calls"
         echo "episode=$ep"
-        echo "process=RUNNING"
-        if [[ -f "$FAKE_FLAGS/complete" ]]; then
-          echo "published=COMPLETE"
-        elif [[ -f "$FAKE_FLAGS/complete_late" && "$n" -ge 2 ]]; then
-          echo "published=COMPLETE"
-        else
+        if [[ -f "$FAKE_FLAGS/collectord_fail" && -f "$FAKE_FLAGS/stopped" ]]; then
+          echo "process=NOT_RUNNING"
           echo "published=no"
+          echo "failed=FAILED.json"
+        else
+          echo "process=RUNNING"
+          if [[ -f "$FAKE_FLAGS/complete" ]]; then
+            echo "published=COMPLETE"
+          elif [[ -f "$FAKE_FLAGS/complete_late" && "$n" -ge 2 ]]; then
+            echo "published=COMPLETE"
+          else
+            echo "published=no"
+          fi
         fi ;;
-      stop) echo "==> 已请求 graceful stop：$ep" ;;
+      stop)
+        if [[ -f "$FAKE_FLAGS/stop_fail" ]]; then
+          echo "error: 没有可停止的 collectord：$ep" >&2
+          exit 1
+        fi
+        touch "$FAKE_FLAGS/stopped"
+        echo "==> 已请求 graceful stop：$ep" ;;
       abort) echo "==> 已请求放弃录制：$ep" ;;
       verify)
         if [[ -f "$FAKE_FLAGS/verify_fail" ]]; then
@@ -170,16 +182,36 @@ def test_verify_fail_still_rezero(tmp_path):
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "质量验收失败" in proc.stdout + proc.stderr
     assert "作废重录前删除" in proc.stderr
-    # verify 失败后仍然执行了 rezero（顺序：verify → rezero）
-    assert calls.index("recordctl verify ep001") < calls.index(rezero_call(calls))
+    # rezero 先行：rezero 在 verify 之前执行（臂安全优先于验收）
+    assert calls.index(rezero_call(calls)) < calls.index("recordctl verify ep001")
+    # rezero 成功后失败路径不得恢复阻尼锁（臂保持定死锁）
+    lock_lines = [i for i, l in enumerate(calls) if l.startswith("panthera teach clutch lock")]
+    assert lock_lines and max(lock_lines) < calls.index(rezero_call(calls))
 
 
 def test_complete_timeout_abort_then_rezero(tmp_path):
     proc, calls = run_record_formal(tmp_path, flags=())
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "超时" in proc.stdout + proc.stderr
-    # 超时先 SIGTERM 放弃残留 collectord，再 rezero
-    assert calls.index("recordctl abort ep001") < calls.index(rezero_call(calls))
+    # rezero 先行：超时后才 abort，rezero 早于 abort
+    assert calls.index(rezero_call(calls)) < calls.index("recordctl abort ep001")
+
+
+def test_collectord_dead_without_complete_fails_early(tmp_path):
+    # collectord 已退出且无 COMPLETE（收尾失败）→ 立即报错，不等 900s、不 abort
+    proc, calls = run_record_formal(tmp_path, flags=("collectord_fail",))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "已退出未 COMPLETE" in proc.stdout + proc.stderr
+    assert rezero_call(calls) in calls
+    assert "recordctl abort ep001" not in calls
+
+
+def test_stop_failure_still_rezeros(tmp_path):
+    # recordctl stop 失败（collectord 已死）也必须继续 rezero + 后续流程
+    proc, calls = run_record_formal(tmp_path, flags=("complete", "stop_fail"))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert rezero_call(calls) in calls
+    assert "record-formal 完成" in proc.stdout
 
 
 def test_complete_late_final_recheck_succeeds(tmp_path):
