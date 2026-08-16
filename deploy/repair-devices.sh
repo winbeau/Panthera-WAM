@@ -308,13 +308,11 @@ wait_service_inactive() {
             log "wait=inactive service=$service state=$state result=ok"
             return 0
         fi
-        if [[ "$state" == "query-failed" ]]; then
-            log "wait=inactive service=$service result=query-failed"
-            return 5
-        fi
+        # systemd 查询瞬时失败（停止瞬间常见）：重试，不立即报错
+        log "wait=inactive service=$service state=$state result=retry"
         sleep 0.1
     done
-    log "wait=inactive service=$service result=timeout"
+    log "wait=inactive service=$service result=timeout state=${state:-unknown}"
     return 7
 }
 
@@ -836,8 +834,36 @@ repair_realsense() {
     verify_realsense
 }
 
+arm_already_healthy() {
+    # 只读探测：armd 激活且 7 电机全部 mode=0x15/fault=0/静止 → 原本正常。
+    # 原本正常时跳过停止/重启，避免高位无谓重启（看门狗坠臂风险）。
+    local daemon_json state_json
+    [[ "$(service_state armd.service)" == "active" ]] || return 1
+    if ! capture_cmd daemon_json daemon-status-probe env \
+        PANTHERA_ENDPOINT=127.0.0.1:50051 \
+        timeout "${CLI_TIMEOUT_S}s" \
+        "$CLI_BIN" daemon status --json; then
+        return 1
+    fi
+    json_arm_healthy "$daemon_json" || return 1
+    if ! capture_cmd state_json state-probe env \
+        PANTHERA_ENDPOINT=127.0.0.1:50051 \
+        timeout "${CLI_TIMEOUT_S}s" \
+        "$CLI_BIN" state get --json; then
+        return 1
+    fi
+    json_state_healthy "$state_json"
+}
+
 repair_can() {
     check_arm_safety pre-stop-armd || return $?
+    if arm_already_healthy; then
+        log "repair=can result=already-healthy message=机械臂原本正常，无需重启"
+        PHASE=verify
+        verify_can
+        return $?
+    fi
+    log "repair=can result=needs-restart message=电机不健康（0x0B/异常），执行停止→udev 刷新→重启"
     stop_service armd.service 50051 || return $?
     refresh_udev || return $?
     start_service armd.service 50051 || return $?
@@ -912,6 +938,11 @@ main() {
     fi
     PHASE=complete
     log "result=success rc=0 log=$LOG_PATH map=$MAP_PATH"
+    if [[ "$TARGET" == can || "$TARGET" == all ]]; then
+        printf '✅ 机械臂服务正常（armd active、7 电机 mode=0x15、fault=0）\n'
+    else
+        printf '✅ 设备修复完成，只读验收通过\n'
+    fi
 }
 
 main "$@"
