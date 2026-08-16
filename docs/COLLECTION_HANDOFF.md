@@ -59,15 +59,15 @@ systemctl --user is-active armd.service            # 必须 active
 |---|---|---|---|
 | 1 | 任一 | `gozero` | MoveL 回工作0位 → 定死锁 + 开爪 90% |
 | 2 | A | `start-record color-block 021` | 定死锁→阻尼锁（**双锁重叠**：定死锁帧继续发送，teach lock 影子武装满刚度后才卸定死锁；不自动 drag），后台开始 preview 录制 |
-| 3 | B | `drag` / `lock --gripper 0.2` | 手拖动作；抓取/放置位闭爪 10% + 阻尼锁 |
-| 4 | A | `end-record` | SIGTERM 优雅结束（**变长**，窗口=实际动作）→ 阻尼锁 + 开爪 90% |
+| 3 | B | `drag` / `grip` / `lock --gripper 0.2` | 手拖动作；拖拽中 `grip` 闭爪 10%（保持 drag，闭爪过程录入 preview 轨迹）；`lock` = 闭爪 + 阻尼锁 |
+| 4 | A | `end-record` | SIGTERM 优雅结束（**变长**，窗口=实际动作）→ 阻尼锁 + 维持夹爪 10%（不主动开爪，开爪留给 rezero） |
 | 5 | 任一 | `rezero` | 开爪松方块 → MoveL 回工作0位 → 定死锁 |
 
 终端 B 的动作循环（在步骤 2 之后、步骤 4 之前）：
 
 ```bash
 ./deploy/lerobot-collect.sh drag                     # 手拖到方块
-./deploy/lerobot-collect.sh lock --gripper 0.2       # 闭爪抓取（脚本闭爪，动作不包含闭爪）
+./deploy/lerobot-collect.sh grip                     # 拖拽中闭爪抓取（保持 drag，闭爪过程录入 preview）
 ./deploy/lerobot-collect.sh drag                     # 拖到目标区上方
 ./deploy/lerobot-collect.sh lock --gripper 0.2       # 放置位闭爪保持
 ```

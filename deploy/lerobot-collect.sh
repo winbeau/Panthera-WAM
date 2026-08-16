@@ -237,7 +237,7 @@ end_record() {
         shift
     done
     ensure_cli
-    step "end-record：结束预览录制（变长窗口）→ 阻尼锁 + 开爪"
+    step "end-record：结束预览录制（变长窗口）→ 阻尼锁 + 维持夹爪 0.2"
     local pidf pid session log preview_ok=1
     pidf=$(ls -t "$STATE_DIR"/preview-*.pid 2>/dev/null | head -1 || true)
     if [[ -n "$pidf" ]]; then
@@ -261,19 +261,19 @@ print(f"==> preview OK: frames={meta['frames']} quality={meta['quality']}")
 PY
             tail -n 3 "$log" | sed 's/^/    /'
         elif ((force)); then
-            warn "录制进程已退出（pid=$pid），--force 跳过收尾与验收，直接进入阻尼锁 + 开爪"
+            warn "录制进程已退出（pid=$pid），--force 跳过收尾与验收，直接进入阻尼锁 + 维持夹爪 ${CLOSE_GRIPPER}"
         else
             die "录制进程已退出（pid=$pid），先看日志: ${pidf%.pid}.log（强制收尾: end-record --force）"
         fi
     elif ((force)); then
-        warn "没有进行中的预览录制，--force 直接进入阻尼锁 + 开爪"
+        warn "没有进行中的预览录制，--force 直接进入阻尼锁 + 维持夹爪 ${CLOSE_GRIPPER}"
     else
         die "没有进行中的预览录制（强制收尾: end-record --force）"
     fi
     # 阻尼锁 + 维持夹爪 10%（抓取状态保持到最后；开爪松方块留给 rezero）
     "$CLI" teach clutch lock --gripper "$CLOSE_GRIPPER"
     echo "==> 已进入阻尼锁 + 夹爪 ${CLOSE_GRIPPER}（10%，维持夹住状态）"
-    if [[ -n "$session" ]]; then
+    if [[ -n "${session:-}" ]]; then
         ((preview_ok)) || die "preview.json 验收失败，看日志: $log"
     fi
     echo "==> 下一步: ./deploy/lerobot-collect.sh rezero（开爪松方块，回工作0位定死锁）"
@@ -530,7 +530,7 @@ case "$command" in
     drag) drag ;;
     grip) grip ;;
     lock) lock "$@" ;;
-    end-record) end_record ;;
+    end-record) end_record "$@" ;;
     rezero) rezero ;;
     record-formal) record_formal "$@" ;;
     run-record) run_record "$@" ;;

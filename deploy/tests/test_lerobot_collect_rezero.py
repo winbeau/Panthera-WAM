@@ -9,6 +9,9 @@
 
 真机语义（不在本测试范围内，由 armd/tests/test_workzero.py 覆盖）：
 rezero = 开爪松方块 → 快速退出 teach → 定死锁+开爪窗口 → MoveL 回工作0位 → 定死锁。
+
+另覆盖 preview 抓取流程：grip（drag 模式闭爪 0.2，闭爪动作录入 preview 轨迹）
+与 end-record（阻尼锁 + 维持夹爪 0.2，开爪留给 rezero）。
 """
 
 import os
@@ -292,3 +295,49 @@ def test_run_record_rezero_fail_restores_damped_lock(tmp_path):
     assert "run-record 中断" in proc.stdout
     lock_lines = [i for i, l in enumerate(calls) if l.startswith("panthera teach clutch lock")]
     assert lock_lines and max(lock_lines) > calls.index(rezero_call(calls))
+
+
+# ---------------------------------------------------------------- grip / end-record
+
+def run_command(tmp_path, *args):
+    repo, home, flags_dir, calls, _ = build_fake_repo(tmp_path, ())
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CALLS_LOG": str(calls),
+        "FAKE_FLAGS": str(flags_dir),
+    }
+    proc = subprocess.run(
+        ["bash", str(repo / "deploy" / "lerobot-collect.sh"), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    call_lines = calls.read_text().splitlines() if calls.exists() else []
+    return proc, call_lines
+
+
+def test_grip_keeps_drag_and_closes_gripper(tmp_path):
+    proc, calls = run_command(tmp_path, "grip")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # 与 drag/lock 平级：保持 drag 模式，只把夹爪伺服到定稿闭爪值 0.2
+    assert "panthera teach clutch drag --gripper 0.2" in calls
+    assert "drag 保持" in proc.stdout
+    assert "已录入 preview" in proc.stdout
+
+
+def test_grip_listed_in_usage(tmp_path):
+    proc, _ = run_command(tmp_path, "help")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "lerobot-collect.sh grip" in proc.stdout
+
+
+def test_end_record_force_maintains_grip(tmp_path):
+    # 无录制进程时 --force 收尾：阻尼锁 + 维持夹爪 0.2，不主动开爪（开爪留给 rezero）
+    proc, calls = run_command(tmp_path, "end-record", "--force")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "panthera teach clutch lock --gripper 0.2" in calls
+    assert not any("--gripper 1.8" in line for line in calls)
+    assert "维持夹住状态" in proc.stdout
+    assert "rezero（开爪松方块" in proc.stdout
