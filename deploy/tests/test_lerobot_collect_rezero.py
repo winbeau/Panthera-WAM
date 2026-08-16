@@ -297,6 +297,62 @@ def test_run_record_rezero_fail_restores_damped_lock(tmp_path):
     assert lock_lines and max(lock_lines) > calls.index(rezero_call(calls))
 
 
+def test_run_record_task_number_shorthand_resolves_preview_trajectory(tmp_path):
+    # run-record <任务名> <三位编号> 等价于直接给 preview 目录里的轨迹路径
+    repo, home, flags_dir, calls, _ = build_fake_repo(tmp_path, flags=())
+    preview = home / "panthera-data" / "preview" / "color-block_021"
+    preview.mkdir(parents=True)
+    (preview / "replay_trajectory_021.jsonl").write_text('{"tick":0,"action":[0]*7}\n')
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CALLS_LOG": str(calls),
+        "FAKE_FLAGS": str(flags_dir),
+        "RECORD_FORMAL_COMPLETE_TIMEOUT_S": "2",
+    }
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "deploy" / "lerobot-collect.sh"),
+            "run-record",
+            "color-block",
+            "021",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    call_lines = calls.read_text().splitlines() if calls.exists() else []
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "run-record 完成" in proc.stdout
+    assert rezero_call(call_lines) in call_lines
+    play_line = next(l for l in call_lines if l.startswith("panthera teach play"))
+    assert "replay_trajectory_021.jsonl" in play_line
+
+
+def test_run_record_task_number_rejects_bad_number(tmp_path):
+    repo, home, flags_dir, calls, _ = build_fake_repo(tmp_path, flags=())
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CALLS_LOG": str(calls),
+        "FAKE_FLAGS": str(flags_dir),
+    }
+    proc = subprocess.run(
+        ["bash", str(repo / "deploy" / "lerobot-collect.sh"), "run-record", "color-block", "7"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 1
+    assert "编号必须是三位数字" in proc.stderr
+    assert rezero_call(calls.read_text().splitlines() if calls.exists() else []) not in (
+        calls.read_text().splitlines() if calls.exists() else []
+    )
+
+
 # ---------------------------------------------------------------- grip / end-record
 
 def run_command(tmp_path, *args):

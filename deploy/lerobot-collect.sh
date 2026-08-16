@@ -17,6 +17,7 @@
 #       ~/panthera-data/preview/color-block_021/replay_trajectory_021.jsonl
 #
 # 仅回放不录制（聚焦臂移动：无 collectord、不写盘、不造数据；结束直接 rezero）：
+#   ./deploy/lerobot-collect.sh run-record color-block 021
 #   ./deploy/lerobot-collect.sh run-record ~/panthera-data/preview/color-block_021/replay_trajectory_021.jsonl
 #
 # 其它：
@@ -444,10 +445,24 @@ record_formal() {
 run_record() {
     # 仅回放不录制：复用 record-formal 的 teach play 链路，但完全不启动
     # collectord——不录制、不写盘、不造数据，只验证/演示机械臂动作。
-    local replay="${1:?用法: run-record <replay-jsonl>}"
-    shift || true
+    # 用法：
+    #   run-record <replay-jsonl>
+    #   run-record <任务名> <三位编号>
+    #     == run-record $PREVIEW_ROOT/<任务名>_<编号>/replay_trajectory_<编号>.jsonl
+    local replay=""
+    if (($# >= 2)); then
+        local task="${1:?用法: run-record <任务名> <三位编号> 或 run-record <replay-jsonl>}"
+        local number="${2:?用法: run-record <任务名> <三位编号> 或 run-record <replay-jsonl>}"
+        shift 2 || true
+        [[ "$task" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "任务名非法: $task"
+        [[ "$number" =~ ^[0-9]{3}$ ]] || die "编号必须是三位数字，例如 007"
+        replay="$PREVIEW_ROOT/${task}_${number}/replay_trajectory_${number}.jsonl"
+    else
+        replay="${1:?用法: run-record <replay-jsonl> 或 run-record <任务名> <三位编号>}"
+        shift || true
+    fi
     FORMAL_FLOW_LABEL="run-record"
-    [[ -f "$replay" ]] || die "回放轨迹不存在: $replay"
+    [[ -f "$replay" ]] || die "回放轨迹不存在: $replay（preview 目录: $PREVIEW_ROOT）"
     ensure_cli; preflight; ensure_lease
 
     step "run-record：定死锁→阻尼锁 → teach play 回放 → 直接 rezero"
