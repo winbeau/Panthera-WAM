@@ -63,6 +63,9 @@ if ! pgrep -f "control heartbeat" >/dev/null 2>&1; then
 fi
 "$CLI" cartesian movel --pos "$POS" --rpy "$RPY"
 
+step "回位后快速闭爪（低位形下安全）"
+"$CLI" gripper close --pos 0.0 --vel 1.0
+
 step "完成"
 cat <<'EOF'
 ✔ 臂已回到初始0位（关节全 0，最低位形，重力稳定）。
