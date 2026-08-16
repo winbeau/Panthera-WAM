@@ -694,6 +694,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 )
             except RuntimeError as exc:
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+            # 定死锁保持中先算好轨迹（避免释放后计算间隙坠臂），再释放接管
             release_deadline = time.monotonic() + 4.0
             released = False
             while time.monotonic() < release_deadline:
@@ -708,8 +709,6 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     grpc.StatusCode.FAILED_PRECONDITION,
                     "夹爪未在 4s 内打开到工作零位姿态；拒绝回位（可能仍抓着物体）",
                 )
-            # 释放定死锁，让位给 MoveL（下一控制周期 POS-VEL 轨迹帧接管）
-            await self._release_hold_motion()
             state = self._hardware_loop.latest_state()
             if state is None or not all(motor.valid for motor in state.motors):
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "电机状态无效或连接不完整")
@@ -722,56 +721,31 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         if float(np.max(np.abs(target_positions - current))) <= WORKZERO_SMALL_RESIDUAL:
             motion = ImmediateDoneMotion()
         else:
-            # ---- MoveL 路径：FK 工作零位 → 笛卡尔轨迹（真机已验证 POS-VEL）----
-            await self._kinematics.warm()
+            # ---- MoveL 路径：FK 工作零位 → 连续插值轨迹（hold 保持期间算好）----
             try:
                 target_fk = await self._kinematics.call("fk", {"q": target_positions})
-                current_fk = await self._kinematics.call("fk", {"q": current})
+                motion = await self._prepare_continuous_trajectory(
+                    current=current,
+                    current_fk=None,
+                    target_position=np.asarray(target_fk["position"]),
+                    target_rotation=np.asarray(target_fk["rotation"]),
+                    duration=None,
+                    use_spline=True,
+                    max_torque=limits.joint_torque,
+                    tolerance=0.03,
+                    settle_timeout_s=min(6.0, timeout_s),
+                    operation_name="gozero-continuous",
+                )
             except ValueError as exc:
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
-            try:
-                result = await self._kinematics.call(
-                    "plan",
-                    {
-                        "current_q": current,
-                        "waypoints": [
-                            {
-                                "position": np.asarray(current_fk["position"]),
-                                "rotation": np.asarray(current_fk["rotation"]),
-                            },
-                            {
-                                "position": np.asarray(target_fk["position"]),
-                                "rotation": np.asarray(target_fk["rotation"]),
-                            },
-                        ],
-                        "duration": None,
-                        "use_spline": True,
-                    },
-                )
-            except ValueError as exc:
-                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
-            if result["fraction"] < 0.999 or not result["positions"]:
+        # 轨迹就绪后释放定死锁并立即接管（间隙 1-2 控制周期）
+        if self._hardware_loop.has_active_motion and self._hold_motion is not None:
+            await self._release_hold_motion()
+            if self._hardware_loop.has_active_motion:
                 await context.abort(
                     grpc.StatusCode.FAILED_PRECONDITION,
-                    f"工作零位笛卡尔路径仅完成 {result['fraction'] * 100:.1f}%",
+                    "定死锁释放超时，回位未启动",
                 )
-            # 连续插值执行：每控制周期平滑推进目标（不再逐点跳变/抽稀），
-            # 末端零速锁定后 settle（真机平滑性已由 jog 连续流验证）。
-            positions = [np.asarray(value) for value in result["positions"]]
-            velocities = [np.asarray(value) for value in result["velocities"]]
-            timestamps = list(result["timestamps"])
-            velocities[-1] = np.zeros(6)
-            if len(velocities) > 1:
-                velocities[-2] = np.asarray(velocities[-2]) * 0.5
-            motion = ContinuousTrajectoryMotion(
-                positions=positions,
-                velocities=velocities,
-                timestamps=timestamps,
-                max_torque=limits.joint_torque,
-                tolerance=0.03,
-                settle_timeout_s=min(6.0, timeout_s),
-                operation_name="gozero-continuous",
-            )
         accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
         try:
             await asyncio.wrap_future(accepted)
@@ -1551,17 +1525,6 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         return self._plan_response(result)
 
     async def MoveL(self, request, context):
-        if self._hardware_loop.has_active_motion:
-            if self._hold_motion is not None:
-                # 定死锁 → 新运动接管：释放保持帧，MoveL 下一周期接管
-                await self._release_hold_motion()
-                if self._hardware_loop.has_active_motion:
-                    await context.abort(
-                        grpc.StatusCode.FAILED_PRECONDITION,
-                        "定死锁释放超时，MoveL 未启动",
-                    )
-            else:
-                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
         current = await self._request_joint_angles([], context)
         current_fk = await self._kinematics.call("fk", {"q": current})
         try:
@@ -1590,6 +1553,67 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 grpc.StatusCode.INVALID_ARGUMENT,
                 reason or "max_torque 必须全部为正数",
             )
+        # ---- 先在保持状态下算完轨迹，再接管 active motion（避免释放到启动之间
+        #      无帧窗口造成高位形坠臂）----
+        try:
+            motion = await self._prepare_continuous_trajectory(
+                current=current,
+                current_fk=current_fk,
+                target_position=target_position,
+                target_rotation=target_rotation,
+                duration=duration,
+                use_spline=use_spline,
+                max_torque=max_torque,
+                tolerance=0.03,
+                settle_timeout_s=6.0,
+                operation_name="moveL",
+            )
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        if self._hardware_loop.has_active_motion:
+            if self._hold_motion is not None:
+                # 定死锁 → 新运动接管：轨迹已就绪，释放后立即 start（间隙 1-2 周期）
+                await self._release_hold_motion()
+                if self._hardware_loop.has_active_motion:
+                    await context.abort(
+                        grpc.StatusCode.FAILED_PRECONDITION,
+                        "定死锁释放超时，MoveL 未启动",
+                    )
+            else:
+                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
+        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
+        if not self._leases.heartbeat(token):
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+        execution_id = self._executions.register(motion, completion)
+        return arm_pb2.ExecutionAccepted(execution_id=execution_id)
+
+    async def _prepare_continuous_trajectory(
+        self,
+        *,
+        current: np.ndarray,
+        current_fk: dict[str, np.ndarray] | None = None,
+        target_position: np.ndarray,
+        target_rotation: np.ndarray,
+        duration: float | None,
+        use_spline: bool,
+        max_torque: np.ndarray,
+        tolerance: float,
+        settle_timeout_s: float,
+        operation_name: str,
+    ) -> ContinuousTrajectoryMotion:
+        """规划笛卡尔轨迹并构造连续插值执行 motion（gozero/MoveL 共用）。
+
+        必须在保持状态下调用（先算好轨迹，调用方再释放 hold/接管），
+        避免轨迹计算期间无帧窗口导致高位形坠臂。
+        """
+        await self._kinematics.warm()
+        if current_fk is None:
+            current_fk = await self._kinematics.call("fk", {"q": current})
         try:
             result = await self._kinematics.call(
                 "plan",
@@ -1607,28 +1631,24 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 },
             )
         except ValueError as exc:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+            raise ValueError(str(exc)) from exc
         if result["fraction"] < 0.999 or not result["positions"]:
-            await context.abort(
-                grpc.StatusCode.FAILED_PRECONDITION,
-                f"笛卡尔路径仅完成 {result['fraction'] * 100:.1f}%",
-            )
-        token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
-        if not self._leases.heartbeat(token):
-            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
-        motion = CartesianTrajectoryMotion(
-            positions=[np.asarray(value) for value in result["positions"]],
-            velocities=[np.asarray(value) for value in result["velocities"]],
-            timestamps=list(result["timestamps"]),
+            raise ValueError(f"笛卡尔路径仅完成 {result['fraction'] * 100:.1f}%")
+        positions = [np.asarray(value) for value in result["positions"]]
+        velocities = [np.asarray(value) for value in result["velocities"]]
+        timestamps = list(result["timestamps"])
+        velocities[-1] = np.zeros(6)
+        if len(velocities) > 1:
+            velocities[-2] = np.asarray(velocities[-2]) * 0.5
+        return ContinuousTrajectoryMotion(
+            positions=positions,
+            velocities=velocities,
+            timestamps=timestamps,
             max_torque=max_torque,
+            tolerance=tolerance,
+            settle_timeout_s=settle_timeout_s,
+            operation_name=operation_name,
         )
-        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
-        try:
-            await asyncio.wrap_future(accepted)
-        except RuntimeError as exc:
-            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
-        execution_id = self._executions.register(motion, completion)
-        return arm_pb2.ExecutionAccepted(execution_id=execution_id)
 
     async def RunJointTrajectory(self, request, context):
         if self._hardware_loop.has_active_motion:
