@@ -134,7 +134,7 @@ start_record() {
     mkdir -p "$STATE_DIR"
     local log="$STATE_DIR/preview-$session.log" pidf="$STATE_DIR/preview-$session.pid"
     : > "$log"
-    nohup "$repo_root/tools/preview-record.py" "$task" "$number" \
+    nohup "$repo_root/deploy/preview-record.sh" "$task" "$number" \
         --duration-s "$max_duration_s" --root "$PREVIEW_ROOT" >"$log" 2>&1 &
     echo $! > "$pidf"
     sleep 2
