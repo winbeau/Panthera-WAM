@@ -820,6 +820,7 @@ verify_can() {
 
 repair_c920e() {
     check_arm_safety pre-stop-device || return $?
+    prepare_privilege
     stop_service overhead-camera.service 50053 || return $?
     refresh_udev || return $?
     start_service overhead-camera.service 50053 || return $?
@@ -828,6 +829,7 @@ repair_c920e() {
 
 repair_realsense() {
     check_arm_safety pre-stop-device || return $?
+    prepare_privilege
     stop_service camerad.service 50052 || return $?
     refresh_udev || return $?
     start_service camerad.service 50052 || return $?
@@ -858,12 +860,13 @@ arm_already_healthy() {
 repair_can() {
     check_arm_safety pre-stop-armd || return $?
     if arm_already_healthy; then
-        log "repair=can result=already-healthy message=机械臂原本正常，无需重启"
+        log "repair=can result=already-healthy message=机械臂原本正常，无需重启（不需 sudo）"
         PHASE=verify
         verify_can
         return $?
     fi
     log "repair=can result=needs-restart message=电机不健康（0x0B/异常），执行停止→udev 刷新→重启"
+    prepare_privilege
     stop_service armd.service 50051 || return $?
     refresh_udev || return $?
     start_service armd.service 50051 || return $?
@@ -873,6 +876,7 @@ repair_can() {
 repair_all() {
     # 停止顺序：armd -> camerad -> overhead；刷新后按相机 -> armd 启动。
     check_arm_safety pre-stop-armd || return $?
+    prepare_privilege
     stop_service armd.service 50051 || return $?
     stop_service camerad.service 50052 || return $?
     stop_service overhead-camera.service 50053 || return $?
@@ -917,7 +921,6 @@ main() {
         log "lock=$LOCK_FILE result=acquired"
     fi
     safety_preflight
-    prepare_privilege
 
     PHASE=plan
     log "plan=target:$TARGET stop_order=armd,camerad,overhead refresh=udev+device-map start_order=camerad,overhead,armd"
