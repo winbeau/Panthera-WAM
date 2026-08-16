@@ -188,8 +188,11 @@ def position_frame(
     arm_max_torque: np.ndarray | None = None,
     gripper_max_torque: float | None = None,
     enforce_gripper_velocity_limit: bool = True,
+    enforce_arm_position_limit: bool = True,
 ) -> JointFrame:
-    safe_arm_position = clip_arm_position(backend, arm_position)
+    safe_arm_position = (
+        arm_position if not enforce_arm_position_limit else clip_arm_position(backend, arm_position)
+    )
     safe_gripper_position = float(
         np.clip(gripper_position, backend.limits.gripper_lower, backend.limits.gripper_upper)
     )
@@ -201,6 +204,7 @@ def position_frame(
         gripper_position=safe_gripper_position,
         gripper_velocity=gripper_velocity,
         enforce_gripper_velocity_limit=enforce_gripper_velocity_limit,
+        enforce_arm_position_limit=enforce_arm_position_limit,
         gripper_max_torque=(
             backend.limits.gripper_torque if gripper_max_torque is None else gripper_max_torque
         ),
@@ -294,7 +298,9 @@ class HoldPositionMotion:
         gripper_position: float | None = None,
         gripper_velocity: float = POSITION_HOLD_SPEED,
         max_torque: np.ndarray | None = None,
+        enforce_arm_position_limit: bool = True,
     ) -> None:
+        self._enforce_arm_position_limit = enforce_arm_position_limit
         values = np.asarray(arm_position, dtype=np.float64)
         if values.shape != (6,) or not np.all(np.isfinite(values)):
             raise ValueError("HoldPositionMotion 目标必须包含 6 个有限数值")
@@ -449,6 +455,7 @@ class HoldPositionMotion:
                 gripper_velocity=gripper_velocity,
                 arm_max_torque=self._max_torque,
                 gripper_max_torque=backend.limits.gripper_torque,
+                enforce_arm_position_limit=self._enforce_arm_position_limit,
             )
         )
 
@@ -940,6 +947,7 @@ class CartesianTrajectoryMotion:
                 arm_velocity=np.maximum(self._deceleration_velocity * scale, 1e-3),
                 arm_max_torque=self.max_torque,
                 gripper_position=gripper_position,
+                enforce_arm_position_limit=False,
             )
         )
         if self._deceleration_step < 12:
@@ -1530,6 +1538,7 @@ class TeachPlaybackMotion:
                 arm_velocity=np.full(6, 0.5),
                 gripper_position=gripper_target,
                 gripper_velocity=0.5,
+                enforce_arm_position_limit=False,
             )
         )
         return MotionStepResult.RUNNING
@@ -1593,6 +1602,7 @@ class TeachPlaybackMotion:
                     arm_position=target.position,
                     arm_velocity=np.full(6, PLAYBACK_SETTLE_SPEED),
                     gripper_position=gripper_target,
+                    enforce_arm_position_limit=False,
                 )
             )
             with self._lock:
@@ -1608,6 +1618,7 @@ class TeachPlaybackMotion:
                 arm_position=target.position,
                 arm_velocity=np.full(6, PLAYBACK_SETTLE_SPEED),
                 gripper_position=gripper_target,
+                enforce_arm_position_limit=False,
             )
         )
         return MotionStepResult.RUNNING
@@ -1634,6 +1645,7 @@ class TeachPlaybackMotion:
         if self.mode == "posvel":
             # 臂速度：有符号（固件 int16 方向语义；零速度帧 = 位置 PID 锁定）。
             # 夹爪速度：真机后端 POS_VEL_TQE 要求非负（幅值语义），保留 1e-3 下限。
+            # 臂位不拦软限位：执行回放与手拖录制一致，完整复现录制位形。
             backend.write_frame(
                 position_frame(
                     backend,
@@ -1642,6 +1654,7 @@ class TeachPlaybackMotion:
                     gripper_position=grip_position,
                     gripper_velocity=max(abs(grip_velocity), 1e-3),
                     enforce_gripper_velocity_limit=False,
+                    enforce_arm_position_limit=False,
                 )
             )
             return
@@ -1659,7 +1672,7 @@ class TeachPlaybackMotion:
         backend.write_frame(
             JointFrame(
                 mode=FrameMode.POS_VEL_TQE_KP_KD,
-                arm_position=clip_arm_position(backend, arm_position),
+                arm_position=arm_position,
                 arm_velocity=arm_velocity,
                 arm_torque=torque,
                 arm_kp=self.kp,
@@ -1667,6 +1680,7 @@ class TeachPlaybackMotion:
                 gripper_position=grip_position,
                 gripper_velocity=grip_velocity,
                 enforce_gripper_velocity_limit=False,
+                enforce_arm_position_limit=False,
                 gripper_torque=0.0,
                 gripper_kp=self.gripper_kp if frame.gripper_position is not None else 0.0,
                 gripper_kd=self.gripper_kd if frame.gripper_position is not None else 0.3,

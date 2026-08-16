@@ -154,6 +154,9 @@ class JointFrame:
     gripper_velocity: float
     # TeachPlayback 可显式取消夹爪速度上限；关节速度、夹爪位置/力矩限位仍强制。
     enforce_gripper_velocity_limit: bool = True
+    # 执行回放（teach play）允许复现手拖录制的越限位形（软限位不拦截臂位，
+    # 与手拖录制一致）；默认 True 时臂位软限位照常强制。
+    enforce_arm_position_limit: bool = True
     # POS_VEL_TQE 用
     arm_max_torque: np.ndarray | None = None
     gripper_max_torque: float = 0.5

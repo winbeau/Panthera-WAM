@@ -853,12 +853,14 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         arm_position: np.ndarray,
         gripper_position: float,
         gripper_velocity: float,
+        enforce_arm_position_limit: bool = True,
     ) -> None:
         """启动定死锁保持 motion（每控制周期 POS-VEL 帧，夹爪可选快速伺服）。"""
         motion = HoldPositionMotion(
             arm_position=arm_position,
             gripper_position=gripper_position,
             gripper_velocity=gripper_velocity,
+            enforce_arm_position_limit=enforce_arm_position_limit,
         )
         accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
         await asyncio.wrap_future(accepted)
@@ -2319,6 +2321,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 arm_position=np.asarray(target.position, dtype=np.float64),
                 gripper_position=gripper_position,
                 gripper_velocity=0.0,
+                # 回放自由臂位（与手拖录制一致）：末点定死锁也保持越限位形
+                enforce_arm_position_limit=False,
             )
         except RuntimeError as exc:
             logger.warning("回放结束定死锁启动失败：%s", exc)

@@ -295,7 +295,9 @@ class RealBackend:
             if gravity_scale_high is not None
             else scale.copy()
         )
-        breakpoint = _breakpoint_vector(gravity_breakpoint) if gravity_breakpoint is not None else np.full(6, np.inf)
+        breakpoint = (
+            _breakpoint_vector(gravity_breakpoint) if gravity_breakpoint is not None else np.full(6, np.inf)
+        )
         robot = self._require_robot()
         gravity = np.asarray(robot.get_Gravity(positions), dtype=np.float64)
         friction = np.asarray(
@@ -441,7 +443,11 @@ class RealBackend:
             positions = np.concatenate((frame.arm_position, [frame.gripper_position]))
             lower = np.concatenate((self.limits.joint_lower, [self.limits.gripper_lower]))
             upper = np.concatenate((self.limits.joint_upper, [self.limits.gripper_upper]))
-            _raise_limit_violation(positions, lower, upper, "目标位置")
+            if frame.enforce_arm_position_limit:
+                _raise_limit_violation(positions, lower, upper, "目标位置")
+            else:
+                # 执行回放自由臂位（与手拖录制一致）：只校验夹爪位置
+                _raise_limit_violation(positions[6:], lower[6:], upper[6:], "目标位置")
 
         _raise_magnitude_violation(frame.arm_velocity, self.limits.joint_velocity, "速度")
         if (
@@ -449,8 +455,7 @@ class RealBackend:
             and abs(frame.gripper_velocity) > self.limits.gripper_velocity
         ):
             raise LimitViolationError(
-                f"gripper 速度 {frame.gripper_velocity:.6g} "
-                f"超过限值 ±{self.limits.gripper_velocity:.6g}"
+                f"gripper 速度 {frame.gripper_velocity:.6g} 超过限值 ±{self.limits.gripper_velocity:.6g}"
             )
 
         torque_limits = np.concatenate((self.limits.joint_torque, [self.limits.gripper_torque]))
@@ -506,9 +511,7 @@ def _limits_from_robot(robot: Any) -> BackendLimits:
             joint_lower=np.asarray(joint_limits["lower"], dtype=np.float64),
             joint_upper=np.asarray(joint_limits["upper"], dtype=np.float64),
             joint_velocity=np.asarray(robot.velocity_limits, dtype=np.float64) * velocity_scale,
-            joint_acceleration=(
-                np.asarray(robot.acceleration_limits, dtype=np.float64) * acceleration_scale
-            ),
+            joint_acceleration=(np.asarray(robot.acceleration_limits, dtype=np.float64) * acceleration_scale),
             joint_torque=np.asarray(robot.max_torque, dtype=np.float64),
             gripper_lower=float(gripper_limits["lower"]),
             gripper_upper=float(gripper_limits["upper"]),

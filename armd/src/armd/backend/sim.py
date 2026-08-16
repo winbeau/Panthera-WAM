@@ -108,7 +108,16 @@ class SimBackend:
         positions = np.concatenate((frame.arm_position, [frame.gripper_position]))
         velocities = np.concatenate((frame.arm_velocity, [frame.gripper_velocity]))
         if frame.mode in {FrameMode.POS_VEL_TQE, FrameMode.POS_VEL_TQE_KP_KD}:
-            self._validate_position_targets(positions)
+            if frame.enforce_arm_position_limit:
+                self._validate_position_targets(positions)
+            else:
+                # 执行回放自由臂位（与手拖录制一致）：只校验夹爪位置
+                below = positions[6] < self._position_lower[6]
+                above = positions[6] > self._position_upper[6]
+                if below or above:
+                    direction = "下限" if below else "上限"
+                    limit = self._position_lower[6] if below else self._position_upper[6]
+                    raise LimitViolationError(f"gripper 目标 {positions[6]:.6g} 超过{direction} {limit:.6g}")
 
         self._mode = frame.mode
         self._target_positions = positions

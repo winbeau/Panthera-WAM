@@ -342,36 +342,19 @@ def record_state(
 def make_replay_trajectory(
     raw_path: Path,
     replay_path: Path,
-    *,
-    joint_limits: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> None:
     """Create the legal TeachPlay view without altering measured preview data."""
-    out_of_limit = 0
     with raw_path.open(encoding="utf-8") as source, replay_path.open("w", encoding="utf-8") as target:
         for line in source:
             if not line.strip():
                 continue
             row = json.loads(line)
             row["gripper_pos"] = float(np.clip(row["gripper_pos"], 0.0, 2.0))
-            if joint_limits is not None:
-                # 手拖可把关节拖出软限位（真机 J4 -1.6041 < -1.6）；回放视图
-                # 必须收进限位（否则 teach play 在越限帧硬停止 FAILED）。原始
-                # trajectory_*.jsonl 保持实测保真不动。
-                lower, upper = joint_limits
-                pos = np.clip(np.asarray(row["pos"], dtype=np.float64), lower, upper)
-                if not np.array_equal(pos, np.asarray(row["pos"], dtype=np.float64)):
-                    out_of_limit += 1
-                row["pos"] = pos.tolist()
             # TeachPlayback explicitly disables only the gripper velocity ceiling.
             row["gripper_vel"] = float(row["gripper_vel"])
             target.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
         target.flush()
         os.fsync(target.fileno())
-    if out_of_limit:
-        print(
-            f"WARNING: replay 视图 {out_of_limit} 帧关节位置越限已 clip 到软限位"
-            f"（原始 trajectory 保持实测不动；请检查手拖是否越过限位）"
-        )
 
 
 def read_first_last_rows(path: Path) -> tuple[dict[str, object], dict[str, object]] | None:
@@ -526,23 +509,7 @@ def main() -> int:
         thread.join(timeout=10.0)
 
     try:
-        limits_channel = grpc.insecure_channel(
-            args.arm_endpoint,
-            options=[
-                ("grpc.max_receive_message_length", MAX_MESSAGE_BYTES),
-                ("grpc.max_send_message_length", MAX_MESSAGE_BYTES),
-            ],
-        )
-        limits_stub = arm_pb2_grpc.ArmServiceStub(limits_channel)
-        soft = limits_stub.GetSoftLimits(arm_pb2.Empty(), timeout=5.0)
-        joint_limits = (
-            np.asarray([item.pos_min for item in soft.joint_limits], dtype=np.float64),
-            np.asarray([item.pos_max for item in soft.joint_limits], dtype=np.float64),
-        )
-    except Exception:
-        joint_limits = None
-    try:
-        make_replay_trajectory(trajectory_output, replay_trajectory_output, joint_limits=joint_limits)
+        make_replay_trajectory(trajectory_output, replay_trajectory_output)
         teach_output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(trajectory_output, teach_output)
         shutil.copy2(replay_trajectory_output, teach_replay_output)

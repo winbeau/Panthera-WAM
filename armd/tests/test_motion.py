@@ -23,6 +23,7 @@ from armd.motion import (
     TeachMotion,
     TeachPlaybackMotion,
     gripper_position_frame,
+    position_frame,
 )
 
 
@@ -891,9 +892,9 @@ def test_safe_hold_from_hold_preserves_kp_on_first_frame() -> None:
     assert backend.frames[-1].arm_kp == pytest.approx(MANUAL_CLUTCH_KP_HOLD, abs=0.05)
 
 
-def test_teach_playback_move_to_start_clips_out_of_limit_first_frame() -> None:
-    # 越限回放回归：preview 手拖可录出 J4=-1.6041（软限位 -1.6），回放目标
-    # 必须在写帧边界 clip，而不是触发硬停止 FAILED（真机 fraction 1.0 崩溃）。
+def test_teach_playback_move_to_start_writes_beyond_limit_raw() -> None:
+    # 执行回放自由臂位（与手拖录制一致）：轨迹越限帧原样下发，不被软限位
+    # 截断（真机 023 曾因 clip 导致末点无法收敛、settle 假超时 FAILED）。
     clock = FakeClock()
     backend = RecordingSimBackend(clock=clock)
     first = np.array([0.0, 0.0, 0.0, -1.6041, 0.0, 0.0])
@@ -919,7 +920,21 @@ def test_teach_playback_move_to_start_clips_out_of_limit_first_frame() -> None:
         ]
     )
     assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
-    assert backend.frames[-1].arm_position[3] == pytest.approx(backend.limits.joint_lower[3])
+    assert backend.frames[-1].arm_position[3] == pytest.approx(-1.6041)
+
+
+def test_position_frame_clips_arm_position_by_default() -> None:
+    # 非回放路径（定死锁/移动命令等）保持软限位 clip
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    frame = position_frame(
+        backend,
+        arm_position=np.array([0.0, 0.0, 0.0, -1.6041, 0.0, 0.0]),
+        arm_velocity=np.zeros(6),
+        gripper_position=1.79,
+    )
+    assert frame.arm_position[3] == pytest.approx(backend.limits.joint_lower[3])
+    assert frame.enforce_arm_position_limit is True
 
 
 def test_manual_clutch_safe_hold_rejects_new_clutch_commands() -> None:
