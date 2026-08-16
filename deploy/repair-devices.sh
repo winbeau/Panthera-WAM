@@ -15,6 +15,7 @@ cd "$repo_root"
 TARGET=""
 DRY_RUN=0
 CONFIRMED=0
+FORCE=0
 TIMEOUT_S="${PANTHERA_DEVICE_REPAIR_TIMEOUT_S:-20}"
 MIN_TTYACM="${PANTHERA_REPAIR_MIN_TTYACM:-4}"
 LOG_PATH="${PANTHERA_DEVICE_REPAIR_LOG:-}"
@@ -39,7 +40,9 @@ TARGET：
 
 选项：
   --dry-run             只读预检并打印计划，不停止/启动服务、不刷新 udev
-  --yes                 确认执行服务重启和 udev 刷新（真实执行必需）
+  --yes                 强制修复：跳过安全门（lease/运动客户端检查），
+                        无论什么状态直接执行停止→udev 刷新→重启；操作者
+                        自行确认人在场、扶臂、E-stop 可触达（高位重启会坠臂）
   --log FILE            日志文件；默认 ~/.local/state/panthera/device-repair-*.log
   --map-file FILE       ttyACM 只读映射快照；默认 ~/.local/state/panthera/ttyacm-map.tsv
   --timeout-s SEC       每个等待阶段的超时，默认 20
@@ -183,8 +186,9 @@ parse_args() {
                 DRY_RUN=1
                 shift
                 ;;
-            --yes|--confirm)
+            --yes|--confirm|--force)
                 CONFIRMED=1
+                FORCE=1
                 shift
                 ;;
             --log)
@@ -422,6 +426,10 @@ check_arm_safety() {
     local checkpoint=${1:-preflight}
     local control_json="" state_json="" armd_state
     PHASE=$checkpoint
+    if ((FORCE)); then
+        log "safety=bypassed force=--yes checkpoint=$checkpoint"
+        return 0
+    fi
     armd_state=$(service_state armd.service)
 
     if capture_cmd control_json control-status env \
@@ -479,7 +487,9 @@ safety_preflight() {
         fi
     done
 
-    if ! print_process_guard; then
+    if ((FORCE)); then
+        log "safety=bypassed force=--yes（跳过 active-client 检查）"
+    elif ! print_process_guard; then
         if ((DRY_RUN)); then
             log "safety=blocked result=would-refuse active teach/collectord/motion client"
         else

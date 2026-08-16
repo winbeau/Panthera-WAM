@@ -81,7 +81,7 @@ deploy/99-panthera-ht.rules
 
 ## 安全门
 
-真实执行必须带 `--yes`。脚本默认拒绝以下情况：
+真实执行必须带 `--yes`。**`--yes` 为强制模式**：跳过全部安全门（活动 lease、teach/heartbeat、collectord、运动客户端、臂速度检查），无论什么状态直接执行停止→udev 刷新→重启；操作者必须自行确认人在场、扶臂、E-stop 可触达（高位重启会坠臂）。不带 `--yes` 时默认拒绝以下情况：
 
 - 活动 control lease；
 - `teach-cal` 或 lease heartbeat 正在运行；

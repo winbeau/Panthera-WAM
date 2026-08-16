@@ -80,11 +80,13 @@ WPF 设为 `BackendMode=Remote`，机械臂端点使用 `http://<PI_IP>:50051`�
 ```bash
 cd ~/Panthera-WAM
 ./deploy/repair-devices.sh c920e --dry-run
-./deploy/repair-devices.sh c920e --yes       # C920e / overhead-camera
-./deploy/repair-devices.sh realsense --yes   # D405 / camerad
-./deploy/repair-devices.sh can --yes         # CAN / ttyACM / armd
-./deploy/repair-devices.sh all --yes         # 多设备拔插后的完整顺序
+./deploy/repair-devices.sh c920e --yes       # C920e / overhead-camera（强制模式）
+./deploy/repair-devices.sh realsense --yes   # D405 / camerad（强制模式）
+./deploy/repair-devices.sh can --yes         # CAN / ttyACM / armd（强制模式）
+./deploy/repair-devices.sh all --yes         # 多设备拔插后的完整顺序（强制模式）
 ```
+
+`--yes` 为强制模式：跳过 lease/运动客户端等安全门，无论什么状态直接停止→udev 刷新→重启；执行前操作者必须自行确认人在场、扶臂（高位重启会坠臂）、E-stop 可触达。
 
 脚本按目标停止并启动 systemd user service，刷新相关 udev/`ttyACM*` 映射，生成私有诊断日志和映射快照，最后读取实际相机帧、armd 状态及电机状态。它不会 acquire/release lease、发送运动或 CAN 写命令、调用 WorkZero，也不会把动态 `/dev/videoN`/`/dev/ttyACM0` 写入长期配置。详细顺序、退出码和安全门见 [`docs/DEVICE_REPAIR.md`](docs/DEVICE_REPAIR.md)。
 
