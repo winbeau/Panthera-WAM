@@ -1589,29 +1589,14 @@ class TeachPlaybackMotion:
                 self._fraction = max(self._fraction, (index + 1) / len(self.frames))
             return MotionStepResult.RUNNING
 
+        # 回放帧播完（elapsed 越过末帧时间戳）即 DONE，不再要求末点位置收敛：
+        # 末点伺服交由后续 hold-on-done 定死锁持续驱动（POS-VEL 保持帧会把臂
+        # 继续带到末点，无超时判罚）。真机 023/024：fraction=1.0 后 settle
+        # 收敛超时把整个回放判 FAILED，导致 run-record 无法进入自动 rezero。
         target = self.frames[-1]
         gripper_target = (
             target.gripper_position if target.gripper_position is not None else states[6].position
         )
-        arm_reached = np.all(np.abs(target.position - current) <= 0.03)
-        gripper_reached = abs(gripper_target - states[6].position) <= 0.03
-        if arm_reached and gripper_reached:
-            backend.write_frame(
-                position_frame(
-                    backend,
-                    arm_position=target.position,
-                    arm_velocity=np.full(6, PLAYBACK_SETTLE_SPEED),
-                    gripper_position=gripper_target,
-                    enforce_arm_position_limit=False,
-                )
-            )
-            with self._lock:
-                self._fraction = 1.0
-            return MotionStepResult.DONE
-        if elapsed >= self.frames[-1].timestamp_s + self.settle_timeout_s:
-            hold_current_position(backend)
-            self.reject_reason = "示教回放末点收敛超时"
-            return MotionStepResult.FAILED
         backend.write_frame(
             position_frame(
                 backend,
@@ -1621,7 +1606,9 @@ class TeachPlaybackMotion:
                 enforce_arm_position_limit=False,
             )
         )
-        return MotionStepResult.RUNNING
+        with self._lock:
+            self._fraction = 1.0
+        return MotionStepResult.DONE
 
     def _write_playback_frame(
         self,
