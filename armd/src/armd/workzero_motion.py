@@ -428,6 +428,10 @@ class WorkZeroMotion:
 WORKZERO_SETTLE_TOLERANCE = 0.03
 WORKZERO_SETTLE_TIMEOUT_S = 6.0
 WORKZERO_CONTINUOUS_CANCEL_DECEL_STEPS = 12
+# 夹爪开爪目标上限：相对 gripper 软限位上界的比例。真机实测爪物理极限
+# ≈96%，保存值（如 1.9735）超过极限会持续外推顶机械止点（J7 吃力震动）；
+# 目标钳位到 95% 后不再扩展。
+WORKZERO_GRIPPER_TARGET_FRACTION = 0.95
 
 
 class ContinuousTrajectoryMotion:

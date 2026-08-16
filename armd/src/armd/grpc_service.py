@@ -56,7 +56,12 @@ from .workzero import (
     WorkZeroStore,
     WorkZeroValidationError,
 )
-from .workzero_motion import ContinuousTrajectoryMotion, ImmediateDoneMotion, WORKZERO_SMALL_RESIDUAL
+from .workzero_motion import (
+    ContinuousTrajectoryMotion,
+    ImmediateDoneMotion,
+    WORKZERO_GRIPPER_TARGET_FRACTION,
+    WORKZERO_SMALL_RESIDUAL,
+)
 
 SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
 
@@ -683,13 +688,18 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             state = self._hardware_loop.latest_state()
             if state is None or not all(motor.valid for motor in state.motors):
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "电机状态无效或连接不完整")
+            # 开爪目标钳位到软限位上界的 95%（超过 95% 不再扩展，避免顶机械止点）
+            gripper_target = min(
+                float(pose.gripper),
+                WORKZERO_GRIPPER_TARGET_FRACTION * limits.gripper_upper,
+            )
             # 定死锁：POS-VEL 保持帧把臂锁在当前位形，同时快速开爪（松方块）
             try:
                 await self._start_hold_motion(
                     arm_position=np.array(
                         [motor.position for motor in state.motors[:6]], dtype=np.float64
                     ),
-                    gripper_position=pose.gripper,
+                    gripper_position=gripper_target,
                     gripper_velocity=1.0,
                 )
             except RuntimeError as exc:
@@ -700,7 +710,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             while time.monotonic() < release_deadline:
                 state = self._hardware_loop.latest_state()
                 if state is not None and all(motor.valid for motor in state.motors):
-                    if abs(state.motors[6].position - pose.gripper) <= 0.02:
+                    if abs(state.motors[6].position - gripper_target) <= 0.02:
                         released = True
                         break
                 await asyncio.sleep(0.05)
@@ -804,6 +814,13 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             # 取消/EStop：不自动保持（现有语义：柔顺/停止）
             logger.warning("workzero 回位已取消，不启动保持")
             return
+        limits = await asyncio.wrap_future(
+            self._hardware_loop.submit(lambda backend: backend.limits)
+        )
+        gripper_target = min(
+            float(pose.gripper),
+            WORKZERO_GRIPPER_TARGET_FRACTION * limits.gripper_upper,
+        )
         if result is MotionStepResult.FAILED:
             # 安全：失败也保持当前位置（定死锁），绝不因停止发帧坠臂
             logger.error("workzero 回位失败，保持当前位置防止坠臂")
@@ -824,7 +841,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         try:
             await self._start_hold_motion(
                 arm_position=np.asarray(pose.joints, dtype=np.float64),
-                gripper_position=pose.gripper,
+                gripper_position=gripper_target,
                 gripper_velocity=1.0,
             )
         except RuntimeError as exc:
@@ -834,11 +851,14 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         while time.monotonic() < release_deadline:
             state = self._hardware_loop.latest_state()
             if state is not None and all(motor.valid for motor in state.motors):
-                if abs(state.motors[6].position - pose.gripper) <= 0.02:
-                    logger.info("workzero 定死锁保持 + 夹爪已打开到工作零位姿态")
+                if abs(state.motors[6].position - gripper_target) <= 0.02:
+                    logger.info(
+                        "workzero 定死锁保持 + 夹爪已打开到目标 %.4f",
+                        gripper_target,
+                    )
                     return
             await asyncio.sleep(0.05)
-        logger.warning("workzero 夹爪未在 4s 内到达工作零位姿态，保持定死锁待人工处理")
+        logger.warning("workzero 夹爪未在 4s 内到达目标 %.4f，保持定死锁待人工处理", gripper_target)
 
     async def GetJointState(self, request, context):
         del request
