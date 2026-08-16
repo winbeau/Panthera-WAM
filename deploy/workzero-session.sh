@@ -28,7 +28,7 @@ teach_start_lock() {
     # 从定死锁接管时 armd 的 TeachMotion 首帧直接进入 HOLD。
     if start_output=$("$CLI" teach start --manual-clutch 2>&1); then
         printf '%s\n' "$start_output"
-    elif grep -Eq '已有运动正在执行' <<<"$start_output"; then
+    elif grep -Eq '已有运动正在执行|已有运行中的 teach' <<<"$start_output"; then
         echo "（teach 已在运行，跳过重复启动）"
     else
         printf '%s\n' "$start_output" >&2

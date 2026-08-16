@@ -5,10 +5,10 @@
 #
 # 五条一行命令（preview 流程）：
 #   ./deploy/lerobot-collect.sh gozero                     # 1. 回工作0位（定死锁+开爪）
-#   ./deploy/lerobot-collect.sh start-record color-block 021  # 2. 终端A：阻尼锁+开始录制（后台）
+#   ./deploy/lerobot-collect.sh start-record color-block 021 [--force]  # 2. 终端A：阻尼锁+开始录制（后台；--force 先删旧目录再录）
 #   ./deploy/lerobot-collect.sh drag                       # 3. 终端B：恢复手拖
 #   ./deploy/lerobot-collect.sh lock --gripper 0.2         # 3. 终端B：闭爪+阻尼锁
-#   ./deploy/lerobot-collect.sh end-record                 # 4. 结束录制（变长）→阻尼锁+开爪
+#   ./deploy/lerobot-collect.sh end-record [--force]       # 4. 结束录制（变长）→阻尼锁+开爪（--force 跳过已死录制进程收尾）
 #   ./deploy/lerobot-collect.sh rezero                     # 5. rezero 回工作0位（定死锁）
 #
 # 正式录制（把录制的动作用机械臂自己来一遍，开始/结束都 lock）：
@@ -65,7 +65,7 @@ teach_start_lock() {
     # 从定死锁接管时 armd 的 TeachMotion 首帧直接进入 HOLD。
     if start_output=$("$CLI" teach start --manual-clutch 2>&1); then
         printf '%s\n' "$start_output"
-    elif grep -Eq '已有运动正在执行' <<<"$start_output"; then
+    elif grep -Eq '已有运动正在执行|已有运行中的 teach' <<<"$start_output"; then
         echo "（teach 已在运行，跳过重复启动）"
     else
         printf '%s\n' "$start_output" >&2
@@ -136,24 +136,33 @@ zero_home() {
 }
 
 start_record() {
-    local task="${1:?用法: start-record <任务名> <三位编号> [--max-duration-s 秒]}"
+    local task="${1:?用法: start-record <任务名> <三位编号> [--max-duration-s 秒] [--force]}"
     local number="${2:?用法: start-record <任务名> <三位编号>}"
     shift 2 || true
-    local max_duration_s=600
+    local max_duration_s=600 force=0
     while (($#)); do
         case "$1" in
             --max-duration-s) max_duration_s=${2:?--max-duration-s 需要秒数}; shift 2 ;;
+            --force) force=1; shift ;;
             *) die "未知选项: $1" ;;
         esac
     done
     [[ "$task" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "任务名非法: $task"
     [[ "$number" =~ ^[0-9]{3}$ ]] || die "编号必须是三位数字，例如 021"
     ensure_cli; ensure_recorder; preflight; ensure_lease
-    step "start-record：定死锁→阻尼锁，然后后台开始预览录制"
-    teach_start_lock
     local session="${task}_${number}"
     local out="$PREVIEW_ROOT/$session"
-    [[ ! -e "$out" ]] || die "预览目录已存在，拒绝覆盖: $out"
+    # 目录检查必须在启动 teach 之前：失败退出时不能留下正在运行的 teach。
+    if [[ -e "$out" ]]; then
+        if ((force)); then
+            warn "强制覆盖：删除已有预览目录 $out（先删后录）"
+            rm -rf -- "$out"
+        else
+            die "预览目录已存在，拒绝覆盖: $out（覆盖重录: start-record ... --force）"
+        fi
+    fi
+    step "start-record：定死锁→阻尼锁，然后后台开始预览录制"
+    teach_start_lock
     mkdir -p "$STATE_DIR"
     local log="$STATE_DIR/preview-$session.log" pidf="$STATE_DIR/preview-$session.pid"
     : > "$log"
@@ -190,37 +199,54 @@ lock() {
 }
 
 end_record() {
+    local force=0
+    while (($#)); do
+        case "$1" in
+            --force) force=1 ;;
+            *) die "未知选项: $1" ;;
+        esac
+        shift
+    done
     ensure_cli
     step "end-record：结束预览录制（变长窗口）→ 阻尼锁 + 开爪"
-    local pidf
+    local pidf pid session log preview_ok=1
     pidf=$(ls -t "$STATE_DIR"/preview-*.pid 2>/dev/null | head -1 || true)
-    [[ -n "$pidf" ]] || die "没有进行中的预览录制"
-    local pid
-    pid=$(cat "$pidf")
-    kill -0 "$pid" 2>/dev/null || die "录制进程已退出（pid=$pid），先看日志: ${pidf%.pid}.log"
-    kill -TERM "$pid"
-    echo "==> 已请求优雅结束（SIGTERM），等待收尾……"
-    local deadline=$((SECONDS + 90))
-    while kill -0 "$pid" 2>/dev/null && ((SECONDS < deadline)); do sleep 1; done
-    kill -0 "$pid" 2>/dev/null && die "录制进程 90s 内未退出，请人工检查: $pid"
-    local session log
-    session=$(basename "$pidf" | sed 's/^preview-//; s/\.pid$//')
-    log="$STATE_DIR/preview-$session.log"
-    local meta="$PREVIEW_ROOT/$session/preview.json"
-    [[ -f "$meta" ]] || die "preview.json 未生成，看日志: $log"
-    local preview_ok=1
-    python3 - "$meta" <<'PY' || preview_ok=0
+    if [[ -n "$pidf" ]]; then
+        pid=$(cat "$pidf")
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid"
+            echo "==> 已请求优雅结束（SIGTERM），等待收尾……"
+            local deadline=$((SECONDS + 90))
+            while kill -0 "$pid" 2>/dev/null && ((SECONDS < deadline)); do sleep 1; done
+            kill -0 "$pid" 2>/dev/null && die "录制进程 90s 内未退出，请人工检查: $pid"
+            session=$(basename "$pidf" | sed 's/^preview-//; s/\.pid$//')
+            log="$STATE_DIR/preview-$session.log"
+            local meta="$PREVIEW_ROOT/$session/preview.json"
+            [[ -f "$meta" ]] || die "preview.json 未生成，看日志: $log"
+            python3 - "$meta" <<'PY' || preview_ok=0
 import json, sys
 meta = json.load(open(sys.argv[1], encoding="utf-8"))
 assert meta.get("success"), f"preview 失败: {meta}"
 assert meta.get("motion_scope") == "task_action_only", "manifest 缺少 action-only 契约"
 print(f"==> preview OK: frames={meta['frames']} quality={meta['quality']}")
 PY
-    tail -n 3 "$log" | sed 's/^/    /'
+            tail -n 3 "$log" | sed 's/^/    /'
+        elif ((force)); then
+            warn "录制进程已退出（pid=$pid），--force 跳过收尾与验收，直接进入阻尼锁 + 开爪"
+        else
+            die "录制进程已退出（pid=$pid），先看日志: ${pidf%.pid}.log（强制收尾: end-record --force）"
+        fi
+    elif ((force)); then
+        warn "没有进行中的预览录制，--force 直接进入阻尼锁 + 开爪"
+    else
+        die "没有进行中的预览录制（强制收尾: end-record --force）"
+    fi
     # 阻尼锁 + 开爪 90%（脚本开爪，动作指令到此为止）
     "$CLI" teach clutch lock --gripper "$OPEN_GRIPPER"
     echo "==> 已进入阻尼锁 + 开爪 ${OPEN_GRIPPER}（90%）"
-    ((preview_ok)) || die "preview.json 验收失败，看日志: $log"
+    if [[ -n "$session" ]]; then
+        ((preview_ok)) || die "preview.json 验收失败，看日志: $log"
+    fi
     echo "==> 下一步: ./deploy/lerobot-collect.sh rezero（回工作0位，定死锁）"
 }
 
