@@ -33,7 +33,7 @@ assert d["estop_engaged"] is False, "EStop 已触发，请先复位"
 print("控制状态 OK")'
 
 step "计算初始0位（关节全 0）笛卡尔目标"
-TARGET=$(python3 - <<'PY'
+TARGET=$("./.venv/bin/python" - <<'PY'
 import grpc
 import numpy as np
 from panthera_arm import arm_pb2, arm_pb2_grpc

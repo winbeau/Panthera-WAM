@@ -314,13 +314,20 @@ class HoldPositionMotion:
             if self._gripper_position is not None
             else float(states[6].position)
         )
+        gripper_velocity = self._gripper_velocity
+        if self._gripper_position is not None:
+            # 到位后锁定当前位置，停止外推：目标接近物理极限（如全开 99%）时
+            # 继续以速度伺服会顶住机械止点持续出力 → J7 震动/发热。
+            if abs(float(states[6].position) - self._gripper_position) <= 0.02:
+                gripper = float(states[6].position)
+                gripper_velocity = 0.0
         backend.write_frame(
             position_frame(
                 backend,
                 arm_position=self._arm_position,
                 arm_velocity=np.full(6, POSITION_HOLD_SPEED),
                 gripper_position=gripper,
-                gripper_velocity=self._gripper_velocity,
+                gripper_velocity=gripper_velocity,
                 arm_max_torque=self._max_torque,
                 gripper_max_torque=backend.limits.gripper_torque,
             )
