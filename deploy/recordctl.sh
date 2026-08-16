@@ -145,9 +145,15 @@ if f.get("enabled"):
     if expected < 2:
         raise SystemExit("invalid fixed canonical tick count")
     print("training_frames", expected - 1)
-for key in ("missing_frames", "duplicate_frames", "sequence_gaps", "ring_overflows"):
+for key in ("duplicate_frames", "sequence_gaps", "ring_overflows"):
     if any(int(v) != 0 for v in s.get(key, {}).values()):
         raise SystemExit(f"quality gate failed: {key}")
+# missing_frames 与 collectord 门限对齐（≤2%·canonical，至少 3）：
+# 缺帧已由 staging 复制上一帧补位（时间线无空洞），此处只审计原始丢帧数。
+missing_total = sum(int(v) for v in s.get("missing_frames", {}).values())
+missing_tolerance = max(3, round(int(s.get("canonical_ticks", -1)) * 0.02))
+if missing_total > missing_tolerance:
+    raise SystemExit(f"quality gate failed: missing_frames {missing_total} > {missing_tolerance}")
 if int(s.get("timestamp_regressions", -1)) != 0:
     raise SystemExit("quality gate failed: timestamp_regressions")
 print("VERIFY_OK")

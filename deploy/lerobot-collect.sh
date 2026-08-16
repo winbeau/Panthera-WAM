@@ -373,19 +373,31 @@ record_formal() {
         || { ./deploy/recordctl.sh stop "$episode" >/dev/null 2>&1 || true; formal_abort "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"; }
     # 5) 结束 lock（阻尼锁 + 闭爪 10%）
     teach_start_lock "$CLOSE_GRIPPER"
-    # 6) 优雅结束录制 + 验收（无论结果如何，随后第 7 步都会自动 rezero）
+    # 6) 优雅结束录制 + 验收（无论结果如何，随后第 7 步都会自动 rezero）。
+    #    相机帧落盘在 Pi5 上可能耗时数分钟（44s 动作实测约 4.5 分钟），
+    #    默认等 900s，可经 RECORD_FORMAL_COMPLETE_TIMEOUT_S 覆盖。
     ./deploy/recordctl.sh stop "$episode"
-    local fail_reason="" complete_ok=0 deadline=$((SECONDS + ${RECORD_FORMAL_COMPLETE_TIMEOUT_S:-300}))
+    local fail_reason="" complete_ok=0 wait_start=$SECONDS
+    local complete_timeout_s="${RECORD_FORMAL_COMPLETE_TIMEOUT_S:-900}"
+    local deadline=$((SECONDS + complete_timeout_s))
     while ((SECONDS < deadline)); do
         ./deploy/recordctl.sh status "$episode" 2>/dev/null | grep -q "published=COMPLETE" && { complete_ok=1; break; }
+        local elapsed=$((SECONDS - wait_start))
+        if ((elapsed > 0 && elapsed % 30 == 0)); then
+            echo "==> collectord 收尾中…已等 ${elapsed}s/${complete_timeout_s}s（相机帧落盘较慢，属正常）"
+        fi
         sleep 5
     done
+    # 收尾竞态兜底：截止后补一次最终检查（COMPLETE 可能恰在截止前后发布）
+    if ((!complete_ok)) && ./deploy/recordctl.sh status "$episode" 2>/dev/null | grep -q "published=COMPLETE"; then
+        complete_ok=1
+    fi
     if ((complete_ok)); then
         ./deploy/recordctl.sh verify "$episode" \
             || fail_reason="质量验收失败（详情: $COLLECTION_ROOT/episodes/$episode/FAILED.json 或 sync_report）"
     else
         ./deploy/recordctl.sh abort "$episode" >/dev/null 2>&1 || true
-        fail_reason="录制未在 ${RECORD_FORMAL_COMPLETE_TIMEOUT_S:-300}s 内 COMPLETE（超时，已 SIGTERM 放弃残留 collectord）"
+        fail_reason="录制未在 ${complete_timeout_s}s 内 COMPLETE（超时，已 SIGTERM 放弃残留 collectord）"
     fi
     # 7) 自动 rezero：开爪松方块 → MoveL 回工作0位 → 定死锁。
     #    录制成功或失败都执行；rezero 自身失败才回退 formal_abort（恢复阻尼锁）。

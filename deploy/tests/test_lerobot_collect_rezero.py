@@ -78,9 +78,18 @@ FAKE_RECORDCTL = textwrap.dedent(
     case "$cmd" in
       start) echo "==> collectord PID=99999" ;;
       status)
+        n=0
+        if [[ -f "$FAKE_FLAGS/status_calls" ]]; then n=$(cat "$FAKE_FLAGS/status_calls"); fi
+        n=$((n + 1)); echo "$n" > "$FAKE_FLAGS/status_calls"
         echo "episode=$ep"
         echo "process=RUNNING"
-        if [[ -f "$FAKE_FLAGS/complete" ]]; then echo "published=COMPLETE"; else echo "published=no"; fi ;;
+        if [[ -f "$FAKE_FLAGS/complete" ]]; then
+          echo "published=COMPLETE"
+        elif [[ -f "$FAKE_FLAGS/complete_late" && "$n" -ge 2 ]]; then
+          echo "published=COMPLETE"
+        else
+          echo "published=no"
+        fi ;;
       stop) echo "==> 已请求 graceful stop：$ep" ;;
       abort) echo "==> 已请求放弃录制：$ep" ;;
       verify)
@@ -171,6 +180,14 @@ def test_complete_timeout_abort_then_rezero(tmp_path):
     assert "超时" in proc.stdout + proc.stderr
     # 超时先 SIGTERM 放弃残留 collectord，再 rezero
     assert calls.index("recordctl abort ep001") < calls.index(rezero_call(calls))
+
+
+def test_complete_late_final_recheck_succeeds(tmp_path):
+    # COMPLETE 在截止后才发布：第 6 步的最终补查应救回成功路径
+    proc, calls = run_record_formal(tmp_path, flags=("complete_late",))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert rezero_call(calls) in calls
+    assert "record-formal 完成" in proc.stdout
 
 
 def test_rezero_fail_falls_back_to_formal_abort(tmp_path):
