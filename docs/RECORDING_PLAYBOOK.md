@@ -74,6 +74,26 @@ printf 'start\n' > /tmp/panthera-preview-color-block-021-<pid>.start
 - 旧 preview 没有这些字段时不被回填为成功，由后续 packager/validator 标记
   legacy/rejected（P4 落地）。
 
+## 0.7 正式 episode 的 work-zero 会话顺序（P4）
+
+正式 episode 的采集顺序固定为：
+
+```bash
+workzero gozero --confirm --wait   # 1. 进入工作零位并等待稳定（服务端连续流式）
+workzero show                       # 2. 只读确认姿态（可选）
+recordctl.sh start <episode>       # 3. 只记录任务动作窗口
+# …… 只执行任务动作（teach lock/drag 或模型控制）……
+recordctl.sh stop <episode>        # 4. graceful stop → fsync → 原子提交 → COMPLETE
+recordctl.sh verify <episode>      # 5. 验收：901 ticks / 900 frames；输出 rezero_allowed
+workzero rezero --confirm --wait   # 6. 只有 verify 通过后才允许回位
+```
+
+- `recordctl.sh stop` 未完成采集/原子提交/质量门之前，**禁止**执行 rezero；
+  stop/verify 失败时 episode 标记 rejected，机械臂保持当前安全状态等待人工处理；
+- episode.json 携带 `motion_scope=task_action_only`、`gozero_excluded/rezero_excluded`、
+  `action_window` 与 `work_zero` 姿态（存在时），packager 只取 action 帧；
+- 30 s → 901 canonical ticks → 900 training frames 契约不变。
+
 ## 1. 每次录制前检查
 
 ```bash

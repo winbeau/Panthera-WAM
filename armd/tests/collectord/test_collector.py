@@ -412,6 +412,14 @@ async def test_collectord_sim_writes_atomic_dual_rgb_depth_episode(tmp_path: Pat
     assert episode["depth"] == {"requested": True, "complete": True}
     assert episode["camera_state_offset_frames"] is None
     assert episode["offset_estimation_method"] == "insufficient_motion"
+    # action-only 窗口契约（P4）：collectord 只记录任务动作
+    assert episode["motion_scope"] == "task_action_only"
+    assert episode["gozero_excluded"] is True
+    assert episode["rezero_excluded"] is True
+    assert "gozero" in episode["excluded_phases"]
+    assert "rezero" in episode["excluded_phases"]
+    assert episode["action_window"]["start_canonical_tick"] == 0
+    assert episode["work_zero"] == {"present": False}  # 测试环境无工作零位文件，如实标注
 
     tools_src = Path(__file__).resolve().parents[3] / "tools/lerobot-v3/src"
     sys.path.insert(0, str(tools_src))

@@ -130,6 +130,8 @@ print("gaps", s.get("sequence_gaps"))
 print("overflow", s.get("ring_overflows"))
 print("timestamp_regressions", s.get("timestamp_regressions"))
 print("depth", e.get("depth"))
+print("motion_scope", e.get("motion_scope"))
+print("rezero_allowed", (p / "COMPLETE").exists() and e.get("motion_scope") == "task_action_only")
 if not e.get("success"):
     raise SystemExit("episode success=false")
 if f.get("enabled"):

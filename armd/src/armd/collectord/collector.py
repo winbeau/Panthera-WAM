@@ -740,6 +740,21 @@ async def collect_episode(
             "action_semantics": ACTION_SEMANTICS,
             "action_source": "next_state_pseudo_action",
             "schema_version": SCHEMA_VERSION,
+            # ---- action-only 窗口契约（work-zero 方案 WZ-3）----
+            # collectord 只记录任务动作：物理边界保证 episode 在 gozero 稳定后
+            # 才开始、在 stop/COMPLETE 后才允许 rezero，因此 901/900 canonical
+            # ticks 全部属于 action window。字段是防御性声明，不做猜测回填。
+            "motion_scope": "task_action_only",
+            "gozero_excluded": True,
+            "rezero_excluded": True,
+            "excluded_phases": ["gozero", "rezero", "safe_hold", "startup"],
+            "action_window": {
+                "start_canonical_tick": 0,
+                "end_canonical_tick": (
+                    (config.fixed_ticks - 1) if config.fixed_ticks is not None else None
+                ),
+            },
+            "work_zero": _work_zero_manifest(),
             "camera_state_offset_frames": camera_state_offset,
             "offset_estimation_method": sync_report["camera_state_offset"]["method"],
             "started_wall_time_ns": started_wall_time,
@@ -797,3 +812,24 @@ def load_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"expected JSON object: {path}")
     return value
+
+
+def _work_zero_manifest() -> dict[str, Any]:
+    """只读记录当前工作零位姿态（若有）；collectord 不 acquire lease，
+    不写文件，仅把 7 轴姿态随 episode 一并保存供 packager/训练做坐标解释。
+    文件缺失或损坏时如实标注 present=false，绝不伪造。"""
+    try:
+        from ..workzero import WorkZeroStore
+
+        pose = WorkZeroStore().load()
+    except Exception:  # noqa: BLE001 - 工作零位缺失不应让采集失败
+        return {"present": False}
+    if pose is None:
+        return {"present": False}
+    return {
+        "present": True,
+        "schema_version": pose.schema_version,
+        "joints": list(pose.joints),
+        "gripper": pose.gripper,
+        "source": pose.source,
+    }

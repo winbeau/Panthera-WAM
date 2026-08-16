@@ -636,3 +636,75 @@ async def test_gozero_cancel_via_execution(workzero_stack) -> None:
     assert final is not None and final.state == arm_pb2.EXEC_STATE_CANCELLED
     # 取消后不会自动重启
     assert not loop.has_active_motion
+
+
+# -------------------------------------------------- P4 action-only 边界
+
+
+@pytest.mark.asyncio
+async def test_policy_chunk_rejected_during_zeroing(workzero_stack) -> None:
+    """ZEROING/RUNNING 阶段模型 action 必须被拒（0 次 ApplyPolicyChunk 生效）。"""
+    loop, stub, metadata, _, _ = workzero_stack
+    await _start_teach(stub, metadata, manual_clutch=True)
+    loop.submit(_move_sim_arm).result(timeout=2.0)
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)
+    loop.submit(_move_sim_arm_elsewhere).result(timeout=2.0)
+
+    accepted = await stub.GoWorkZero(
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="gozero"),
+        metadata=metadata,
+    )
+    # 零位运动执行期间：模型策略被互斥拒绝
+    response = await stub.ApplyPolicyChunk(arm_pb2.PolicyActionChunk(), metadata=metadata)
+    assert not response.accepted
+    assert "运动" in response.reject_reason
+    # 取消后 motion 结束
+    await stub.CancelExecution(
+        arm_pb2.CancelExecutionRequest(execution_id=accepted.execution_id),
+        metadata=metadata,
+    )
+    await asyncio.sleep(0.5)
+    assert not loop.has_active_motion
+    # 取消后 ApplyPolicyChunk 不再因运动互斥被拒（返回其它结构化原因，而非运动拒绝）
+    response = await stub.ApplyPolicyChunk(arm_pb2.PolicyActionChunk(), metadata=metadata)
+    assert not response.accepted
+    assert "运动" not in response.reject_reason
+
+
+@pytest.mark.asyncio
+async def test_estop_during_gozero_no_auto_resume(workzero_stack) -> None:
+    """EStop 终止 WorkZeroMotion；ClearEStop 后绝不自动恢复运动。"""
+    loop, stub, metadata, _, _ = workzero_stack
+    await _start_teach(stub, metadata, manual_clutch=True)
+    loop.submit(_move_sim_arm).result(timeout=2.0)
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)
+    loop.submit(_move_sim_arm_elsewhere).result(timeout=2.0)
+
+    accepted = await stub.GoWorkZero(
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="gozero"),
+        metadata=metadata,
+    )
+    await asyncio.sleep(0.3)
+    await stub.EStop(arm_pb2.EStopRequest(reason="p4-test"))
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+        if status.state in (
+            arm_pb2.EXEC_STATE_DONE,
+            arm_pb2.EXEC_STATE_FAILED,
+            arm_pb2.EXEC_STATE_CANCELLED,
+        ):
+            break
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_CANCELLED
+    # ClearEStop 只恢复安全阻尼，不自动重新 gozero
+    await stub.ClearEStop(arm_pb2.ClearEStopRequest(confirm=True), metadata=metadata)
+    await asyncio.sleep(0.5)
+    assert not loop.has_active_motion
