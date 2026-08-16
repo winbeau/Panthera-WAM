@@ -622,9 +622,13 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 "work-zero 功能未启用（服务端 PANTHERA_WORKZERO_ENABLED=1 开启）",
             )
         # rezero（post_action）时 teach HOLD 是流程的一部分，允许其占用 active motion；
+        # 重试时 teach 已退出但定死锁 hold 仍在（首次尝试中途失败），也允许继续；
         # 其它任何运动都拒绝。
+        teach_alive = self._teach_motion is not None and (
+            self._teach_completion is None or not self._teach_completion.done()
+        )
         if self._hardware_loop.has_active_motion and (
-            request.reason != "post_action" or self._teach_motion is None
+            request.reason != "post_action" or not (teach_alive or self._hold_motion is not None)
         ):
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
         if self._recorder is not None:
@@ -695,24 +699,32 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
 
         # ---- rezero：动作完成位（teach HOLD）→ 快速安全退出 teach →
         #      定死锁 + 开爪（松方块，脚本做不是模型做）→ MoveL 回工作0位 ----
+        #      重试语义：首次尝试中途失败后 teach 已退出、hold 定死锁仍在
+        #      运行，重试必须能继续（此前被「已有运动正在执行」永久拒绝）。
         if request.reason == "post_action":
             await self._refresh_teach_motion()
             teach = self._teach_motion
-            if teach is None or not teach.manual_clutch:
+            if teach is not None:
+                if not teach.manual_clutch:
+                    await context.abort(
+                        grpc.StatusCode.FAILED_PRECONDITION,
+                        "rezero 需要 teach HOLD 状态：动作完成后请先 lock 保持",
+                    )
+                teach.request_cancel_quick(CancelReason.CLIENT)
+                exit_deadline = time.monotonic() + 1.5
+                while self._hardware_loop.has_active_motion and time.monotonic() < exit_deadline:
+                    await asyncio.sleep(0.02)
+                if self._hardware_loop.has_active_motion:
+                    await context.abort(
+                        grpc.StatusCode.FAILED_PRECONDITION,
+                        "teach 未在 1.5s 内退出，拒绝回位",
+                    )
+                await self._refresh_teach_motion()
+            elif self._hold_motion is None:
                 await context.abort(
                     grpc.StatusCode.FAILED_PRECONDITION,
                     "rezero 需要 teach HOLD 状态：动作完成后请先 lock 保持",
                 )
-            teach.request_cancel_quick(CancelReason.CLIENT)
-            exit_deadline = time.monotonic() + 1.5
-            while self._hardware_loop.has_active_motion and time.monotonic() < exit_deadline:
-                await asyncio.sleep(0.02)
-            if self._hardware_loop.has_active_motion:
-                await context.abort(
-                    grpc.StatusCode.FAILED_PRECONDITION,
-                    "teach 未在 1.5s 内退出，拒绝回位",
-                )
-            await self._refresh_teach_motion()
             state = self._hardware_loop.latest_state()
             if state is None or not all(motor.valid for motor in state.motors):
                 await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "电机状态无效或连接不完整")
@@ -722,21 +734,25 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 WORKZERO_GRIPPER_TARGET_FRACTION * limits.gripper_upper,
             )
             # 定死锁：POS-VEL 保持帧把臂锁在当前位形，同时开爪（松方块）。
+            # 重试时 hold 已在运行（首次尝试的残留），直接复用不重复启动。
             # 开爪速度 0.6：全速 1.0 的伺服噪声大（用户反馈“嗡嗡”），方向
             # 感知锁存已保证到位后不再加力。
-            try:
-                await self._start_hold_motion(
-                    arm_position=np.array(
-                        [motor.position for motor in state.motors[:6]], dtype=np.float64
-                    ),
-                    gripper_position=gripper_target,
-                    gripper_velocity=0.6,
-                )
-            except RuntimeError as exc:
-                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+            if self._hold_motion is None:
+                try:
+                    await self._start_hold_motion(
+                        arm_position=np.array(
+                            [motor.position for motor in state.motors[:6]], dtype=np.float64
+                        ),
+                        gripper_position=gripper_target,
+                        gripper_velocity=0.6,
+                    )
+                except RuntimeError as exc:
+                    await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
             # 轨迹规划（plan_task）已与夹爪开爪并行进行；这里只等开爪到位。
             # 方向感知：开爪（target>当前）越过 target-0.02 即视为到位，过冲也算。
-            release_deadline = time.monotonic() + 4.0
+            # 真机实测：0.2→1.8 @0.6 理论 2.7s，加伺服爬升/夹持负载后 4s
+            # 窗口偶发超时（2026-08-16 日志），放宽到 8s（保持帧持续锁定，安全）。
+            release_deadline = time.monotonic() + 8.0
             released = False
             while time.monotonic() < release_deadline:
                 state = self._hardware_loop.latest_state()
@@ -901,7 +917,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         except RuntimeError as exc:
             logger.warning("workzero 定死锁启动失败：%s", exc)
             return
-        release_deadline = time.monotonic() + 4.0
+        release_deadline = time.monotonic() + 8.0
         while time.monotonic() < release_deadline:
             state = self._hardware_loop.latest_state()
             if state is not None and all(motor.valid for motor in state.motors):
@@ -912,7 +928,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     )
                     return
             await asyncio.sleep(0.05)
-        logger.warning("workzero 夹爪未在 4s 内到达目标 %.4f，保持定死锁待人工处理", gripper_target)
+        logger.warning("workzero 夹爪未在 8s 内到达目标 %.4f，保持定死锁待人工处理", gripper_target)
 
     async def GetJointState(self, request, context):
         del request
