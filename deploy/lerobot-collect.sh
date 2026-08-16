@@ -350,6 +350,9 @@ record_formal() {
     fv=$(printf '%s\n' "$params" | sed -n 's/^fv=//p')
     echo "==> teach play 参数: kp=$kp kd=$kd fc=$fc fv=$fv"
     echo "==> 回放轨迹: $replay"
+    # 回放模式用 posvel（POS-VEL 逐帧刚体跟随，与 MoveL 同一执行机制）：
+    # MIT 前馈回放（kp≈0）是软跟随，前馈偏差会让臂乏力发飘（真机已见）。
+    # kp/kd/fc/fv 仅记录，posvel 模式不使用。
     # TeachPlay 路径校验要求轨迹位于 PANTHERA_TEACH_DIR 内；复制一份进去回放。
     local teach_dir="${PANTHERA_TEACH_DIR:-$HOME/.local/share/panthera/teach}"
     if [[ -f "$HOME/.config/panthera-wam/armd.env" ]]; then
@@ -360,7 +363,7 @@ record_formal() {
     mkdir -p "$teach_dir"
     local play_file="$teach_dir/$(basename "$replay")"
     cp -f "$replay" "$play_file"
-    "$CLI" teach play "$play_file" --mode mit \
+    "$CLI" teach play "$play_file" --mode posvel \
         --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" \
         || { ./deploy/recordctl.sh stop "$episode" >/dev/null 2>&1 || true; formal_abort "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"; }
     # 5) 结束 lock（阻尼锁 + 闭爪 10%）

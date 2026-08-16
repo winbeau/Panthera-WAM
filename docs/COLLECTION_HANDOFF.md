@@ -91,8 +91,8 @@ systemctl --user is-active armd.service            # 必须 active
 ```
 
 内部顺序：阻尼 lock → teach stop → `recordctl start --variable` →
-`teach play`（参数自动读 `~/.config/panthera-wam/teach-cal.json` 的 kp/kd/fc/fv，
-可用 `RECORD_FORMAL_KP/KD/FC/FV` 环境变量覆盖）→ 结束 lock（闭爪 10%）→
+`teach play --mode posvel`（POS-VEL 逐帧刚体跟随，与 MoveL 同一执行机制；
+MIT 前馈回放 kp≈0 软跟随真机发飘已弃用）→ 结束 lock（闭爪 10%）→
 `recordctl stop` → `verify`。完成后按提示跑 `rezero`。
 
 ⚠ 回放需要方块摆在录制起始位置。`record-formal` 真机全流程尚未现场验收，
@@ -200,9 +200,9 @@ manifest——目前仓库里还没有这个 packager 脚本（`dataset_worker.p
 - **未现场验收**：`record-formal` 全流程（含真机 teach play 回放）、
   `recordctl --variable` 变长 episode、`lerobot-collect.sh` 六条命令的
   真机串联——第一次执行逐段确认。
-- **teach play 参数**：自动读 `teach-cal.json`（kp=kd=0、fc/fv 按标定）；
-  若回放跟踪偏差大，先调 fc/fv（`deploy/teach-cal.sh --Jx "0,0,±fc,0,0"`），
-  注意 teach-cal.sh 会重启 armd——**改参数前先 zero-home**。
+- **teach play 模式**：record-formal 用 `--mode posvel`（POS-VEL 逐帧刚体跟随，与
+  MoveL 同一执行机制）；MIT 模式（kp≈0 前馈软跟随）在真机回放时乏力发飘、
+  末点无法收敛（EXEC_STATE_FAILED），已弃用。posvel 回放前把方块摆在录制起始位置。
 
 ## 10. 文件索引
 
