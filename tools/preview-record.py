@@ -46,6 +46,9 @@ DEFAULT_TEACH_ROOT = Path.home() / ".local" / "share" / "panthera" / "teach"
 DEFAULT_RATE_HZ = 8.0
 DEFAULT_DURATION_S = 30.0
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024
+VIDEO_TIME_BASE = Fraction(1, 90_000)
+MIN_STATE_RATE_HZ = 100.0
+MIN_CAMERA_RATE_FRACTION = 0.75
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,6 +95,49 @@ def frame_to_video_frame(frame: Any) -> av.VideoFrame | None:
     return None
 
 
+def camera_frame_monotonic_ns(frame: Any) -> int:
+    """Return the best Pi-monotonic timestamp carried by a camera frame."""
+    for field in (
+        "estimated_capture_monotonic_ns",
+        "captured_monotonic_ns",
+        "host_receive_monotonic_ns",
+        "host_publish_monotonic_ns",
+    ):
+        value = int(getattr(frame, field, 0) or 0)
+        if value > 0:
+            return value
+    return time.monotonic_ns()
+
+
+def video_pts(timestamp_ns: int, first_timestamp_ns: int, previous_pts: int) -> int:
+    elapsed_ns = max(0, timestamp_ns - first_timestamp_ns)
+    pts = round(elapsed_ns * VIDEO_TIME_BASE.denominator / 1_000_000_000)
+    return max(previous_pts + 1, pts)
+
+
+def quality_thresholds(actual_duration_s: float, camera_rate_hz: float) -> dict[str, int]:
+    duration = max(0.0, actual_duration_s)
+    camera_frames = max(1, int(duration * camera_rate_hz * MIN_CAMERA_RATE_FRACTION))
+    return {
+        "state": max(100, int(duration * MIN_STATE_RATE_HZ)),
+        "wrist": camera_frames,
+        "overhead": camera_frames,
+    }
+
+
+def preview_succeeded(
+    errors: list[str],
+    quality: dict[str, int],
+    counts: dict[str, int],
+    thresholds: dict[str, int],
+) -> bool:
+    return (
+        not errors
+        and not any(quality.values())
+        and all(counts.get(name, 0) >= minimum for name, minimum in thresholds.items())
+    )
+
+
 def encode_camera(
     name: str,
     endpoint: str,
@@ -103,6 +149,7 @@ def encode_camera(
     stop_event: threading.Event,
     errors: list[str],
     counts: dict[str, int],
+    timing: dict[str, dict[str, float | int]],
 ) -> None:
     channel = grpc.insecure_channel(
         endpoint,
@@ -115,6 +162,9 @@ def encode_camera(
     stream: Any = None
     call = None
     count = 0
+    first_timestamp_ns: int | None = None
+    last_timestamp_ns: int | None = None
+    last_pts = -1
     try:
         stub = camera_pb2_grpc.CameraServiceStub(channel)
         status = stub.GetStatus(camera_pb2.CameraStatusRequest(), timeout=5.0)
@@ -130,8 +180,8 @@ def encode_camera(
         )
         fps = Fraction(str(rate_hz)).limit_denominator(1000)
 
-        def encode(video_frame: av.VideoFrame) -> None:
-            nonlocal container, stream, count
+        def encode(video_frame: av.VideoFrame, timestamp_ns: int) -> None:
+            nonlocal container, stream, count, first_timestamp_ns, last_timestamp_ns, last_pts
             if container is None:
                 output.parent.mkdir(parents=True, exist_ok=True)
                 container = av.open(str(output), mode="w")
@@ -139,8 +189,14 @@ def encode_camera(
                 stream.width = video_frame.width
                 stream.height = video_frame.height
                 stream.pix_fmt = "yuv420p"
-                stream.options = {"preset": "veryfast", "crf": "23"}
-            video_frame.pts = count
+                stream.codec_context.thread_count = 2
+                stream.options = {"preset": "ultrafast", "tune": "zerolatency", "crf": "26"}
+            if first_timestamp_ns is None:
+                first_timestamp_ns = timestamp_ns
+            last_pts = video_pts(timestamp_ns, first_timestamp_ns, last_pts)
+            last_timestamp_ns = timestamp_ns
+            video_frame.pts = last_pts
+            video_frame.time_base = VIDEO_TIME_BASE
             for packet in stream.encode(video_frame):
                 container.mux(packet)
             count += 1
@@ -155,7 +211,7 @@ def encode_camera(
                 ready_event.set()
                 if not capture_start_event.wait(timeout=15.0):
                     break
-            encode(video_frame)
+            encode(video_frame, camera_frame_monotonic_ns(frame))
     except grpc.RpcError as exc:
         if not stop_event.is_set():
             errors.append(f"{name}: gRPC {exc.code().name}: {exc.details()}")
@@ -173,6 +229,17 @@ def encode_camera(
             container.close()
         channel.close()
         counts[name] = count
+        duration_s = (
+            max(0.0, (last_timestamp_ns - first_timestamp_ns) / 1_000_000_000.0)
+            if first_timestamp_ns is not None and last_timestamp_ns is not None
+            else 0.0
+        )
+        timing[name] = {
+            "first_monotonic_ns": first_timestamp_ns or 0,
+            "last_monotonic_ns": last_timestamp_ns or 0,
+            "duration_s": duration_s,
+            "effective_fps": count / duration_s if duration_s > 0 else 0.0,
+        }
 
 
 def record_state(
@@ -338,6 +405,7 @@ def main() -> int:
     stop_event = threading.Event()
     errors: list[str] = []
     counts: dict[str, int] = {}
+    camera_timing: dict[str, dict[str, float | int]] = {}
     quality = {
         "timestamp_regressions": 0,
         "sequence_regressions": 0,
@@ -373,6 +441,7 @@ def main() -> int:
                 stop_event,
                 errors,
                 counts,
+                camera_timing,
             ),
             daemon=True,
         ),
@@ -389,6 +458,7 @@ def main() -> int:
                 stop_event,
                 errors,
                 counts,
+                camera_timing,
             ),
             daemon=True,
         ),
@@ -406,7 +476,7 @@ def main() -> int:
     print(f"overhead：{overhead_output.name}", flush=True)
     print(f"trajectory：{trajectory_output.name}（7 轴 measured state/torque + timestamp/sequence）", flush=True)
     print(f"replay：{replay_trajectory_output.name}（TeachPlay 安全视图）", flush=True)
-    print(f"目标：{args.duration_s:.1f}s @ {args.rate_hz:.1f} FPS；Ctrl-C 可正常收尾", flush=True)
+    print(f"最长：{args.duration_s:.1f}s @ {args.rate_hz:.1f} FPS；Ctrl-C 可正常收尾", flush=True)
     for thread in threads:
         thread.start()
     start_event.set()
@@ -440,13 +510,27 @@ def main() -> int:
     except OSError as exc:
         errors.append(f"trajectory/TeachStore write failed: {exc}")
 
+    bounds = read_first_last_rows(trajectory_output)
+    actual_duration_s = 0.0
+    if bounds is not None:
+        first, last = bounds
+        actual_duration_s = max(
+            0.0,
+            (int(last["sampled_monotonic_ns"]) - int(first["sampled_monotonic_ns"]))
+            / 1_000_000_000.0,
+        )
+    thresholds = quality_thresholds(actual_duration_s, args.rate_hz)
+    success = preview_succeeded(errors, quality, counts, thresholds)
     metadata = {
         "task": args.task,
         "number": args.number,
         "duration_s": args.duration_s,
+        "actual_duration_s": actual_duration_s,
         "camera_rate_hz": args.rate_hz,
         "frames": counts,
+        "quality_thresholds": thresholds,
         "quality": quality,
+        "camera_timing": camera_timing,
         "trajectory": str(trajectory_output),
         "replay_trajectory": str(replay_trajectory_output),
         "teach_trajectory": str(teach_relative),
@@ -454,13 +538,7 @@ def main() -> int:
         "wrist_endpoint": args.wrist_endpoint,
         "overhead_endpoint": args.overhead_endpoint,
         "arm_endpoint": args.arm_endpoint,
-        "success": (
-            not errors
-            and not any(quality.values())
-            and counts.get("state", 0) >= max(100, int(args.duration_s * 100))
-            and counts.get("wrist", 0) >= max(1, int(args.duration_s * args.rate_hz * 0.75))
-            and counts.get("overhead", 0) >= max(1, int(args.duration_s * args.rate_hz * 0.75))
-        ),
+        "success": success,
     }
     # action-only 窗口契约（work-zero 方案 WZ-3，见 docs/FINAL_PLAN.md）：
     # preview 只记录任务动作窗口；gozero/rezero 与启动准备永不进入训练 action。
@@ -470,7 +548,6 @@ def main() -> int:
     metadata["gozero_excluded"] = True
     metadata["rezero_excluded"] = True
     metadata["capture_start_condition"] = "state+wrist+overhead"
-    bounds = read_first_last_rows(trajectory_output)
     if bounds is not None:
         first, last = bounds
         metadata["action_window"] = {
@@ -480,11 +557,17 @@ def main() -> int:
             "end_monotonic_ns": int(last["sampled_monotonic_ns"]),
         }
     metadata_output.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(metadata, ensure_ascii=False), flush=True)
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    print(json.dumps(metadata, ensure_ascii=False), flush=True)
+    if not success:
+        print(
+            f"ERROR: preview quality gate failed: frames={counts}, thresholds={thresholds}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

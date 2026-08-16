@@ -75,6 +75,9 @@ systemctl --user is-active armd.service            # 必须 active
 产物：`~/panthera-data/preview/color-block_021/`
 （`trajectory_021.jsonl` 原始 7 轴 + `replay_trajectory_021.jsonl` TeachPlay 视图 +
 两个 MP4 + `preview.json`）。`end-record` 会用 `preview.json` 的 `success` 字段验收。
+其中 `duration_s` 是安全上限，`actual_duration_s` 才是本次动作窗口；状态流和相机
+帧数质量门按 `actual_duration_s` 计算。两个 MP4 的 PTS 来自 Pi 单调相机时间戳，
+即使编码掉帧也不得压缩或加速动作时间线。
 
 ## 4. 正式录制（record-formal）
 
@@ -180,8 +183,10 @@ manifest——目前仓库里还没有这个 packager 脚本（`dataset_worker.p
    上限激进；任何异常声音/抖动/关节 mode 变 `0x0B` 立即 E-stop。
 5. 连续两段录制之间：rezero 后臂已在工作0位（定死锁），可直接从
    `start-record` 继续，不必重复 gozero。
-6. 在 Pi 上不要在根目录用 `uv run --directory armd` 跑一次性命令——会重建
-   `.venv` 把 CLI 弄丢；修法：`uv sync --frozen`。
+6. 在 Pi 上不要用 `uv run --directory armd`，也不要把裸 `uv sync --frozen`
+   当作在线修复：前者会重建 `.venv`，后者会移除未写入锁文件的厂商
+   `hightorque_robot` wheel。只在机械臂回到低位并进入维护窗口后运行
+   `deploy/install-pi5.sh`；该脚本会同步环境并重新安装匹配 CPython/ARM64 的 wheel。
 
 ## 9. 已知问题与未验证清单
 

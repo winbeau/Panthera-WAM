@@ -44,7 +44,12 @@ usage() {
     exit "${1:-0}"
 }
 
-ensure_cli() { [[ -x "$CLI" ]] || die "找不到 $CLI；先在 Pi 上 uv sync --frozen"; }
+ensure_cli() { [[ -x "$CLI" ]] || die "找不到 $CLI；机械臂回低位后运行 deploy/install-pi5.sh 修复环境"; }
+
+ensure_recorder() {
+    "$repo_root/deploy/preview-record.sh" --help >/dev/null 2>&1 \
+        || die "preview 录制器依赖检查失败；运行 $repo_root/deploy/preview-record.sh --help 查看原因"
+}
 
 ensure_lease() {
     "$CLI" control acquire --client-id session >/dev/null 2>&1 || true
@@ -125,7 +130,7 @@ start_record() {
     done
     [[ "$task" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "任务名非法: $task"
     [[ "$number" =~ ^[0-9]{3}$ ]] || die "编号必须是三位数字，例如 021"
-    ensure_cli; preflight; ensure_lease
+    ensure_cli; ensure_recorder; preflight; ensure_lease
     step "start-record：定死锁→阻尼锁，然后后台开始预览录制"
     teach_start_lock
     local session="${task}_${number}"
@@ -135,7 +140,7 @@ start_record() {
     local log="$STATE_DIR/preview-$session.log" pidf="$STATE_DIR/preview-$session.pid"
     : > "$log"
     nohup "$repo_root/deploy/preview-record.sh" "$task" "$number" \
-        --duration-s "$max_duration_s" --root "$PREVIEW_ROOT" >"$log" 2>&1 &
+        --duration-s "$max_duration_s" --root "$PREVIEW_ROOT" >"$log" 2>&1 < /dev/null &
     echo $! > "$pidf"
     sleep 2
     kill -0 "$(cat "$pidf")" 2>/dev/null || die "录制进程未存活，看日志: $log"
@@ -185,7 +190,8 @@ end_record() {
     log="$STATE_DIR/preview-$session.log"
     local meta="$PREVIEW_ROOT/$session/preview.json"
     [[ -f "$meta" ]] || die "preview.json 未生成，看日志: $log"
-    python3 - "$meta" <<'PY' || die "preview.json 验收失败，看日志"
+    local preview_ok=1
+    python3 - "$meta" <<'PY' || preview_ok=0
 import json, sys
 meta = json.load(open(sys.argv[1], encoding="utf-8"))
 assert meta.get("success"), f"preview 失败: {meta}"
@@ -196,6 +202,7 @@ PY
     # 阻尼锁 + 开爪 90%（脚本开爪，动作指令到此为止）
     "$CLI" teach clutch lock --gripper "$OPEN_GRIPPER"
     echo "==> 已进入阻尼锁 + 开爪 ${OPEN_GRIPPER}（90%）"
+    ((preview_ok)) || die "preview.json 验收失败，看日志: $log"
     echo "==> 下一步: ./deploy/lerobot-collect.sh rezero（回工作0位，定死锁）"
 }
 
