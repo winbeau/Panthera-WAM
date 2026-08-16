@@ -26,6 +26,7 @@ from .hardware_loop import CancelReason, HardwareLoop, MotionStepResult
 from .kinematics import KinematicsWorker
 from .motion import (
     AutoHoldConfig,
+    AutoHoldState,
     CartesianTrajectoryMotion,
     GripperPositionMotion,
     HoldPositionMotion,
@@ -2139,8 +2140,20 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         )
 
     async def TeachPlay(self, request, context):
+        await self._refresh_teach_motion()
+        teach = self._teach_motion
         if self._hardware_loop.has_active_motion:
-            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
+            # 只允许接管「显式离合 teach 且当前 HOLD」：阻尼锁→回放直接切换，
+            # 中间不经过空闲阻尼（臂下垂/回放起点肘飞的真机根因）。
+            if (
+                teach is None
+                or not teach.manual_clutch
+                or teach.auto_hold_state is not AutoHoldState.HOLD
+            ):
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    "已有运动正在执行（回放接管需 teach HOLD，请先 lock）",
+                )
         mode = "posvel" if request.mode == arm_pb2.PLAYBACK_MODE_POSVEL else "mit"
         gate_reason = await self._teach_contract_gate(mit=mode == "mit")
         if gate_reason:
@@ -2199,6 +2212,20 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
         if not self._leases.heartbeat(token):
             await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
+        # ---- 阻尼锁→回放接管（rezero 同款快速安全退出）：teach HOLD 快速退出
+        #      （0.3s SAFE_HOLD 全程保持），随后立即启动回放——没有空闲阻尼窗口，
+        #      臂不下垂、回放起点不会出现“肘飞”纠偏。轨迹已在上面备好。----
+        if teach is not None:
+            teach.request_cancel_quick(CancelReason.CLIENT)
+            deadline = time.monotonic() + 1.5
+            while self._hardware_loop.has_active_motion and time.monotonic() < deadline:
+                await asyncio.sleep(0.02)
+            if self._hardware_loop.has_active_motion:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    "teach 未在 1.5s 内退出，拒绝回放",
+                )
+            await self._refresh_teach_motion()
         try:
             motion = TeachPlaybackMotion(
                 frames=prepared,
@@ -2225,7 +2252,38 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         except RuntimeError as exc:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
         execution_id = self._executions.register(motion, completion)
+        if request.hold_on_done:
+            # 回放 DONE 后服务端自动进入定死锁（POS-VEL 保持帧），消除回放结束
+            # 到结束 lock 之间的空闲阻尼窗口（臂下垂 / 后续 teach 被瞬态终止）。
+            finalizer = asyncio.create_task(
+                self._playback_hold_finalize(completion, motion),
+                name=f"panthera-play-hold-{execution_id[:8]}",
+            )
+            self._gozero_finalize_tasks.add(finalizer)
+            finalizer.add_done_callback(self._gozero_finalize_tasks.discard)
         return arm_pb2.ExecutionAccepted(execution_id=execution_id)
+
+    async def _playback_hold_finalize(self, completion, motion: TeachPlaybackMotion) -> None:
+        """回放 DONE 后在末点启动定死锁（保持帧每周期发送，看门狗安全）。
+
+        FAILED/CANCELLED 不进入定死锁（调用方 formal_abort 会恢复阻尼锁）。
+        """
+        try:
+            await asyncio.wrap_future(completion)
+        except BaseException:
+            return
+        target = motion.frames[-1]
+        gripper_position = (
+            float(target.gripper_position) if target.gripper_position is not None else None
+        )
+        try:
+            await self._start_hold_motion(
+                arm_position=np.asarray(target.position, dtype=np.float64),
+                gripper_position=gripper_position,
+                gripper_velocity=0.0,
+            )
+        except RuntimeError as exc:
+            logger.warning("回放结束定死锁启动失败：%s", exc)
 
     async def TeachList(self, request, context):
         del request, context

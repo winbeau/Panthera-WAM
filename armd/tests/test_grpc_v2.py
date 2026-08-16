@@ -405,3 +405,57 @@ async def test_m7_teach_play_posvel_and_cancel(v2_stack) -> None:
     ):
         final = status
     assert final is not None and final.state == arm_pb2.EXEC_STATE_CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_m7_teach_play_takes_over_hold_teach_and_ends_in_dead_lock(v2_stack, tmp_path) -> None:
+    """阻尼锁→回放直接接管（无空闲阻尼窗口）+ 回放 DONE 后自动定死锁。"""
+    from armd.motion import AutoHoldState, HoldPositionMotion
+
+    loop, stub, metadata, server = v2_stack
+    started = await stub.TeachStart(
+        arm_pb2.TeachStartRequest(manual_clutch=True),
+        metadata=metadata,
+    )
+    assert started.accepted
+    await asyncio.sleep(0.05)
+    locked = await stub.TeachClutch(
+        arm_pb2.TeachClutchRequest(mode=arm_pb2.TEACH_CLUTCH_MODE_LOCK),
+        metadata=metadata,
+    )
+    assert locked.accepted
+    await asyncio.sleep(0.1)
+    teach = server.arm_service._teach_motion
+    assert teach is not None and teach.auto_hold_state is AutoHoldState.HOLD
+
+    teach_dir = tmp_path / "teach"
+    current = await stub.GetJointState(arm_pb2.Empty())
+    start = [joint.position for joint in current.joints]
+    path = teach_dir / "takeover.jsonl"
+    path.write_text(
+        json.dumps({"t": 0.0, "pos": start, "vel": [0.0] * 6})
+        + "\n"
+        + json.dumps({"t": 0.05, "pos": start, "vel": [0.0] * 6})
+        + "\n",
+        encoding="utf-8",
+    )
+    accepted = await stub.TeachPlay(
+        arm_pb2.TeachPlayRequest(
+            path=str(path),
+            mode=arm_pb2.PLAYBACK_MODE_POSVEL,
+            hold_on_done=True,
+        ),
+        metadata=metadata,
+    )
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+
+    # 接管后 teach 已退出；回放 DONE 后定死锁 hold 自动接上（无空闲阻尼窗口）
+    await asyncio.sleep(0.5)
+    assert server.arm_service._teach_motion is None
+    assert loop.has_active_motion
+    assert isinstance(server.arm_service._hold_motion, HoldPositionMotion)

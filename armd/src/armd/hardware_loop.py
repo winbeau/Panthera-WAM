@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+import logging
 import queue
 import threading
 import time
@@ -16,6 +17,8 @@ import numpy as np
 
 from .backend import Backend, BackendError, MotorSnapshot, estop_recovery_frame
 from .state_tap import StateTap
+
+logger = logging.getLogger(__name__)
 
 ResultT = TypeVar("ResultT")
 
@@ -419,6 +422,7 @@ class HardwareLoop:
             # 运动状态机抛异常时，最后写入的帧（例如 MIT 重力前馈帧）可能仍在
             # 执行，不能只清空活动状态。先显式硬停止，再把结构化异常交给
             # future，经 StreamExecution.error_message / reject_reason 可观测。
+            logger.error("运动 step 异常（硬停止收尾）: %s", exc, exc_info=True)
             try:
                 backend.stop()
             except BaseException as stop_exc:

@@ -578,6 +578,9 @@ message TeachPlayRequest {
   optional double playback_dt = 10;     // 未设 → 0.01
   optional int32  smooth_window = 11;   // 未设 → 7（偶数会被+1变奇数）
   PlaybackMode mode = 12;               // 未设 → MIT
+  // true：回放 DONE 后服务端自动进入定死锁（POS-VEL 保持帧），避免回放结束
+  // 到结束 lock 之间的空闲阻尼窗口让臂下垂（record-formal 使用）。
+  bool hold_on_done = 13;
 }
 
 message TeachFileInfo {

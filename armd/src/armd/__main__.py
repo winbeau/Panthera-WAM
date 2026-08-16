@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 from functools import partial
 from pathlib import Path
@@ -394,6 +395,12 @@ async def run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # 日志直通 journal：teach 状态机 / 运动异常等 logger 输出对真机诊断至关重要
+    # （此前未配置 basicConfig，logger.* 全部丢失，end-lock teach 瞬死无迹可查）。
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     args = build_parser().parse_args()
     try:
         asyncio.run(run(args))

@@ -320,17 +320,8 @@ record_formal() {
     # 1) 开始 lock（定死锁→阻尼锁）
     teach_start_lock
     sleep 0.5
-    # 2) 退出保持：teach stop 后进入 SAFE_HOLD（默认 10s），期间运动通道仍被
-    #    占用；等到 teach 完全退出（clutch lock 探测失败）再启动录制与回放。
-    "$CLI" teach stop
-    local hold_deadline=$((SECONDS + 30))
-    while "$CLI" teach clutch lock >/dev/null 2>&1 && ((SECONDS < hold_deadline)); do
-        sleep 1
-    done
-    if "$CLI" teach clutch lock >/dev/null 2>&1; then
-        die "teach SAFE_HOLD 30s 内未退出，稍后重试本命令"
-    fi
-    echo "==> teach 已退出，运动通道空闲"
+    # 2) 不再 teach stop：teach 保持阻尼锁直到 teach play RPC 内部以快速安全
+    #    退出接管（0.3s SAFE_HOLD 全程保持，无空闲阻尼窗口，臂不下垂）。
     # 从此处开始定死锁已卸下：任何中断都必须先恢复阻尼锁（teach HOLD），
     # 否则臂在高位只剩空闲阻尼会下垂。
     # 3) 启动变长正式录制
@@ -371,7 +362,7 @@ record_formal() {
     mkdir -p "$teach_dir"
     local play_file="$teach_dir/$(basename "$replay")"
     cp -f "$replay" "$play_file"
-    "$CLI" teach play "$play_file" --mode posvel \
+    "$CLI" teach play "$play_file" --mode posvel --hold-on-done \
         --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" \
         || { ./deploy/recordctl.sh stop "$episode" >/dev/null 2>&1 || true; formal_abort "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"; }
     # 5) 结束 lock（阻尼锁 + 闭爪 10%）

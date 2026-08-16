@@ -886,7 +886,7 @@ class TeachRecordStopResponse(_message.Message):
     def __init__(self, accepted: _Optional[bool] = ..., saved_path: _Optional[str] = ..., frame_count: _Optional[int] = ...) -> None: ...
 
 class TeachPlayRequest(_message.Message):
-    __slots__ = ("path", "kp", "kd", "fc", "fv", "vel_threshold", "tau_limit", "gripper_kp", "gripper_kd", "playback_dt", "smooth_window", "mode")
+    __slots__ = ("path", "kp", "kd", "fc", "fv", "vel_threshold", "tau_limit", "gripper_kp", "gripper_kd", "playback_dt", "smooth_window", "mode", "hold_on_done")
     PATH_FIELD_NUMBER: _ClassVar[int]
     KP_FIELD_NUMBER: _ClassVar[int]
     KD_FIELD_NUMBER: _ClassVar[int]
@@ -899,6 +899,7 @@ class TeachPlayRequest(_message.Message):
     PLAYBACK_DT_FIELD_NUMBER: _ClassVar[int]
     SMOOTH_WINDOW_FIELD_NUMBER: _ClassVar[int]
     MODE_FIELD_NUMBER: _ClassVar[int]
+    HOLD_ON_DONE_FIELD_NUMBER: _ClassVar[int]
     path: str
     kp: _containers.RepeatedScalarFieldContainer[float]
     kd: _containers.RepeatedScalarFieldContainer[float]
@@ -911,7 +912,8 @@ class TeachPlayRequest(_message.Message):
     playback_dt: float
     smooth_window: int
     mode: PlaybackMode
-    def __init__(self, path: _Optional[str] = ..., kp: _Optional[_Iterable[float]] = ..., kd: _Optional[_Iterable[float]] = ..., fc: _Optional[_Iterable[float]] = ..., fv: _Optional[_Iterable[float]] = ..., vel_threshold: _Optional[float] = ..., tau_limit: _Optional[_Iterable[float]] = ..., gripper_kp: _Optional[float] = ..., gripper_kd: _Optional[float] = ..., playback_dt: _Optional[float] = ..., smooth_window: _Optional[int] = ..., mode: _Optional[_Union[PlaybackMode, str]] = ...) -> None: ...
+    hold_on_done: bool
+    def __init__(self, path: _Optional[str] = ..., kp: _Optional[_Iterable[float]] = ..., kd: _Optional[_Iterable[float]] = ..., fc: _Optional[_Iterable[float]] = ..., fv: _Optional[_Iterable[float]] = ..., vel_threshold: _Optional[float] = ..., tau_limit: _Optional[_Iterable[float]] = ..., gripper_kp: _Optional[float] = ..., gripper_kd: _Optional[float] = ..., playback_dt: _Optional[float] = ..., smooth_window: _Optional[int] = ..., mode: _Optional[_Union[PlaybackMode, str]] = ..., hold_on_done: _Optional[bool] = ...) -> None: ...
 
 class TeachFileInfo(_message.Message):
     __slots__ = ("path", "recorded_at", "duration_s", "frame_count")

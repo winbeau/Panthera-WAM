@@ -1536,6 +1536,7 @@ def teach_play(
     kd: str | None = typer.Option(None, "--kd"),
     fc: str | None = typer.Option(None, "--fc"),
     fv: str | None = typer.Option(None, "--fv"),
+    hold_on_done: bool = typer.Option(False, "--hold-on-done"),
     vel_threshold: float = typer.Option(0.0, "--vel-threshold", min=0.0),
     tau_limit: str | None = typer.Option(None, "--tau-limit"),
     gripper_kp: float = typer.Option(5.0, "--gripper-kp", min=0.0),
@@ -1561,6 +1562,7 @@ def teach_play(
         gripper_kd=gripper_kd,
         playback_dt=playback_dt,
         smooth_window=smooth_window,
+        hold_on_done=hold_on_done,
     )
     lease = load_lease()
     channel, stub = create_stub(lease.endpoint)
