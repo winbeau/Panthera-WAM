@@ -98,7 +98,10 @@ def validate_staging_contents(
         raise ValueError(f"episode identity is missing {missing_identity}")
     if int(sync_report.get("canonical_ticks", -1)) != len(samples):
         raise ValueError("sync_report canonical_ticks does not match samples")
-    if int(sync_report.get("valid_ticks", -1)) != len(samples):
+    # 相机偶发丢帧容忍（与质量门一致：≤2% tick 缺失；缺失帧由 staging 复制上一帧，
+    # 行级 sync_ok=False 保留原因），valid_ticks 只需 ≥ 98% 样本数。
+    valid_ticks = int(sync_report.get("valid_ticks", -1))
+    if valid_ticks < len(samples) * 0.98:
         raise ValueError("sync_report valid_ticks does not match samples")
     fixed_length = episode.get("fixed_length")
     if isinstance(fixed_length, dict) and bool(fixed_length.get("enabled")):
