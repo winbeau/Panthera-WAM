@@ -26,6 +26,17 @@ def default_sdk_root() -> Path:
     return (Path.home() / "Panthera-HT_SDK").resolve()
 
 
+def _kinematics_limit_scale(name: str) -> float:
+    """速度/加速度全局系数（与 RealBackend._limits_from_robot 同源）。"""
+    try:
+        scale = float(os.environ.get(name, "1"))
+    except ValueError:
+        return 1.0
+    if not np.isfinite(scale) or scale <= 0:
+        return 1.0
+    return scale
+
+
 class KinematicsEngine:
     def __init__(self, *, sdk_root: str | Path, config_path: str | Path | None = None) -> None:
         root = Path(sdk_root).expanduser().resolve()
@@ -43,8 +54,15 @@ class KinematicsEngine:
         self.end_effector_frame_id = self.model.getFrameId(settings["urdf"]["end_effector_link"])
         self.joint_lower = np.asarray(settings["robot"]["joint_limits"]["lower"], dtype=np.float64)
         self.joint_upper = np.asarray(settings["robot"]["joint_limits"]["upper"], dtype=np.float64)
-        self.velocity_limits = np.asarray(settings["robot"]["velocity_limits"], dtype=np.float64)
-        self.acceleration_limits = np.asarray(settings["robot"]["acceleration_limits"], dtype=np.float64)
+        velocity_scale = _kinematics_limit_scale("PANTHERA_VELOCITY_LIMIT_SCALE")
+        acceleration_scale = _kinematics_limit_scale("PANTHERA_ACCELERATION_LIMIT_SCALE")
+        self.velocity_limits = (
+            np.asarray(settings["robot"]["velocity_limits"], dtype=np.float64) * velocity_scale
+        )
+        self.acceleration_limits = (
+            np.asarray(settings["robot"]["acceleration_limits"], dtype=np.float64)
+            * acceleration_scale
+        )
         moveit = settings["moveit_cartesian"]
         self.eef_step = float(moveit["eef_step"])
         self.jump_threshold = float(moveit["jump_threshold"])

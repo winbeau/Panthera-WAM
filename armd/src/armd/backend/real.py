@@ -491,14 +491,24 @@ def _load_sdk(sdk_root: str | Path) -> tuple[type[Any], ModuleType]:
 
 
 def _limits_from_robot(robot: Any) -> BackendLimits:
+    """从 SDK 机器人对象构造 armd 软限位；速度/加速度支持全局系数（env）。
+
+    真机调优：PANTHERA_VELOCITY_LIMIT_SCALE / PANTHERA_ACCELERATION_LIMIT_SCALE
+    （默认 1.0）。提高系数会同时放大帧校验与轨迹规划的速度上限——提高前
+    必须完成安全评估（2 倍速度 = 4 倍动能）。
+    """
+    velocity_scale = _limit_scale_env("PANTHERA_VELOCITY_LIMIT_SCALE")
+    acceleration_scale = _limit_scale_env("PANTHERA_ACCELERATION_LIMIT_SCALE")
     try:
         joint_limits = robot.joint_limits
         gripper_limits = robot.gripper_limits
         return BackendLimits(
             joint_lower=np.asarray(joint_limits["lower"], dtype=np.float64),
             joint_upper=np.asarray(joint_limits["upper"], dtype=np.float64),
-            joint_velocity=np.asarray(robot.velocity_limits, dtype=np.float64),
-            joint_acceleration=np.asarray(robot.acceleration_limits, dtype=np.float64),
+            joint_velocity=np.asarray(robot.velocity_limits, dtype=np.float64) * velocity_scale,
+            joint_acceleration=(
+                np.asarray(robot.acceleration_limits, dtype=np.float64) * acceleration_scale
+            ),
             joint_torque=np.asarray(robot.max_torque, dtype=np.float64),
             gripper_lower=float(gripper_limits["lower"]),
             gripper_upper=float(gripper_limits["upper"]),
@@ -507,6 +517,16 @@ def _limits_from_robot(robot: Any) -> BackendLimits:
         )
     except (AttributeError, KeyError, TypeError, ValueError):
         return DEFAULT_LIMITS
+
+
+def _limit_scale_env(name: str) -> float:
+    try:
+        scale = float(os.environ.get(name, "1"))
+    except ValueError:
+        return 1.0
+    if not np.isfinite(scale) or scale <= 0:
+        return 1.0
+    return scale
 
 
 def _scale_vector(value: float | np.ndarray, *, name: str) -> np.ndarray:
