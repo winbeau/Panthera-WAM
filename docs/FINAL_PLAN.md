@@ -650,18 +650,34 @@ panthera dataset export-lerobot TRAJECTORY_PATH [--out-dir DIR] [--repo-id OWNER
   `calibrate zero` 路径。`SetZero` 语义（§V2）是平移硬件零参考、限位失准风险高，与本功能无关。
 - 命令树 `workzero show/setzero/gozero/rezero` 与 `calibrate zero` 明确分开。
 
-### WZ-2 gozero/rezero 只走服务端连续流式 MIT
+### WZ-2 gozero/rezero 路径（2026-08-16 真机验收修订）
 
-- 第一版 `WorkZeroMotion` 由 HardwareLoop 每控制周期推进，输出 `POS_VEL_TQE_KP_KD` 完整帧；
-  目标、软限位、速度/加速度/力矩、取消、EStop 交互全部在服务端。
-- 禁止路径（已按 fba5a7a 代码逐一定位）：
-  `JointPositionMotion.step()`（motion.py:356，单次 POS-VEL 目标帧 + 轮询）；
-  `MoveJ`（grpc_service.py:623）；单帧 `position_frame()` helper（motion.py:95）；
-  `TeachPlaybackMotion._step_move_to_start` 的 posvel 起点移动（motion.py）；
-  `CartesianTrajectoryMotion`（motion.py:597）与 `RunJointTrajectory` 作为第一版真机回位路径；
-  `PolicyChunkMotion`（policy.py:253，单帧 `position_frame`）只用于任务动作，不得用于回位。
-- `rezero` 是 CLI/session 语义，调用同一 `GoWorkZero`（`reason=post_action`），不复制第二套运动实现。
-- 第一版为关节空间，不依赖 IK/FK；§1.4 双 pinocchio 实例/独立进程结论仍有效，WorkZeroMotion 不触碰。
+**初版否决**：第一版 `WorkZeroMotion`（零重力前馈 + 纯 kp/kd MIT 伺服）在真机
+承重高位形无法收敛——工作零位处 J3 重力矩 ≈2.45 N·m（0.7×标定）、kp=12 →
+稳态误差 ≈0.2 rad ≫ 0.02 判据，必然 settle 超时 FAILED 后进入 idle damping
+下垂。仿真未暴露（sim 电机模型无重力项）。
+
+**定稿方案（用户决策）**：gozero/rezero 回位路径改用 MoveL（真机已验证
+POS-VEL 逐点轨迹，M0-2：1cm 误差 1.73mm），到位后服务端自动切
+`teach manual-clutch LOCK` 定住（标定重力前馈 + MANUAL_CLUTCH_KP_HOLD）。
+
+```text
+gozero：初始位 → MoveL→工作0位 → teach lock → 开爪（HOLD 帧内阻抗，脚本做）
+rezero：动作完成位(teach HOLD) → 开爪（松方块，脚本做不是模型做）
+        → 快速安全退出 teach（0.3s SAFE_HOLD）→ MoveL→工作0位 → teach lock
+```
+
+- 开爪目标 = 工作零位 gripper 值；在 teach MIT 帧内用 gripper_kp/kd 阻抗伺服
+  （N7 同帧同模式），动作指令只到「方块移到目标区上方」，松手由脚本完成；
+- 小残差（≤0.02 rad）走 ImmediateDoneMotion 幂等路径；MoveL settle 容差 0.01 rad；
+- 取消/EStop/lease 失效：MoveL 被取消且**绝不自动进入 teach**；
+  开爪未在 4s 内到位 → 拒绝回位（可能仍抓着物体）；
+- `WorkZeroMotion` 代码与测试保留为备用实现，当前未接入真机路径。
+
+禁止路径（仍有效）：`move`/`movej`/`JointPositionMotion`/单帧 `position_frame`/
+`TeachPlayback` posvel 起点移动/`RunJointTrajectory` 作为回位路径。
+`rezero` 是 CLI/session 语义，调用同一 `GoWorkZero`（`reason=post_action`），
+不复制第二套运动实现。
 
 ### WZ-3 action window 定义
 
@@ -680,15 +696,14 @@ gozero 完成 + settle 稳定 → [ACTION WINDOW 开始] → 只执行任务动�
 - armd/systemd 启动只初始化服务；进入工作零位必须显式 `workzero gozero --confirm`（操作员在场）。
 - 断电恢复、服务重启、网络重连均不得自动运动、不得自动重新 acquire lease 后继续。
 
-### WZ-5 小残差与夹爪策略（冻结 + 待真机验证）
+### WZ-5 小残差与夹爪策略（冻结 + 真机验证修订）
 
-- 小残差：仿真阶段先冻结为显式拒绝 `WORK_ZERO_RESIDUAL_TOO_SMALL` 或已验证的 MIT settle，
-  禁止偷退回单帧位置模式；真机验证前不默认放开。
-- 夹爪回位：第一版在完整 MIT 帧内以普通 gripper limits 约束目标；若仿真/真机证明
-  arm+gripper 同帧回位不安全，拆为 arm settle → 独立受限 gripper 段（仍禁止单帧危险路径、
-  禁止全局关闭夹爪速度门）。
-- 真机验证前默认 `PANTHERA_WORKZERO_REAL_HARDWARE_ENABLED=0`；低速/零速 MIT hold
-  在当前固件的稳定性（JOINT_CONTROL §2 B1 堵转历史）必须经仿真 + 一次受控真机 spike 验证。
+- 小残差（≤0.02 rad）：ImmediateDoneMotion 幂等 DONE，直接进入 teach lock 阶段；
+- 夹爪回位：开爪在 teach HOLD 帧内用受限 MIT 阻抗伺服到工作零位 gripper，
+  到位（≤0.02）后恢复保持；开爪由脚本（gozero/rezero 流程）完成，不进训练 action；
+- 真机验证前默认 `PANTHERA_WORKZERO_REAL_HARDWARE_ENABLED=0`；放行需逐级确认；
+- 预期切换瞬态：MoveL POS-VEL 保位 → teach MIT HOLD 切换处可能有轻微颤动
+  （用户已确认接受），现场观察并记录。
 
 ### WZ-6 proto / CLI 新位置
 

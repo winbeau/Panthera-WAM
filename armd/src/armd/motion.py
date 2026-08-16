@@ -50,6 +50,8 @@ MANUAL_CLUTCH_KD_MIN_RATIO = 0.08
 GRIPPER_POSITION_TORQUE_FRACTION = 0.8
 GRIPPER_POSITION_MAX_KP = 5.0
 GRIPPER_POSITION_MAX_KD = 0.5
+# rezero 计划内快速退出：SAFE_HOLD 缩短时长（下一控制周期由 MoveL 帧接管）
+WORKZERO_QUICK_SAFE_HOLD_S = 0.3
 
 
 class AutoHoldState(str, enum.Enum):
@@ -811,6 +813,11 @@ class TeachMotion:
         self._clutch_request: TeachClutchCommand | None = None
         self._lock_generation = 0
         self._lock_snapshot: TeachLockSnapshot | None = None
+        # 帧内夹爪阻抗目标（work-zero 开爪/松方块）：teach 帧是 MIT，夹爪用
+        # gripper_kp/kd 阻抗伺服到目标，到位后恢复原保持行为（N7 同帧同模式）。
+        self._gripper_target: float | None = None
+        self._gripper_target_tolerance = 0.02
+        self._quick_safe_hold = False
         self._hold_state = AutoHoldState.DRAG
         self._state_since: float | None = None
         self._still_since: float | None = None
@@ -876,6 +883,33 @@ class TeachMotion:
         with self._lock:
             self._clutch_request = command
 
+    def request_gripper(self, position: float) -> None:
+        """在 teach 帧内用受限 MIT 阻抗把夹爪伺服到目标位置（work-zero 开爪）。
+
+        与 arm 关节共用同一 MIT 帧（N7），不打断 teach/锁定状态；
+        到位（误差≤tolerance）后自动恢复「保持当前位置」的原行为。
+        """
+        value = float(position)
+        if not np.isfinite(value):
+            raise ValueError("夹爪目标必须为有限数值")
+        with self._lock:
+            self._gripper_target = value
+
+    @property
+    def gripper_target(self) -> float | None:
+        with self._lock:
+            return self._gripper_target
+
+    def request_cancel_quick(self, reason: CancelReason) -> None:
+        """计划内快速退出：SAFE_HOLD 缩短为 0.3s（rezero 衔接 MoveL 用）。
+
+        正常取消仍走完整 SAFE_HOLD（safe_hold_time_s）；只有服务端编排的
+        rezero 流程显式调用本方法，下一控制周期由 MoveL 帧接管。
+        """
+        with self._lock:
+            self._cancel_reason = reason
+            self._quick_safe_hold = True
+
     def request_cancel(self, reason: CancelReason) -> None:
         with self._lock:
             self._cancel_reason = reason
@@ -898,7 +932,10 @@ class TeachMotion:
                 self._q_hold = positions.copy()
                 self._still_since = None
                 self._hold_kp_start = np.zeros(6, dtype=np.float64)
-                self._safe_hold_until = now + self.safe_hold_time_s
+                hold_duration = (
+                    WORKZERO_QUICK_SAFE_HOLD_S if self._quick_safe_hold else self.safe_hold_time_s
+                )
+                self._safe_hold_until = now + hold_duration
                 self._enter_state(
                     AutoHoldState.SAFE_HOLD,
                     now,
@@ -940,6 +977,33 @@ class TeachMotion:
         )
         torque = np.clip(torque + self.gravity_residual, -self.tau_limit, self.tau_limit)
 
+        # ---- 夹爪帧内阻抗目标（work-zero 开爪）：到位后恢复保持 ----
+        with self._lock:
+            gripper_target = self._gripper_target
+        limits = backend.limits
+        gripper_current = float(states[6].position)
+        if gripper_target is None:
+            gripper_command = float(
+                np.clip(gripper_current, limits.gripper_lower, limits.gripper_upper)
+            )
+            gripper_kp_cmd = 0.0
+            gripper_kd_cmd = 0.0
+        else:
+            gripper_command = float(
+                np.clip(gripper_target, limits.gripper_lower, limits.gripper_upper)
+            )
+            if abs(gripper_current - gripper_command) <= self._gripper_target_tolerance:
+                with self._lock:
+                    self._gripper_target = None
+                gripper_command = float(
+                    np.clip(gripper_current, limits.gripper_lower, limits.gripper_upper)
+                )
+                gripper_kp_cmd = 0.0
+                gripper_kd_cmd = 0.0
+            else:
+                gripper_kp_cmd = GRIPPER_POSITION_MAX_KP
+                gripper_kd_cmd = GRIPPER_POSITION_MAX_KD
+
         backend.write_frame(
             JointFrame(
                 mode=FrameMode.POS_VEL_TQE_KP_KD,
@@ -948,17 +1012,11 @@ class TeachMotion:
                 arm_torque=torque,
                 arm_kp=kp,
                 arm_kd=kd,
-                gripper_position=float(
-                    np.clip(
-                        states[6].position,
-                        backend.limits.gripper_lower,
-                        backend.limits.gripper_upper,
-                    )
-                ),
+                gripper_position=gripper_command,
                 gripper_velocity=0.0,
                 gripper_torque=0.0,
-                gripper_kp=0.0,
-                gripper_kd=0.0,
+                gripper_kp=gripper_kp_cmd,
+                gripper_kd=gripper_kd_cmd,
             )
         )
         return MotionStepResult.RUNNING

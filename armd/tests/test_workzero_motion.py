@@ -9,7 +9,12 @@ import pytest
 
 from armd.backend import FrameMode, SimBackend
 from armd.hardware_loop import CancelReason, MotionStepResult
-from armd.motion import AutoHoldState  # noqa: F401  # 保持与 motion 模块导入面一致
+from armd.motion import (
+    AutoHoldConfig,
+    AutoHoldState,
+    TeachClutchCommand,
+    TeachMotion,
+)
 from armd.workzero import WORK_ZERO_SOURCE_TEACH_CLUTCH_LOCK, WorkZeroPose
 from armd.workzero_motion import (
     WORKZERO_CANCEL_DECEL_STEPS,
@@ -325,3 +330,83 @@ def test_operation_name_carries_rezero_metadata() -> None:
     motion = WorkZeroMotion(target=pose(), timeout_s=10.0, operation_name="rezero")
     assert motion.operation_name == "rezero"
     assert WORKZERO_SMALL_RESIDUAL > 0
+
+
+# ------------------------------------------------- TeachMotion gripper 帧内伺服
+
+
+def _teach_hold_motion(backend: RecordingSimBackend) -> TeachMotion:
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        auto_hold=AutoHoldConfig(),
+        manual_clutch=True,
+        safe_hold_time_s=2.0,
+    )
+    motion.request_clutch(TeachClutchCommand.LOCK)
+    motion.step(backend, backend._clock())
+    return motion
+
+
+def test_teach_request_gripper_servos_in_mit_frame_then_releases() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = _teach_hold_motion(backend)
+
+    motion.request_gripper(1.5)
+    clock.advance(0.005)
+    motion.step(backend, clock.now)
+    frame = backend.frames[-1]
+    assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+    assert frame.gripper_position == pytest.approx(1.5)
+    assert frame.gripper_kp == pytest.approx(5.0)
+    assert frame.gripper_kd == pytest.approx(0.5)
+    assert motion.gripper_target == pytest.approx(1.5)
+
+    # 到位后恢复保持：gripper_kp/kd 归零，目标清除
+    backend._positions[6] = 1.49
+    clock.advance(0.005)
+    motion.step(backend, clock.now)
+    assert motion.gripper_target is None
+    frame = backend.frames[-1]
+    assert frame.gripper_kp == pytest.approx(0.0)
+    assert frame.gripper_kd == pytest.approx(0.0)
+    assert frame.gripper_position == pytest.approx(1.49)
+
+
+def test_teach_request_gripper_clips_to_limits() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = _teach_hold_motion(backend)
+    motion.request_gripper(5.0)  # 超出 gripper 上限 2.0
+    clock.advance(0.005)
+    motion.step(backend, clock.now)
+    assert backend.frames[-1].gripper_position == pytest.approx(2.0)
+
+
+def test_teach_request_gripper_rejects_nonfinite() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = _teach_hold_motion(backend)
+    with pytest.raises(ValueError):
+        motion.request_gripper(float("nan"))
+
+
+def test_teach_cancel_quick_shortens_safe_hold() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = _teach_hold_motion(backend)
+    motion.request_cancel_quick(CancelReason.CLIENT)
+    clock.advance(0.005)
+    result = motion.step(backend, clock.now)
+    assert result is MotionStepResult.RUNNING
+    assert motion.auto_hold_state is AutoHoldState.SAFE_HOLD
+    # 快速退出：SAFE_HOLD 约 0.3s；完整退出为 safe_hold_time_s（2.0）
+    assert motion._safe_hold_until is not None
+    assert motion._safe_hold_until - clock.now == pytest.approx(0.3, abs=0.05)
+    # 0.35s 后 SAFE_HOLD 结束进入柔顺阻尼并 CANCELLED
+    clock.advance(0.35)
+    result = motion.step(backend, clock.now)
+    assert result is MotionStepResult.CANCELLED

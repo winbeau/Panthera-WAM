@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from collections.abc import AsyncIterator
@@ -54,9 +55,11 @@ from .workzero import (
     WorkZeroStore,
     WorkZeroValidationError,
 )
-from .workzero_motion import WorkZeroMotion
+from .workzero_motion import ImmediateDoneMotion, WORKZERO_SMALL_RESIDUAL
 
 SERVICE_PREFIX = "/panthera.arm.v1.ArmService/"
+
+logger = logging.getLogger(__name__)
 DEFAULT_FRICTION_FC = np.array([0.20, 0.15, 0.15, 0.15, 0.04, 0.04], dtype=np.float64)
 DEFAULT_FRICTION_FV = np.array([0.06, 0.06, 0.06, 0.03, 0.02, 0.02], dtype=np.float64)
 
@@ -278,6 +281,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             if workzero_real_hardware_enabled is None
             else bool(workzero_real_hardware_enabled)
         )
+        # gozero 到位后的 teach-lock finalizer 任务集；close 时统一取消
+        self._gozero_finalize_tasks: set[asyncio.Task[None]] = set()
         self._started_at = time.monotonic()
         self._unary_jog_motion: JointJogMotion | None = None
         self._unary_jog_completion = None
@@ -589,6 +594,14 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         )
 
     async def GoWorkZero(self, request, context):
+        """回到工作零位：MoveL（真机已验证 POS-VEL 轨迹）到工作零位，
+        到位后服务端自动切 teach manual-clutch LOCK 定住。
+
+        真机验收修订（2026-08-16）：原 WorkZeroMotion 零前馈纯 kp/kd 伺服在
+        承重高位形稳态误差（重力/kp）远超 settle 判据，真机无法收敛；改为
+        复用 MoveL 轨迹（固件 POS-VEL 保位）+ teach HOLD（标定重力前馈 +
+        MANUAL_CLUTCH_KP_HOLD）。rezero 调用同一 RPC（reason=post_action）。
+        """
         if not request.confirm:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "GoWorkZero 必须 confirm=true")
         if request.reason not in ("", "gozero", "post_action"):
@@ -598,7 +611,11 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                 grpc.StatusCode.FAILED_PRECONDITION,
                 "work-zero 功能未启用（服务端 PANTHERA_WORKZERO_ENABLED=1 开启）",
             )
-        if self._hardware_loop.has_active_motion:
+        # rezero（post_action）时 teach HOLD 是流程的一部分，允许其占用 active motion；
+        # 其它任何运动都拒绝。
+        if self._hardware_loop.has_active_motion and (
+            request.reason != "post_action" or self._teach_motion is None
+        ):
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "已有运动正在执行")
         if self._recorder is not None:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "录制进行中，禁止回位")
@@ -633,18 +650,189 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             self._work_zero_store.validate_with_limits(pose, limits)
         except WorkZeroValidationError as exc:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
-        operation_name = "rezero" if request.reason == "post_action" else "gozero"
-        try:
-            motion = WorkZeroMotion(target=pose, timeout_s=timeout_s, operation_name=operation_name)
-        except ValueError as exc:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        cached = self._hardware_loop.latest_state()
+        if cached is None or not all(state.valid for state in cached.motors[:6]):
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "关节状态无效或连接不完整")
+        current = np.array([state.position for state in cached.motors[:6]], dtype=np.float64)
+        target_positions = np.asarray(pose.joints, dtype=np.float64)
+
+        # ---- rezero：动作完成位（teach HOLD）→ 开爪（松方块，脚本做不是模型做）
+        #      → 快速安全退出 teach → MoveL 回工作0位 → teach lock ----
+        if request.reason == "post_action":
+            await self._refresh_teach_motion()
+            teach = self._teach_motion
+            if teach is None or not teach.manual_clutch:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    "rezero 需要 teach HOLD 状态：动作完成后请先 lock 保持",
+                )
+            teach.request_gripper(pose.gripper)
+            release_deadline = time.monotonic() + 4.0
+            released = False
+            while time.monotonic() < release_deadline:
+                state = self._hardware_loop.latest_state()
+                if state is not None and all(motor.valid for motor in state.motors):
+                    if abs(state.motors[6].position - pose.gripper) <= 0.02:
+                        released = True
+                        break
+                await asyncio.sleep(0.05)
+            if not released:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    "夹爪未在 4s 内打开到工作零位姿态；拒绝回位（可能仍抓着物体）",
+                )
+            teach.request_cancel_quick(CancelReason.CLIENT)
+            exit_deadline = time.monotonic() + 1.5
+            while self._hardware_loop.has_active_motion and time.monotonic() < exit_deadline:
+                await asyncio.sleep(0.02)
+            if self._hardware_loop.has_active_motion:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    "teach 未在 1.5s 内退出，拒绝回位",
+                )
+            await self._refresh_teach_motion()
+            current = np.array(
+                [state.position for state in self._hardware_loop.latest_state().motors[:6]],
+                dtype=np.float64,
+            )
+
+        # ---- 小残差（已在工作零位）：立即 DONE，直接进入 teach lock 阶段 ----
+        if float(np.max(np.abs(target_positions - current))) <= WORKZERO_SMALL_RESIDUAL:
+            motion = ImmediateDoneMotion()
+        else:
+            # ---- MoveL 路径：FK 工作零位 → 笛卡尔轨迹（真机已验证 POS-VEL）----
+            await self._kinematics.warm()
+            try:
+                target_fk = await self._kinematics.call("fk", {"q": target_positions})
+                current_fk = await self._kinematics.call("fk", {"q": current})
+            except ValueError as exc:
+                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+            try:
+                result = await self._kinematics.call(
+                    "plan",
+                    {
+                        "current_q": current,
+                        "waypoints": [
+                            {
+                                "position": np.asarray(current_fk["position"]),
+                                "rotation": np.asarray(current_fk["rotation"]),
+                            },
+                            {
+                                "position": np.asarray(target_fk["position"]),
+                                "rotation": np.asarray(target_fk["rotation"]),
+                            },
+                        ],
+                        "duration": None,
+                        "use_spline": True,
+                    },
+                )
+            except ValueError as exc:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+            if result["fraction"] < 0.999 or not result["positions"]:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    f"工作零位笛卡尔路径仅完成 {result['fraction'] * 100:.1f}%",
+                )
+            motion = CartesianTrajectoryMotion(
+                positions=[np.asarray(value) for value in result["positions"]],
+                velocities=[np.asarray(value) for value in result["velocities"]],
+                timestamps=list(result["timestamps"]),
+                max_torque=limits.joint_torque,
+                tolerance=0.01,  # 工作零位到位容差（0.57°）
+                settle_timeout_s=min(4.0, timeout_s),
+                operation_name="gozero-movel",
+            )
         accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
         try:
             await asyncio.wrap_future(accepted)
         except RuntimeError as exc:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
         execution_id = self._executions.register(motion, completion)
+        finalizer = asyncio.create_task(
+            self._gozero_finalize_teach(completion, token, pose),
+            name=f"panthera-gozero-finalize-{execution_id[:8]}",
+        )
+        self._gozero_finalize_tasks.add(finalizer)
+        finalizer.add_done_callback(self._gozero_finalize_tasks.discard)
         return arm_pb2.ExecutionAccepted(execution_id=execution_id)
+
+    async def _gozero_finalize_teach(self, completion, token: str, pose: WorkZeroPose) -> None:
+        """回位到位后：自动启动 teach manual-clutch 并 LOCK 定住。
+
+        失败/取消/lease 失效时绝不进入 teach（与 WZ-4 一致：不自动恢复运动）。
+        LOCK 前先让 teach 在重力补偿 DRAG 下稳定 0.3s，再锚定当前位形，
+        避免 MoveL 末点到 HOLD 切换瞬态被锚定。
+        """
+        try:
+            result = await asyncio.wrap_future(completion)
+        except (asyncio.CancelledError, RuntimeError):
+            return
+        if result is not MotionStepResult.DONE:
+            logger.warning("workzero 回位未完成（%s），不进入 teach HOLD", result.value)
+            return
+        if self._hardware_loop.has_active_motion:
+            logger.warning("workzero 到位后仍有活动运动，跳过 teach HOLD")
+            return
+        if self._teach_motion is not None:
+            logger.info("teach 已存在，跳过重复启动")
+            return
+        if not self._leases.heartbeat(token):
+            logger.warning("workzero 到位后 lease 失效，不启动 teach HOLD")
+            return
+        gate_reason = await self._teach_contract_gate(mit=True)
+        if gate_reason:
+            logger.warning("teach 契约门拒绝：%s", gate_reason)
+            return
+        try:
+            motion = TeachMotion(
+                kp=np.zeros(6),
+                kd=np.zeros(6),
+                fc=DEFAULT_FRICTION_FC.copy(),
+                fv=DEFAULT_FRICTION_FV.copy(),
+                gravity_scale=self._teach_gravity_scale,
+                gravity_scale_high=self._teach_gravity_scale_high,
+                gravity_breakpoint=self._teach_gravity_breakpoint,
+                gravity_segmented=self._teach_gravity_segmented,
+                gravity_residual=self._teach_gravity_residual,
+                auto_hold=(
+                    AutoHoldConfig() if self._auto_hold_enabled else AutoHoldConfig(enabled=False)
+                ),
+                manual_clutch=True,
+                safe_hold_time_s=self._teach_safe_hold_s,
+            )
+        except ValueError as exc:
+            logger.warning("teach 构造失败：%s", exc)
+            return
+        accepted, teach_completion = self._hardware_loop.start_motion_with_ack(motion)
+        try:
+            await asyncio.wrap_future(accepted)
+        except RuntimeError as exc:
+            logger.warning("teach 启动失败：%s", exc)
+            return
+        self._teach_motion = motion
+        self._teach_completion = teach_completion
+        self._teach_monitor_task = asyncio.create_task(
+            self._monitor_teach_completion(teach_completion),
+            name="panthera-teach-monitor",
+        )
+        # 先让重力补偿 DRAG 稳定，再 LOCK 锚定（避免切换瞬态被锁存）
+        await asyncio.sleep(0.3)
+        if not self._leases.heartbeat(token):
+            logger.warning("workzero teach 稳定期间 lease 失效，保持 DRAG 不 LOCK")
+            return
+        motion.request_clutch(TeachClutchCommand.LOCK)
+        logger.info("workzero 已到位并进入 teach HOLD")
+        # 开爪到工作零位夹爪姿态（HOLD 帧内受限 MIT 阻抗，臂保持不动）
+        motion.request_gripper(pose.gripper)
+        release_deadline = time.monotonic() + 4.0
+        while time.monotonic() < release_deadline:
+            state = self._hardware_loop.latest_state()
+            if state is not None and all(motor.valid for motor in state.motors):
+                if abs(state.motors[6].position - pose.gripper) <= 0.02:
+                    logger.info("workzero 夹爪已打开到工作零位姿态")
+                    return
+            await asyncio.sleep(0.05)
+        logger.warning("workzero 夹爪未在 4s 内到达工作零位姿态，保持 HOLD 待人工处理")
 
     async def GetJointState(self, request, context):
         del request
@@ -1905,6 +2093,13 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             await self._stop_recorder()
         except (OSError, RuntimeError, TimeoutError):
             pass
+        for finalizer in list(self._gozero_finalize_tasks):
+            finalizer.cancel()
+            try:
+                await finalizer
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+        self._gozero_finalize_tasks.clear()
         await self._refresh_teach_motion()
         if self._teach_motion is not None and self._teach_completion is not None:
             self._teach_motion.request_cancel(CancelReason.SHUTDOWN)

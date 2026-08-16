@@ -30,6 +30,29 @@ from .workzero import WorkZeroPose
 
 logger = logging.getLogger(__name__)
 
+
+class ImmediateDoneMotion:
+    """幂等回位路径：已在工作零位时立即完成的轻量 motion。
+
+    用于 gozero 目标与当前位形残差过小时的 execution 语义：第一个
+    HardwareLoop 周期即 DONE，随后由 GoWorkZero 的 finalizer 启动
+    teach manual-clutch LOCK 定住（与 MoveL 路径相同的定住阶段）。
+    """
+
+    reject_reason = ""
+
+    @property
+    def fraction(self) -> float:
+        return 1.0
+
+    def request_cancel(self, reason: CancelReason) -> None:
+        del reason
+
+    def step(self, backend: Backend, now: float) -> MotionStepResult:
+        del backend, now
+        return MotionStepResult.DONE
+
+
 # ---- 保守默认（真机验证前不视为定稿数值）----
 WORKZERO_KP = np.array([4.0, 12.0, 12.0, 4.0, 3.0, 2.0], dtype=np.float64)
 WORKZERO_KD = np.array([0.8, 1.5, 1.5, 0.8, 0.5, 0.4], dtype=np.float64)

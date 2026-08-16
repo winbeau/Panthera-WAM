@@ -294,9 +294,12 @@ pkill -f "control heartbeat"            # 等价停止：lease 过期同样进�
 
 1. **只读前置**：`armd.service` active、7 电机 valid/fault=0/mode 正常、EStop 状态符合预期、
    `~/.config/panthera-wam/work-zero.json` 存在且权限 0600、C# 前端与其它 D405 客户端关闭。
-2. **gozero/rezero 只走服务端连续流式 WorkZeroMotion**（每控制周期 MIT 完整帧）。
-   真机禁止作为回位路径：`joint move/movej`、`JointPositionMotion`、单帧 `position_frame`、
-   teach play 的 posvel 起点移动、`trajectory run-waypoints`、`cartesian movel`。
+2. **gozero/rezero 回位路径**（2026-08-16 真机验收修订）：MoveL 轨迹到工作零位 +
+   到位后自动切 teach manual-clutch LOCK 定住（开爪在 HOLD 帧内由脚本完成）。
+   真机仍禁止作为回位路径：`move/movej`、`JointPositionMotion`、单帧 `position_frame`、
+   teach play 的 posvel 起点移动、`trajectory run-waypoints`。
+   回位流程：gozero = 初始位→MoveL工作0位→teach lock→开爪；
+   rezero = 动作完成位(teach HOLD)→开爪（松方块）→快速退出 teach→MoveL工作0位→teach lock。
 3. **显式确认**：每次真机 gozero/rezero 前脚本先打印 target、duration、limits，
    用户二次确认（`--confirm` 由服务端判定，不能只是客户端提示），E-stop 可立即触达。
 4. **低速/零速 MIT hold 未完成真机验证前**，不把 gozero 目标设为极小位移；

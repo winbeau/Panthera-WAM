@@ -566,9 +566,9 @@ async def test_gozero_rejects_while_teach_active(workzero_stack) -> None:
 
 @pytest.mark.asyncio
 async def test_gozero_immediate_done_when_already_at_work_zero(workzero_stack) -> None:
-    loop, stub, metadata, _, _ = workzero_stack
+    loop, stub, metadata, server, _ = workzero_stack
     await _start_teach(stub, metadata, manual_clutch=True)
-    # 锁存当前位形（sim 初始即零位）→ 小残差路径 → MIT settle 立即收敛
+    # 锁存当前位形（sim 初始即零位）→ 小残差路径 → 立即 DONE
     saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
     assert saved.accepted
     await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
@@ -576,7 +576,7 @@ async def test_gozero_immediate_done_when_already_at_work_zero(workzero_stack) -
     assert not loop.has_active_motion
 
     accepted = await stub.GoWorkZero(
-        arm_pb2.GoWorkZeroRequest(confirm=True, reason="post_action"),
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="gozero"),
         metadata=metadata,
     )
     assert accepted.execution_id
@@ -596,13 +596,20 @@ async def test_gozero_immediate_done_when_already_at_work_zero(workzero_stack) -
     assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
     assert fractions == sorted(fractions), "fraction 必须单调"
     assert final.fraction == pytest.approx(1.0)
-    # rezero（reason=post_action）走同一 RPC，不复制运动实现
+    # 到位后服务端自动切 teach manual-clutch LOCK 定住 + 开爪到工作零位姿态
+    await asyncio.sleep(0.8)
+    from armd.motion import AutoHoldState
+
+    teach = server.arm_service._teach_motion
+    assert teach is not None, "gozero 到位后应自动进入 teach HOLD"
+    assert teach.manual_clutch
+    assert teach.auto_hold_state is AutoHoldState.HOLD
     assert accepted.execution_id
 
 
 @pytest.mark.asyncio
 async def test_gozero_cancel_via_execution(workzero_stack) -> None:
-    loop, stub, metadata, _, _ = workzero_stack
+    loop, stub, metadata, server, _ = workzero_stack
     await _start_teach(stub, metadata, manual_clutch=True)
     loop.submit(_move_sim_arm).result(timeout=2.0)  # 位形 A
     saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
@@ -636,6 +643,51 @@ async def test_gozero_cancel_via_execution(workzero_stack) -> None:
     assert final is not None and final.state == arm_pb2.EXEC_STATE_CANCELLED
     # 取消后不会自动重启
     assert not loop.has_active_motion
+    # 取消/未完成：绝不自动进入 teach
+    await asyncio.sleep(0.5)
+    assert server.arm_service._teach_motion is None
+
+
+@pytest.mark.asyncio
+async def test_gozero_movel_path_reaches_work_zero_and_holds(workzero_stack) -> None:
+    """大位移回位：MoveL 轨迹到工作零位 + 自动 teach HOLD + 到位误差。"""
+    loop, stub, metadata, server, _ = workzero_stack
+    from armd.motion import AutoHoldState
+
+    await _start_teach(stub, metadata, manual_clutch=True)
+    loop.submit(_move_sim_arm).result(timeout=2.0)  # 位形 A
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    target_joints = list(saved.pose.joints)
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)
+    loop.submit(_move_sim_arm_elsewhere).result(timeout=2.0)  # 移到位形 B（≠A）
+    assert not loop.has_active_motion
+
+    accepted = await stub.GoWorkZero(
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="gozero"),
+        metadata=metadata,
+    )
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+        if status.state in (
+            arm_pb2.EXEC_STATE_DONE,
+            arm_pb2.EXEC_STATE_FAILED,
+            arm_pb2.EXEC_STATE_CANCELLED,
+        ):
+            break
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+    await asyncio.sleep(0.8)
+    teach = server.arm_service._teach_motion
+    assert teach is not None and teach.auto_hold_state is AutoHoldState.HOLD
+    # MoveL 到位误差在 tolerance 内（sim POS-VEL 精确跟踪）
+    cached = loop.latest_state()
+    current = [motor.position for motor in cached.motors[:6]]
+    errors = [abs(c - t) for c, t in zip(current, target_joints, strict=True)]
+    assert max(errors) <= 0.02, f"回位误差过大: {errors}"
 
 
 # -------------------------------------------------- P4 action-only 边界
@@ -746,3 +798,84 @@ async def test_gozero_force_acquire_cancels_execution(workzero_stack) -> None:
     assert final is not None and final.state == arm_pb2.EXEC_STATE_CANCELLED
     await asyncio.sleep(0.5)
     assert not loop.has_active_motion, "force acquire 后不得自动恢复运动"
+
+
+@pytest.mark.asyncio
+async def test_rezero_full_flow_release_move_back_and_hold(workzero_stack) -> None:
+    """rezero：动作完成位（teach HOLD）→ 开爪（脚本，非模型）→ 快速退出 teach
+    → MoveL 回工作0位 → teach lock。"""
+    loop, stub, metadata, server, _ = workzero_stack
+    from armd.motion import AutoHoldState
+
+    # 1) 位形 A（工作零位）锁存：夹爪先摆到与工作零位一致的开爪姿态
+    await _start_teach(stub, metadata, manual_clutch=True)
+    loop.submit(_move_sim_arm).result(timeout=2.0)
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    target_joints = list(saved.pose.joints)
+    target_gripper = saved.pose.gripper
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)
+
+    # 2) 模拟任务动作：抓取（夹爪闭合）并移到动作完成位 B，然后 lock 保持
+    loop.submit(_close_gripper_sim).result(timeout=2.0)
+    loop.submit(_move_sim_arm_elsewhere).result(timeout=2.0)
+    await _start_teach(stub, metadata, manual_clutch=True)
+    await stub.TeachClutch(
+        arm_pb2.TeachClutchRequest(mode=arm_pb2.TEACH_CLUTCH_MODE_LOCK),
+        metadata=metadata,
+    )
+    await asyncio.sleep(0.3)
+    teach = server.arm_service._teach_motion
+    assert teach is not None and teach.auto_hold_state is AutoHoldState.HOLD
+
+    # 3) rezero：开爪（松方块）→ 快速退出 teach → MoveL 回工作0位 → teach lock
+    accepted = await stub.GoWorkZero(
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="post_action"),
+        metadata=metadata,
+    )
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+        if status.state in (
+            arm_pb2.EXEC_STATE_DONE,
+            arm_pb2.EXEC_STATE_FAILED,
+            arm_pb2.EXEC_STATE_CANCELLED,
+        ):
+            break
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+    await asyncio.sleep(0.8)
+    teach = server.arm_service._teach_motion
+    assert teach is not None and teach.auto_hold_state is AutoHoldState.HOLD
+    cached = loop.latest_state()
+    errors = [abs(motor.position - t) for motor, t in zip(cached.motors[:6], target_joints, strict=True)]
+    assert max(errors) <= 0.02, f"rezero 回位误差过大: {errors}"
+    # 夹爪已松开到工作零位姿态（脚本开爪，不是模型动作）
+    assert abs(cached.motors[6].position - target_gripper) <= 0.05
+
+
+def _close_gripper_sim(backend) -> None:
+    """模拟抓取：夹爪偏离工作零位姿态（sim MIT 动力学收敛慢，偏移取小值）。"""
+    backend._positions[6] = 0.03
+
+
+@pytest.mark.asyncio
+async def test_rezero_rejects_without_teach_hold(workzero_stack) -> None:
+    """rezero 要求 teach HOLD 状态；无 teach 时拒绝。"""
+    loop, stub, metadata, _, _ = workzero_stack
+    await _start_teach(stub, metadata, manual_clutch=True)
+    loop.submit(_move_sim_arm).result(timeout=2.0)
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)
+    assert not loop.has_active_motion
+    with pytest.raises(grpc.RpcError) as exc_info:
+        await stub.GoWorkZero(
+            arm_pb2.GoWorkZeroRequest(confirm=True, reason="post_action"),
+            metadata=metadata,
+        )
+    assert exc_info.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+    assert "teach HOLD" in exc_info.value.details()
