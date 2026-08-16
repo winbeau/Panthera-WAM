@@ -98,6 +98,8 @@ def encode_camera(
     output: Path,
     rate_hz: float,
     start_event: threading.Event,
+    capture_start_event: threading.Event,
+    ready_event: threading.Event,
     stop_event: threading.Event,
     errors: list[str],
     counts: dict[str, int],
@@ -127,12 +129,9 @@ def encode_camera(
             )
         )
         fps = Fraction(str(rate_hz)).limit_denominator(1000)
-        for frame in call:
-            if stop_event.is_set():
-                break
-            video_frame = frame_to_video_frame(frame)
-            if video_frame is None:
-                continue
+
+        def encode(video_frame: av.VideoFrame) -> None:
+            nonlocal container, stream, count
             if container is None:
                 output.parent.mkdir(parents=True, exist_ok=True)
                 container = av.open(str(output), mode="w")
@@ -145,6 +144,18 @@ def encode_camera(
             for packet in stream.encode(video_frame):
                 container.mux(packet)
             count += 1
+
+        for frame in call:
+            if stop_event.is_set():
+                break
+            video_frame = frame_to_video_frame(frame)
+            if video_frame is None:
+                continue
+            if not ready_event.is_set():
+                ready_event.set()
+                if not capture_start_event.wait(timeout=15.0):
+                    break
+            encode(video_frame)
     except grpc.RpcError as exc:
         if not stop_event.is_set():
             errors.append(f"{name}: gRPC {exc.code().name}: {exc.details()}")
@@ -168,6 +179,8 @@ def record_state(
     endpoint: str,
     output: Path,
     start_event: threading.Event,
+    capture_start_event: threading.Event,
+    ready_event: threading.Event,
     stop_event: threading.Event,
     errors: list[str],
     counts: dict[str, int],
@@ -202,6 +215,10 @@ def record_state(
             motors = [*robot.joint.joints, robot.gripper.state]
             if len(motors) != 7 or not all(motor.valid for motor in motors):
                 continue
+            if not ready_event.is_set():
+                ready_event.set()
+                if not capture_start_event.wait(timeout=15.0):
+                    break
             timestamp = int(robot.sampled_monotonic_ns)
             sequence = int(robot.sequence)
             current_stream = str(robot.stream_instance_id)
@@ -290,6 +307,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     start_event = threading.Event()
+    capture_start_event = threading.Event()
     stop_event = threading.Event()
     errors: list[str] = []
     counts: dict[str, int] = {}
@@ -298,20 +316,53 @@ def main() -> int:
         "sequence_regressions": 0,
         "stream_instance_changes": 0,
     }
+    ready_events = [threading.Event() for _ in range(3)]
     threads = [
         threading.Thread(
             target=record_state,
-            args=(args.arm_endpoint, trajectory_output, start_event, stop_event, errors, counts, quality),
+            args=(
+                args.arm_endpoint,
+                trajectory_output,
+                start_event,
+                capture_start_event,
+                ready_events[0],
+                stop_event,
+                errors,
+                counts,
+                quality,
+            ),
             daemon=True,
         ),
         threading.Thread(
             target=encode_camera,
-            args=("wrist", args.wrist_endpoint, wrist_output, args.rate_hz, start_event, stop_event, errors, counts),
+            args=(
+                "wrist",
+                args.wrist_endpoint,
+                wrist_output,
+                args.rate_hz,
+                start_event,
+                capture_start_event,
+                ready_events[1],
+                stop_event,
+                errors,
+                counts,
+            ),
             daemon=True,
         ),
         threading.Thread(
             target=encode_camera,
-            args=("overhead", args.overhead_endpoint, overhead_output, args.rate_hz, start_event, stop_event, errors, counts),
+            args=(
+                "overhead",
+                args.overhead_endpoint,
+                overhead_output,
+                args.rate_hz,
+                start_event,
+                capture_start_event,
+                ready_events[2],
+                stop_event,
+                errors,
+                counts,
+            ),
             daemon=True,
         ),
     ]
@@ -333,9 +384,23 @@ def main() -> int:
         thread.start()
     start_event.set()
 
-    deadline = time.monotonic() + args.duration_s
-    while time.monotonic() < deadline and not stop_event.is_set():
-        time.sleep(0.1)
+    ready_deadline = time.monotonic() + 15.0
+    while (
+        not all(event.is_set() for event in ready_events)
+        and not stop_event.is_set()
+        and time.monotonic() < ready_deadline
+    ):
+        time.sleep(0.05)
+    if not all(event.is_set() for event in ready_events):
+        errors.append("state/wrist/overhead 三路流未能在 15s 内同时就绪")
+        stop_event.set()
+        capture_start_event.set()
+    else:
+        capture_start_event.set()
+        print("CAPTURE_STARTED state+wrist+overhead", flush=True)
+        deadline = time.monotonic() + args.duration_s
+        while time.monotonic() < deadline and not stop_event.is_set():
+            time.sleep(0.1)
     stop_event.set()
     for thread in threads:
         thread.join(timeout=10.0)
