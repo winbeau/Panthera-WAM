@@ -708,3 +708,41 @@ async def test_estop_during_gozero_no_auto_resume(workzero_stack) -> None:
     await stub.ClearEStop(arm_pb2.ClearEStopRequest(confirm=True), metadata=metadata)
     await asyncio.sleep(0.5)
     assert not loop.has_active_motion
+
+
+@pytest.mark.asyncio
+async def test_gozero_force_acquire_cancels_execution(workzero_stack) -> None:
+    """force acquire 取消在飞 gozero；新持有者不会自动恢复运动。"""
+    loop, stub, metadata, _, _ = workzero_stack
+    await _start_teach(stub, metadata, manual_clutch=True)
+    loop.submit(_move_sim_arm).result(timeout=2.0)
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)
+    loop.submit(_move_sim_arm_elsewhere).result(timeout=2.0)
+
+    accepted = await stub.GoWorkZero(
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="gozero"),
+        metadata=metadata,
+    )
+    await asyncio.sleep(0.3)
+    # 新客户端 force acquire
+    second = await stub.AcquireControl(
+        arm_pb2.AcquireControlRequest(client_id="force-holder", force=True)
+    )
+    assert second.granted
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+        if status.state in (
+            arm_pb2.EXEC_STATE_DONE,
+            arm_pb2.EXEC_STATE_FAILED,
+            arm_pb2.EXEC_STATE_CANCELLED,
+        ):
+            break
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_CANCELLED
+    await asyncio.sleep(0.5)
+    assert not loop.has_active_motion, "force acquire 后不得自动恢复运动"

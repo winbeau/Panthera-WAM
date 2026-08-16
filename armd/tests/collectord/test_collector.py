@@ -431,3 +431,31 @@ async def test_collectord_sim_writes_atomic_dual_rgb_depth_episode(tmp_path: Pat
         sys.path.remove(str(tools_src))
     assert validated_episode["episode_id"] == "sim-episode-0001"
     assert len(validated_samples) == table.num_rows
+
+
+def test_work_zero_manifest_reads_real_pose(tmp_path, monkeypatch) -> None:
+    """episode.json 的 work_zero 字段只读真实文件，缺失时如实 present=false。"""
+    from armd.backend import DEFAULT_LIMITS
+    from armd.collectord.collector import _work_zero_manifest
+    from armd.workzero import WORK_ZERO_SOURCE_TEACH_CLUTCH_LOCK, WorkZeroPose, WorkZeroStore
+
+    path = tmp_path / "work-zero.json"
+    monkeypatch.setenv("PANTHERA_WORK_ZERO_PATH", str(path))
+    assert _work_zero_manifest() == {"present": False}
+
+    pose = WorkZeroPose(
+        schema_version=1,
+        joints=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6),
+        gripper=0.7,
+        captured_at_ms=0,
+        sampled_monotonic_ns=None,
+        state_sequence=None,
+        stream_instance_id="sim-stream",
+        source=WORK_ZERO_SOURCE_TEACH_CLUTCH_LOCK,
+    )
+    WorkZeroStore(path).save(pose, DEFAULT_LIMITS)
+    manifest = _work_zero_manifest()
+    assert manifest["present"] is True
+    assert manifest["joints"] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    assert manifest["gripper"] == 0.7
+    assert manifest["source"] == WORK_ZERO_SOURCE_TEACH_CLUTCH_LOCK
