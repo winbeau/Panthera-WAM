@@ -43,40 +43,28 @@ def test_video_pts_preserves_wall_clock_gaps() -> None:
     assert after_gap == 90_000
 
 
-def test_stream_time_base_wall_clock_encoding(tmp_path) -> None:
-    """回归：时间基必须设在 stream 上（frame 级 time_base 在 Pi 的
-    PyAV/ffmpeg 62.3.1 上会 EINVAL 拒封，真实复现 5/5 必现）；同时验证
-    编码后的 PTS 保留真实时间间隔（掉帧不压缩动作时间线）。"""
+def test_frame_index_pts_encoding_is_stable(tmp_path) -> None:
+    """回归：preview MP4 用帧序 PTS。Pi 真机实测任何非均匀/墙钟 PTS
+    （frame.time_base 或 stream.time_base=1/90000）都会在 ~第 17-22 帧 mux
+    EINVAL（5/5 必现）；帧序 PTS 稳定。真实时间线在 preview.json 的
+    camera_timing 与轨迹 jsonl，视频仅供人工回看。"""
     av = __import__("av")
     import numpy as np
     from fractions import Fraction
 
     frames = []
-    for index in range(20):
+    for _ in range(20):
         image = np.zeros((64, 64, 3), dtype=np.uint8)
         frames.append(av.VideoFrame.from_ndarray(image, format="rgb24"))
-    # 第 0..9 帧每 0.125s 一帧，之后 1.5s 空档，再 0.125s 一帧
-    start_ns = 10_000_000_000
-    timestamps = [
-        start_ns + int(i * 0.125 * 1_000_000_000) for i in range(10)
-    ] + [
-        start_ns + int((i - 10 + 12) * 0.125 * 1_000_000_000) + 1_500_000_000
-        for i in range(10, 20)
-    ]
 
-    output = tmp_path / "wall-clock.mp4"
+    output = tmp_path / "frame-index.mp4"
     container = av.open(str(output), mode="w")
     stream = container.add_stream("h264", rate=Fraction(8, 1))
     stream.width, stream.height, stream.pix_fmt = 64, 64, "yuv420p"
-    stream.time_base = preview_record.VIDEO_TIME_BASE
     stream.options = {"preset": "ultrafast", "crf": "30"}
-    first_ns = timestamps[0]
-    previous_pts = -1
     try:
-        for frame, timestamp_ns in zip(frames, timestamps, strict=True):
-            pts = preview_record.video_pts(timestamp_ns, first_ns, previous_pts)
-            previous_pts = pts
-            frame.pts = pts
+        for index, frame in enumerate(frames):
+            frame.pts = index
             for packet in stream.encode(frame):
                 container.mux(packet)
         for packet in stream.encode():
@@ -90,7 +78,7 @@ def test_stream_time_base_wall_clock_encoding(tmp_path) -> None:
             for packet in reopened.demux()
             if packet.stream.type == "video" and packet.pts is not None
         ]
+        duration_s = reopened.duration / 1_000_000
     assert len(packets) == 20
-    # 末帧时间戳 = 1.125s + 1.5s 空档 + 1.5s = 4.125s，空档必须保留在 PTS 里
-    last_seconds = packets[-1].pts * packets[-1].time_base
-    assert last_seconds == pytest.approx(4.125)
+    # 均匀帧距：容器时长 = 末帧 pts + 一帧时长 = 20/8 = 2.5s
+    assert duration_s == pytest.approx(2.5, abs=0.05)

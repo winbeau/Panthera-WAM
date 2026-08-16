@@ -76,8 +76,9 @@ systemctl --user is-active armd.service            # 必须 active
 （`trajectory_021.jsonl` 原始 7 轴 + `replay_trajectory_021.jsonl` TeachPlay 视图 +
 两个 MP4 + `preview.json`）。`end-record` 会用 `preview.json` 的 `success` 字段验收。
 其中 `duration_s` 是安全上限，`actual_duration_s` 才是本次动作窗口；状态流和相机
-帧数质量门按 `actual_duration_s` 计算。两个 MP4 的 PTS 来自 Pi 单调相机时间戳，
-即使编码掉帧也不得压缩或加速动作时间线。
+帧数质量门按 `actual_duration_s` 计算。preview MP4 用帧序 PTS（均匀帧距，供人工
+回看）；真实墙钟时间线在 `preview.json` 的 `camera_timing` 与轨迹 jsonl。正式数据
+由 packager 按 30Hz canonical tick 重编码为 30fps 视频（帧序即墙钟）。
 
 ## 4. 正式录制（record-formal）
 

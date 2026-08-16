@@ -164,7 +164,6 @@ def encode_camera(
     count = 0
     first_timestamp_ns: int | None = None
     last_timestamp_ns: int | None = None
-    last_pts = -1
     try:
         stub = camera_pb2_grpc.CameraServiceStub(channel)
         status = stub.GetStatus(camera_pb2.CameraStatusRequest(), timeout=5.0)
@@ -181,7 +180,7 @@ def encode_camera(
         fps = Fraction(str(rate_hz)).limit_denominator(1000)
 
         def encode(video_frame: av.VideoFrame, timestamp_ns: int) -> None:
-            nonlocal container, stream, count, first_timestamp_ns, last_timestamp_ns, last_pts
+            nonlocal container, stream, count, first_timestamp_ns, last_timestamp_ns
             if container is None:
                 output.parent.mkdir(parents=True, exist_ok=True)
                 container = av.open(str(output), mode="w")
@@ -191,14 +190,16 @@ def encode_camera(
                 stream.pix_fmt = "yuv420p"
                 stream.codec_context.thread_count = 2
                 stream.options = {"preset": "ultrafast", "tune": "zerolatency", "crf": "26"}
-                # 时间基设在 stream 上（frame 级 time_base 在 Pi 的 PyAV/ffmpeg
-                # 62.3.1 上会间歇性 EINVAL 拒封，实测 5/5 必现）。
-                stream.time_base = VIDEO_TIME_BASE
             if first_timestamp_ns is None:
                 first_timestamp_ns = timestamp_ns
-            last_pts = video_pts(timestamp_ns, first_timestamp_ns, last_pts)
             last_timestamp_ns = timestamp_ns
-            video_frame.pts = last_pts
+            # Pi 真机实测：任何非均匀/墙钟 PTS（frame.time_base 或 stream
+            # time_base=1/90000）都会在 ~第 17-22 帧 mux EINVAL；帧序 PTS 4/4
+            # 稳定。preview MP4 只供人工回看，真实墙钟时间线在 preview.json
+            # 的 camera_timing 与轨迹 jsonl（正式数据由 packager 按 30Hz
+            # canonical tick 重编码，帧序即墙钟）。video_pts/VIDEO_TIME_BASE
+            # 保留给 packager 使用。
+            video_frame.pts = count
             for packet in stream.encode(video_frame):
                 container.mux(packet)
             count += 1
