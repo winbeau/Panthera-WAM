@@ -385,9 +385,14 @@ start_service() {
 prepare_privilege() {
     ((DRY_RUN)) && return 0
     if ((EUID != 0)); then
-        [[ -t 0 && -t 2 ]] || fail 3 "udev 刷新需要 sudo；请在交互式 Pi 终端运行"
-        log "action=sudo-validate result=prompt-if-needed"
-        sudo -v || fail 3 "sudo 验证失败，未执行设备修复"
+        # sudo -v 在密码未缓存时通过控制终端提示输入（/dev/tty，与 stderr
+        # 是否重定向无关）；密码已缓存或 NOPASSWD 时静默成功。不再硬性
+        # 检查 fd0/fd2 是否为 TTY——pi 终端的 stderr 被重定向时该检查会
+        # 误拒绝。
+        if ! sudo -v; then
+            fail 3 "udev 刷新需要 sudo 密码：请先在 Pi 终端运行 sudo -v 缓存密码，再执行本脚本"
+        fi
+        log "action=sudo-validate result=ok"
     fi
 }
 
