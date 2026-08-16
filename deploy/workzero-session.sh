@@ -28,7 +28,7 @@ step "阶段 0：前置检查（只读，不运动）"
 import json, sys
 d = json.load(sys.stdin)
 assert d["sim"] is False and d["hardware_connected"] is True, "armd 异常"
-print(f'armd OK（{d["control_hz"]:.0f}Hz）')'
+print("armd OK（" + format(d["control_hz"], ".0f") + "Hz）")'
 "$CLI" state get --json | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
@@ -41,7 +41,7 @@ print("7 电机正常（valid/fault=0/mode=0x15）")'
 import json, sys
 d = json.load(sys.stdin)
 assert d["estop_engaged"] is False, "EStop 已触发，请先复位"
-print(f'控制状态 OK（held={d["held"]}）')'
+print("控制状态 OK（held=" + str(d["held"]) + "）")'
 "$CLI" workzero show | head -4
 confirm
 

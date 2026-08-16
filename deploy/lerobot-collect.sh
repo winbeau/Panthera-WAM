@@ -67,7 +67,7 @@ print("7 电机正常（valid/fault=0/mode=0x15）")' || die "电机前置检查
 import json, sys
 d = json.load(sys.stdin)
 assert d["estop_engaged"] is False, "EStop 已触发，请先复位"
-print(f'控制状态 OK（held={d["held"]}）')' || die "控制状态检查失败"
+print("控制状态 OK（held=" + str(d["held"]) + "）")' || die "控制状态检查失败"
 }
 
 gozero() {
