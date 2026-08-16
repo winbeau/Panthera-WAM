@@ -805,7 +805,7 @@ class CameraWorker:
         *,
         role: CameraRole = CameraRole.WRIST,
         reconnect_delay_s: float = 1.0,
-        collection_capacity: int = 64,
+        collection_capacity: int | None = None,
     ) -> None:
         self._backend_factory = backend_factory
         self.role = role
@@ -816,9 +816,20 @@ class CameraWorker:
         self._active_backend: CameraBackend | None = None
         self._frames: dict[CameraStream, CameraFrameSnapshot] = {}
         self._sequences = {CameraStream.DEPTH: 0, CameraStream.COLOR: 0}
+        # 采集 tap 容量默认 512（约 17s@30fps）：真机正式录制时 collectord 原始帧
+        # 落盘 + 机械臂回放导致 SD 卡 I/O 竞争，相机服务读循环曾停顿 ~2s，
+        # 容量 64（2.1s）直接滑过读者游标 → DATA_LOSS。512 帧内存约
+        # 460MB(wrist RGB8)+300MB(depth)+150MB(overhead) ≈ 1GB，Pi5 16GB 可承受。
+        capacity = (
+            collection_capacity
+            if collection_capacity is not None
+            else int(os.environ.get("PANTHERA_CAMERA_COLLECTION_CAPACITY", "512"))
+        )
+        if capacity <= 0:
+            raise ValueError("collection capacity must be positive")
         self._collection_taps = {
-            CameraStream.DEPTH: StateTap[CameraFrameSnapshot](collection_capacity),
-            CameraStream.COLOR: StateTap[CameraFrameSnapshot](collection_capacity),
+            CameraStream.DEPTH: StateTap[CameraFrameSnapshot](capacity),
+            CameraStream.COLOR: StateTap[CameraFrameSnapshot](capacity),
         }
         self._stream_instance_id = uuid.uuid4().hex
         self._frame_times: deque[float] = deque(maxlen=60)

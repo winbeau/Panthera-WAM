@@ -45,6 +45,9 @@ teach_start_lock() {
                 fi
             else
                 printf '%s\n' "$lock_output" >&2
+                if grep -Eq '当前没有运行中的 teach' <<<"$lock_output"; then
+                    "$CLI" teach start --manual-clutch 2>&1 | tail -1 || true
+                fi
             fi
         elif lock_output=$("$CLI" teach clutch lock 2>&1); then
             printf '%s\n' "$lock_output"
@@ -53,6 +56,9 @@ teach_start_lock() {
             fi
         else
             printf '%s\n' "$lock_output" >&2
+            if grep -Eq '当前没有运行中的 teach' <<<"$lock_output"; then
+                "$CLI" teach start --manual-clutch 2>&1 | tail -1 || true
+            fi
         fi
         sleep 0.75
     done
