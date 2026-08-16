@@ -658,20 +658,25 @@ panthera dataset export-lerobot TRAJECTORY_PATH [--out-dir DIR] [--repo-id OWNER
 下垂。仿真未暴露（sim 电机模型无重力项）。
 
 **定稿方案（用户决策）**：gozero/rezero 回位路径改用 MoveL（真机已验证
-POS-VEL 逐点轨迹，M0-2：1cm 误差 1.73mm），到位后服务端自动切
-`teach manual-clutch LOCK` 定住（标定重力前馈 + MANUAL_CLUTCH_KP_HOLD）。
+POS-VEL 逐点轨迹，M0-2：1cm 误差 1.73mm）。
+
+**名词定义（用户定稿）**：
+- **定死锁**：MoveL 终止态——固件持续执行末帧 POS-VEL 目标，PID 刚性保持，掰不动；
+  `write_frame` 清 idle_mode 后 `maintain_idle` 不写帧，固件保持末帧（real.py 机制）；
+- **阻尼锁**：teach lock（HOLD）——MIT 帧 kp=20 + 标定重力前馈，掰一下能复位；
+  录制/推理开始时由操作者显式 `teach start --manual-clutch` + `teach clutch lock` 切入。
 
 ```text
-gozero：初始位 → MoveL→工作0位 → teach lock → 开爪（HOLD 帧内阻抗，脚本做）
-rezero：动作完成位(teach HOLD) → 开爪（松方块，脚本做不是模型做）
-        → 快速安全退出 teach（0.3s SAFE_HOLD）→ MoveL→工作0位 → teach lock
+gozero：初始位 → MoveL→工作0位 → 定死锁+开爪（POS-VEL 末帧保持 + 夹爪快速伺服）
+rezero：动作完成位(teach HOLD) → 快速退出 teach（0.3s SAFE_HOLD）
+        → 定死锁+开爪（松方块，脚本做不是模型做）→ MoveL→工作0位 → 定死锁
 ```
 
-- 开爪目标 = 工作零位 gripper 值；在 teach MIT 帧内用 gripper_kp/kd 阻抗伺服
-  （N7 同帧同模式），动作指令只到「方块移到目标区上方」，松手由脚本完成；
+- 开/闭爪速度：定死锁帧 gripper velocity 1.0（上限，用户要求偏快）；
+  阻尼锁下闭爪：`teach clutch lock --gripper 0.3`（TeachClutchRequest.gripper_position，
+  teach MIT 帧内阻抗伺服）；
 - 小残差（≤0.02 rad）走 ImmediateDoneMotion 幂等路径；MoveL settle 容差 0.01 rad；
-- 取消/EStop/lease 失效：MoveL 被取消且**绝不自动进入 teach**；
-  开爪未在 4s 内到位 → 拒绝回位（可能仍抓着物体）；
+- 取消/EStop/lease 失效：MoveL 被取消且不动作；开爪未在 4s 内到位 → 拒绝回位（可能仍抓着物体）；
 - `WorkZeroMotion` 代码与测试保留为备用实现，当前未接入真机路径。
 
 禁止路径（仍有效）：`move`/`movej`/`JointPositionMotion`/单帧 `position_frame`/

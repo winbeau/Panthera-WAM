@@ -1425,7 +1425,16 @@ def teach_start(
 
 
 @teach_app.command("clutch")
-def teach_clutch(mode: str = typer.Argument(..., help="lock=锁定当前位置；drag=恢复手拖")) -> None:
+def teach_clutch(
+    mode: str = typer.Argument(..., help="lock=锁定当前位置；drag=恢复手拖"),
+    gripper: float | None = typer.Option(
+        None,
+        "--gripper",
+        min=0.0,
+        max=2.0,
+        help="同时把夹爪伺服到该位置（阻尼锁下快速闭/开爪，0=闭 2=全开）",
+    ),
+) -> None:
     normalized_mode = mode.strip().lower()
     mode_values = {
         "lock": arm_pb2.TEACH_CLUTCH_MODE_LOCK,
@@ -1435,9 +1444,12 @@ def teach_clutch(mode: str = typer.Argument(..., help="lock=锁定当前位置�
         raise typer.BadParameter("mode 必须是 lock 或 drag")
     lease = load_lease()
     channel, stub = create_stub(lease.endpoint)
+    request = arm_pb2.TeachClutchRequest(mode=mode_values[normalized_mode])
+    if gripper is not None:
+        request.gripper_position = gripper
     try:
         response = stub.TeachClutch(
-            arm_pb2.TeachClutchRequest(mode=mode_values[normalized_mode]),
+            request,
             metadata=lease_metadata(lease),
         )
     except grpc.RpcError as exc:
@@ -1447,7 +1459,10 @@ def teach_clutch(mode: str = typer.Argument(..., help="lock=锁定当前位置�
     if not response.accepted:
         console.print(f"[red]teach clutch {normalized_mode} 失败[/red]: {response.reject_reason}")
         raise typer.Exit(2)
-    console.print(f"[green]teach clutch {normalized_mode} 已发送[/green] state={response.state}")
+    message = f"[green]teach clutch {normalized_mode} 已发送[/green] state={response.state}"
+    if gripper is not None:
+        message += f" gripper_target={gripper}"
+    console.print(message)
 
 
 @teach_app.command("stop")

@@ -596,14 +596,12 @@ async def test_gozero_immediate_done_when_already_at_work_zero(workzero_stack) -
     assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
     assert fractions == sorted(fractions), "fraction 必须单调"
     assert final.fraction == pytest.approx(1.0)
-    # 到位后服务端自动切 teach manual-clutch LOCK 定住 + 开爪到工作零位姿态
-    await asyncio.sleep(0.8)
-    from armd.motion import AutoHoldState
-
-    teach = server.arm_service._teach_motion
-    assert teach is not None, "gozero 到位后应自动进入 teach HOLD"
-    assert teach.manual_clutch
-    assert teach.auto_hold_state is AutoHoldState.HOLD
+    # 定死锁：不再自动切 teach（阻尼锁由录制/推理开始时显式 TeachStart 切入）
+    await asyncio.sleep(1.2)
+    assert server.arm_service._teach_motion is None
+    # 夹爪已快速开到工作零位姿态（定死锁帧内 POS-VEL 伺服）
+    cached = loop.latest_state()
+    assert abs(cached.motors[6].position - saved.pose.gripper) <= 0.05
     assert accepted.execution_id
 
 
@@ -650,15 +648,15 @@ async def test_gozero_cancel_via_execution(workzero_stack) -> None:
 
 @pytest.mark.asyncio
 async def test_gozero_movel_path_reaches_work_zero_and_holds(workzero_stack) -> None:
-    """大位移回位：MoveL 轨迹到工作零位 + 自动 teach HOLD + 到位误差。"""
+    """大位移回位：MoveL 轨迹到工作零位 + 定死锁 + 到位误差。"""
     loop, stub, metadata, server, _ = workzero_stack
-    from armd.motion import AutoHoldState
 
     await _start_teach(stub, metadata, manual_clutch=True)
     loop.submit(_move_sim_arm).result(timeout=2.0)  # 位形 A
     saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
     assert saved.accepted
     target_joints = list(saved.pose.joints)
+    target_gripper = saved.pose.gripper
     await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
     await asyncio.sleep(0.9)
     loop.submit(_move_sim_arm_elsewhere).result(timeout=2.0)  # 移到位形 B（≠A）
@@ -680,14 +678,14 @@ async def test_gozero_movel_path_reaches_work_zero_and_holds(workzero_stack) -> 
         ):
             break
     assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
-    await asyncio.sleep(0.8)
-    teach = server.arm_service._teach_motion
-    assert teach is not None and teach.auto_hold_state is AutoHoldState.HOLD
-    # MoveL 到位误差在 tolerance 内（sim POS-VEL 精确跟踪）
+    await asyncio.sleep(1.2)
+    # 定死锁语义：无 teach；arm 到位保持 + 夹爪已开
+    assert server.arm_service._teach_motion is None
     cached = loop.latest_state()
     current = [motor.position for motor in cached.motors[:6]]
     errors = [abs(c - t) for c, t in zip(current, target_joints, strict=True)]
     assert max(errors) <= 0.02, f"回位误差过大: {errors}"
+    assert abs(cached.motors[6].position - target_gripper) <= 0.05
 
 
 # -------------------------------------------------- P4 action-only 边界
@@ -846,9 +844,9 @@ async def test_rezero_full_flow_release_move_back_and_hold(workzero_stack) -> No
         ):
             break
     assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
-    await asyncio.sleep(0.8)
-    teach = server.arm_service._teach_motion
-    assert teach is not None and teach.auto_hold_state is AutoHoldState.HOLD
+    await asyncio.sleep(1.2)
+    # 定死锁语义：无 teach；arm 回工作0位 + 夹爪已松开
+    assert server.arm_service._teach_motion is None
     cached = loop.latest_state()
     errors = [abs(motor.position - t) for motor, t in zip(cached.motors[:6], target_joints, strict=True)]
     assert max(errors) <= 0.02, f"rezero 回位误差过大: {errors}"

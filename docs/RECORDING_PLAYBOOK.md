@@ -74,22 +74,29 @@ printf 'start\n' > /tmp/panthera-preview-color-block-021-<pid>.start
 - 旧 preview 没有这些字段时不被回填为成功，由后续 packager/validator 标记
   legacy/rejected（P4 落地）。
 
-## 0.7 正式 episode 的 work-zero 会话顺序（P4）
+## 0.7 正式 episode 的 work-zero 会话顺序（P4，定死锁/阻尼锁语义）
 
-正式 episode 的采集顺序固定为：
+术语：**定死锁** = MoveL 终止态（固件 PID 刚性保持，掰不动）；
+**阻尼锁** = teach lock（HOLD，掰一下能复位）。
 
 ```bash
-workzero gozero --confirm --wait   # 1. 进入工作零位并等待稳定（服务端连续流式）
-workzero show                       # 2. 只读确认姿态（可选）
-recordctl.sh start <episode>       # 3. 只记录任务动作窗口
-# …… 只执行任务动作（teach lock/drag 或模型控制）……
-recordctl.sh stop <episode>        # 4. graceful stop → fsync → 原子提交 → COMPLETE
-recordctl.sh verify <episode>      # 5. 验收：901 ticks / 900 frames；输出 rezero_allowed
-workzero rezero --confirm --wait   # 6. 只有 verify 通过后才允许回位
+# 1. 进入工作零位：MoveL 回位 → 定死锁 + 已开爪（脚本开爪）
+workzero gozero --confirm --wait
+workzero show                       # 2. 只读确认（可选）
+recordctl.sh start <episode>        # 3. 开始录制（此刻仍是定死锁）
+teach start --manual-clutch          # 4. 切阻尼锁（录制/推理开始时显式切入）
+teach clutch lock                    # 5. 阻尼锁锁定当前位置
+teach clutch drag                    # 6. 恢复手拖，开始任务动作
+# …… 手拖动/模型动作：把方块移到目标区域上方（动作指令到此为止）……
+teach clutch lock --gripper 0.3      # 7. 目标位置闭爪 + 阻尼锁（脚本闭爪）
+recordctl.sh stop <episode>          # 8. 录制结束 → fsync → 原子提交 → COMPLETE
+recordctl.sh verify <episode>        # 9. 验收：901 ticks / 900 frames / rezero_allowed
+workzero rezero --confirm --wait     # 10. 开爪（松方块，脚本）→ MoveL→工作0位 → 定死锁
 ```
 
-- `recordctl.sh stop` 未完成采集/原子提交/质量门之前，**禁止**执行 rezero；
+- `recordctl.sh stop` 未完成采集/原子提交/质量门之前，**禁止** rezero；
   stop/verify 失败时 episode 标记 rejected，机械臂保持当前安全状态等待人工处理；
+- 闭/开爪都由脚本完成，模型/示教动作只到「方块移到目标区上方」；
 - episode.json 携带 `motion_scope=task_action_only`、`gozero_excluded/rezero_excluded`、
   `action_window` 与 `work_zero` 姿态（存在时），packager 只取 action 帧；
 - 30 s → 901 canonical ticks → 900 training frames 契约不变。

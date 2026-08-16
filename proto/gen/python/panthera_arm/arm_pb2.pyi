@@ -836,10 +836,12 @@ class TeachStartResponse(_message.Message):
     def __init__(self, accepted: _Optional[bool] = ..., reject_reason: _Optional[str] = ...) -> None: ...
 
 class TeachClutchRequest(_message.Message):
-    __slots__ = ("mode",)
+    __slots__ = ("mode", "gripper_position")
     MODE_FIELD_NUMBER: _ClassVar[int]
+    GRIPPER_POSITION_FIELD_NUMBER: _ClassVar[int]
     mode: TeachClutchMode
-    def __init__(self, mode: _Optional[_Union[TeachClutchMode, str]] = ...) -> None: ...
+    gripper_position: float
+    def __init__(self, mode: _Optional[_Union[TeachClutchMode, str]] = ..., gripper_position: _Optional[float] = ...) -> None: ...
 
 class TeachClutchResponse(_message.Message):
     __slots__ = ("accepted", "reject_reason", "state")

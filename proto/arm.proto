@@ -537,7 +537,12 @@ enum TeachClutchMode {
   TEACH_CLUTCH_MODE_LOCK = 1;  // 下一控制周期采样当前位置并锁定
   TEACH_CLUTCH_MODE_DRAG = 2;  // 平滑释放位置刚度，恢复手拖
 }
-message TeachClutchRequest { TeachClutchMode mode = 1; }
+message TeachClutchRequest {
+  TeachClutchMode mode = 1;
+  // 可选：锁定/拖动命令携带的夹爪阻抗目标（阻尼锁下快速闭/开爪）。
+  // 未设 = 夹爪保持当前行为（work-zero 场景由 gozero/rezero 定死锁帧负责）。
+  optional double gripper_position = 2;
+}
 message TeachClutchResponse {
   bool accepted = 1;
   string reject_reason = 2;

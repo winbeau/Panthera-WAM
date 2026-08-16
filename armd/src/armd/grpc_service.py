@@ -14,6 +14,7 @@ from panthera_arm import arm_pb2, arm_pb2_grpc
 
 from .backend import (
     IDLE_DAMPING_KD,
+    Backend,
     BackendError,
     BackendLimits,
     FrameMode,
@@ -30,11 +31,13 @@ from .motion import (
     JointJogMotion,
     JointMITMotion,
     JointPositionMotion,
+    POSITION_HOLD_SPEED,
     TEACH_TAU_LIMIT,
     TeachClutchCommand,
     TeachMotion,
     TeachPlaybackMotion,
     AutoHoldConfig,
+    position_frame,
 )
 from .policy import (
     PolicyChunkMotion,
@@ -656,8 +659,8 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         current = np.array([state.position for state in cached.motors[:6]], dtype=np.float64)
         target_positions = np.asarray(pose.joints, dtype=np.float64)
 
-        # ---- rezero：动作完成位（teach HOLD）→ 开爪（松方块，脚本做不是模型做）
-        #      → 快速安全退出 teach → MoveL 回工作0位 → teach lock ----
+        # ---- rezero：动作完成位（teach HOLD）→ 快速安全退出 teach →
+        #      定死锁 + 开爪（松方块，脚本做不是模型做）→ MoveL 回工作0位 ----
         if request.reason == "post_action":
             await self._refresh_teach_motion()
             teach = self._teach_motion
@@ -666,7 +669,30 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     grpc.StatusCode.FAILED_PRECONDITION,
                     "rezero 需要 teach HOLD 状态：动作完成后请先 lock 保持",
                 )
-            teach.request_gripper(pose.gripper)
+            teach.request_cancel_quick(CancelReason.CLIENT)
+            exit_deadline = time.monotonic() + 1.5
+            while self._hardware_loop.has_active_motion and time.monotonic() < exit_deadline:
+                await asyncio.sleep(0.02)
+            if self._hardware_loop.has_active_motion:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    "teach 未在 1.5s 内退出，拒绝回位",
+                )
+            await self._refresh_teach_motion()
+            state = self._hardware_loop.latest_state()
+            if state is None or not all(motor.valid for motor in state.motors):
+                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "电机状态无效或连接不完整")
+            # 定死锁：POS-VEL 帧把臂锁在当前位形，同时快速开爪（松方块）
+            try:
+                await self._workzero_hold_and_open(
+                    arm_position=np.array(
+                        [motor.position for motor in state.motors[:6]], dtype=np.float64
+                    ),
+                    gripper_target=pose.gripper,
+                    gripper_velocity=1.0,
+                )
+            except (BackendError, LimitViolationError, ValueError) as exc:
+                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
             release_deadline = time.monotonic() + 4.0
             released = False
             while time.monotonic() < release_deadline:
@@ -681,22 +707,12 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                     grpc.StatusCode.FAILED_PRECONDITION,
                     "夹爪未在 4s 内打开到工作零位姿态；拒绝回位（可能仍抓着物体）",
                 )
-            teach.request_cancel_quick(CancelReason.CLIENT)
-            exit_deadline = time.monotonic() + 1.5
-            while self._hardware_loop.has_active_motion and time.monotonic() < exit_deadline:
-                await asyncio.sleep(0.02)
-            if self._hardware_loop.has_active_motion:
-                await context.abort(
-                    grpc.StatusCode.FAILED_PRECONDITION,
-                    "teach 未在 1.5s 内退出，拒绝回位",
-                )
-            await self._refresh_teach_motion()
             current = np.array(
-                [state.position for state in self._hardware_loop.latest_state().motors[:6]],
+                [motor.position for motor in self._hardware_loop.latest_state().motors[:6]],
                 dtype=np.float64,
             )
 
-        # ---- 小残差（已在工作零位）：立即 DONE，直接进入 teach lock 阶段 ----
+        # ---- 小残差（已在工作零位）：立即 DONE，保持定死锁（不额外动作） ----
         if float(np.max(np.abs(target_positions - current))) <= WORKZERO_SMALL_RESIDUAL:
             motion = ImmediateDoneMotion()
         else:
@@ -749,90 +765,74 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
         execution_id = self._executions.register(motion, completion)
         finalizer = asyncio.create_task(
-            self._gozero_finalize_teach(completion, token, pose),
+            self._gozero_finalize(completion, pose),
             name=f"panthera-gozero-finalize-{execution_id[:8]}",
         )
         self._gozero_finalize_tasks.add(finalizer)
         finalizer.add_done_callback(self._gozero_finalize_tasks.discard)
         return arm_pb2.ExecutionAccepted(execution_id=execution_id)
 
-    async def _gozero_finalize_teach(self, completion, token: str, pose: WorkZeroPose) -> None:
-        """回位到位后：自动启动 teach manual-clutch 并 LOCK 定住。
+    async def _workzero_hold_and_open(
+        self,
+        *,
+        arm_position: np.ndarray,
+        gripper_target: float,
+        gripper_velocity: float,
+    ) -> None:
+        """定死锁 + 开爪：单帧 POS-VEL（arm 目标保持 + 夹爪快速伺服）。
 
-        失败/取消/lease 失效时绝不进入 teach（与 WZ-4 一致：不自动恢复运动）。
-        LOCK 前先让 teach 在重力补偿 DRAG 下稳定 0.3s，再锚定当前位形，
-        避免 MoveL 末点到 HOLD 切换瞬态被锚定。
+        write_frame 会把 idle_mode 清为 None，之后 HardwareLoop 不再写空闲帧，
+        固件持续执行本帧：6 关节 PID 刚性保持（定死锁），夹爪按目标伺服。
+        """
+
+        def hold_and_open(backend: Backend) -> None:
+            states = backend.read_all()
+            if len(states) != 7 or not all(state.valid for state in states):
+                raise BackendError("电机状态无效或连接不完整")
+            backend.write_frame(
+                position_frame(
+                    backend,
+                    arm_position=arm_position,
+                    arm_velocity=np.full(6, POSITION_HOLD_SPEED),
+                    gripper_position=gripper_target,
+                    gripper_velocity=gripper_velocity,
+                    gripper_max_torque=backend.limits.gripper_torque,
+                )
+            )
+
+        await asyncio.wrap_future(self._hardware_loop.submit(hold_and_open))
+
+    async def _gozero_finalize(self, completion, pose: WorkZeroPose) -> None:
+        """回位到位后：定死锁 + 开爪（固件保持工作零位，夹爪快速伺服）。
+
+        不再自动切 teach（阻尼锁）：定死锁是 gozero 的终止状态，录制/推理
+        开始时由操作者显式 TeachStart+lock 切换（WZ-2 定死锁/阻尼锁语义）。
         """
         try:
             result = await asyncio.wrap_future(completion)
         except (asyncio.CancelledError, RuntimeError):
             return
         if result is not MotionStepResult.DONE:
-            logger.warning("workzero 回位未完成（%s），不进入 teach HOLD", result.value)
-            return
-        if self._hardware_loop.has_active_motion:
-            logger.warning("workzero 到位后仍有活动运动，跳过 teach HOLD")
-            return
-        if self._teach_motion is not None:
-            logger.info("teach 已存在，跳过重复启动")
-            return
-        if not self._leases.heartbeat(token):
-            logger.warning("workzero 到位后 lease 失效，不启动 teach HOLD")
-            return
-        gate_reason = await self._teach_contract_gate(mit=True)
-        if gate_reason:
-            logger.warning("teach 契约门拒绝：%s", gate_reason)
+            logger.warning("workzero 回位未完成（%s），保持现状不动作", result.value)
             return
         try:
-            motion = TeachMotion(
-                kp=np.zeros(6),
-                kd=np.zeros(6),
-                fc=DEFAULT_FRICTION_FC.copy(),
-                fv=DEFAULT_FRICTION_FV.copy(),
-                gravity_scale=self._teach_gravity_scale,
-                gravity_scale_high=self._teach_gravity_scale_high,
-                gravity_breakpoint=self._teach_gravity_breakpoint,
-                gravity_segmented=self._teach_gravity_segmented,
-                gravity_residual=self._teach_gravity_residual,
-                auto_hold=(
-                    AutoHoldConfig() if self._auto_hold_enabled else AutoHoldConfig(enabled=False)
-                ),
-                manual_clutch=True,
-                safe_hold_time_s=self._teach_safe_hold_s,
+            await self._workzero_hold_and_open(
+                arm_position=np.asarray(pose.joints, dtype=np.float64),
+                gripper_target=pose.gripper,
+                gripper_velocity=1.0,
             )
-        except ValueError as exc:
-            logger.warning("teach 构造失败：%s", exc)
+        except (BackendError, LimitViolationError, ValueError) as exc:
+            logger.warning("workzero 定死锁+开爪失败：%s", exc)
             return
-        accepted, teach_completion = self._hardware_loop.start_motion_with_ack(motion)
-        try:
-            await asyncio.wrap_future(accepted)
-        except RuntimeError as exc:
-            logger.warning("teach 启动失败：%s", exc)
-            return
-        self._teach_motion = motion
-        self._teach_completion = teach_completion
-        self._teach_monitor_task = asyncio.create_task(
-            self._monitor_teach_completion(teach_completion),
-            name="panthera-teach-monitor",
-        )
-        # 先让重力补偿 DRAG 稳定，再 LOCK 锚定（避免切换瞬态被锁存）
-        await asyncio.sleep(0.3)
-        if not self._leases.heartbeat(token):
-            logger.warning("workzero teach 稳定期间 lease 失效，保持 DRAG 不 LOCK")
-            return
-        motion.request_clutch(TeachClutchCommand.LOCK)
-        logger.info("workzero 已到位并进入 teach HOLD")
-        # 开爪到工作零位夹爪姿态（HOLD 帧内受限 MIT 阻抗，臂保持不动）
-        motion.request_gripper(pose.gripper)
         release_deadline = time.monotonic() + 4.0
         while time.monotonic() < release_deadline:
             state = self._hardware_loop.latest_state()
             if state is not None and all(motor.valid for motor in state.motors):
                 if abs(state.motors[6].position - pose.gripper) <= 0.02:
-                    logger.info("workzero 夹爪已打开到工作零位姿态")
+                    logger.info("workzero 定死锁保持 + 夹爪已打开到工作零位姿态")
                     return
             await asyncio.sleep(0.05)
-        logger.warning("workzero 夹爪未在 4s 内到达工作零位姿态，保持 HOLD 待人工处理")
+        logger.warning("workzero 夹爪未在 4s 内到达工作零位姿态，保持定死锁待人工处理")
 
     async def GetJointState(self, request, context):
         del request
@@ -1876,6 +1876,19 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "mode 必须为 lock 或 drag")
         try:
             motion.request_clutch(command)
+            if request.HasField("gripper_position"):
+                limits = await asyncio.wrap_future(
+                    self._hardware_loop.submit(lambda backend: backend.limits)
+                )
+                if not (
+                    limits.gripper_lower <= request.gripper_position <= limits.gripper_upper
+                ):
+                    await context.abort(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        f"gripper_position 超出软限位 "
+                        f"[{limits.gripper_lower:.6g}, {limits.gripper_upper:.6g}]",
+                    )
+                motion.request_gripper(request.gripper_position)
         except ValueError as exc:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
         token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
