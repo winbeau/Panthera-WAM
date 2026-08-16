@@ -39,6 +39,14 @@ die() { echo "error: $*" >&2; exit 1; }
 step() { printf '\n\033[1;36m========== %s ==========\033[0m\n' "$*"; }
 warn() { printf '\n\033[1;33m⚠ %s\033[0m\n' "$*"; }
 
+# record-formal 专用中断：定死锁已卸下后任何失败都必须先恢复阻尼锁
+# （teach HOLD），否则臂在高位只剩空闲阻尼会下垂。
+formal_abort() {
+    warn "record-formal 中断：先恢复阻尼锁（teach HOLD）再退出"
+    teach_start_lock || true
+    die "$1"
+}
+
 usage() {
     sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
@@ -315,12 +323,23 @@ record_formal() {
         die "teach SAFE_HOLD 30s 内未退出，稍后重试本命令"
     fi
     echo "==> teach 已退出，运动通道空闲"
+    # 从此处开始定死锁已卸下：任何中断都必须先恢复阻尼锁（teach HOLD），
+    # 否则臂在高位只剩空闲阻尼会下垂。
     # 3) 启动变长正式录制
     ./deploy/recordctl.sh start "$episode" --variable --max-duration-s "$max_duration_s" \
-        --task "$task" --detach
-    sleep 3
-    ./deploy/recordctl.sh status "$episode" | grep -q "process=RUNNING" \
-        || die "collectord 未在运行，看日志: $STATE_DIR/../panthera-recordctl/$episode/log"
+        --task "$task" --detach \
+        || formal_abort "collectord 启动失败，看日志: $STATE_DIR/../panthera-recordctl/$episode/log"
+    local collect_deadline=$((SECONDS + 15)) collect_ok=0
+    while ((SECONDS < collect_deadline)); do
+        local status_output
+        status_output=$(./deploy/recordctl.sh status "$episode" 2>&1 || true)
+        if grep -q "process=RUNNING" <<<"$status_output"; then
+            collect_ok=1
+            break
+        fi
+        sleep 1
+    done
+    ((collect_ok)) || formal_abort "collectord 未在运行，看日志: $STATE_DIR/../panthera-recordctl/$episode/log"
     # 4) teach play：把录制的动作来一遍（参数来自 teach-cal.json / 环境变量覆盖）
     local params
     params=$(_teach_cal_lists)
@@ -333,7 +352,7 @@ record_formal() {
     echo "==> 回放轨迹: $replay"
     "$CLI" teach play "$replay" --mode mit \
         --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" \
-        || die "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"
+        || formal_abort "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"
     # 5) 结束 lock（阻尼锁 + 闭爪 10%）
     teach_start_lock "$CLOSE_GRIPPER"
     # 6) 优雅结束录制 + 验收
