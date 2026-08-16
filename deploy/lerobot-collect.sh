@@ -54,6 +54,33 @@ ensure_lease() {
     fi
 }
 
+teach_start_lock() {
+    local gripper="${1:-}" deadline=$((SECONDS + 15)) lock_output
+    while ((SECONDS < deadline)); do
+        "$CLI" teach start --manual-clutch || true
+        sleep 0.25
+        if [[ -n "$gripper" ]]; then
+            if lock_output=$("$CLI" teach clutch lock --gripper "$gripper" 2>&1); then
+                printf '%s\n' "$lock_output"
+                if grep -Eq 'state=(drag|hold|still_detect|release)' <<<"$lock_output"; then
+                    return 0
+                fi
+            else
+                printf '%s\n' "$lock_output" >&2
+            fi
+        elif lock_output=$("$CLI" teach clutch lock 2>&1); then
+            printf '%s\n' "$lock_output"
+            if grep -Eq 'state=(drag|hold|still_detect|release)' <<<"$lock_output"; then
+                return 0
+            fi
+        else
+            printf '%s\n' "$lock_output" >&2
+        fi
+        sleep 0.75
+    done
+    die "teach 在 15s 内未进入可锁定状态；请检查 SAFE_HOLD、armd 日志和 E-stop"
+}
+
 preflight() {
     "$CLI" state get --json | python3 -c '
 import json, sys
@@ -100,9 +127,7 @@ start_record() {
     [[ "$number" =~ ^[0-9]{3}$ ]] || die "编号必须是三位数字，例如 021"
     ensure_cli; preflight; ensure_lease
     step "start-record：定死锁→阻尼锁，然后后台开始预览录制"
-    "$CLI" teach start --manual-clutch
-    sleep 0.5
-    "$CLI" teach clutch lock
+    teach_start_lock
     local session="${task}_${number}"
     local out="$PREVIEW_ROOT/$session"
     [[ ! -e "$out" ]] || die "预览目录已存在，拒绝覆盖: $out"
@@ -226,9 +251,7 @@ record_formal() {
     step "record-formal：开始 lock → 变长录制 → teach play 动作 → 结束 lock"
     warn "机械臂将自动回放录制动作：确认人在场、工作空间无障碍、E-stop 可触达"
     # 1) 开始 lock（定死锁→阻尼锁）
-    "$CLI" teach start --manual-clutch
-    sleep 0.5
-    "$CLI" teach clutch lock
+    teach_start_lock
     sleep 0.5
     # 2) 退出保持（SAFE_HOLD 后进入 idle，腾出运动通道给 teach play）
     "$CLI" teach stop
@@ -253,9 +276,7 @@ record_formal() {
         --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" \
         || die "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"
     # 5) 结束 lock（阻尼锁 + 闭爪 10%）
-    "$CLI" teach start --manual-clutch
-    sleep 0.5
-    "$CLI" teach clutch lock --gripper "$CLOSE_GRIPPER"
+    teach_start_lock "$CLOSE_GRIPPER"
     # 6) 优雅结束录制 + 验收
     ./deploy/recordctl.sh stop "$episode"
     local deadline=$((SECONDS + 300))

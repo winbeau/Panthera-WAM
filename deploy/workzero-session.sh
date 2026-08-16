@@ -22,6 +22,34 @@ EPISODE="${1:?用法: ./deploy/workzero-session.sh <episode-id>（如 color-bloc
 step() { printf '\n\033[1;36m========== %s ==========\033[0m\n' "$*"; }
 confirm() { read -r -p ">>> 回车继续（Ctrl-C 退出）: " _; }
 
+teach_start_lock() {
+    local gripper="${1:-}" deadline=$((SECONDS + 15)) lock_output
+    while ((SECONDS < deadline)); do
+        "$CLI" teach start --manual-clutch || true
+        sleep 0.25
+        if [[ -n "$gripper" ]]; then
+            if lock_output=$("$CLI" teach clutch lock --gripper "$gripper" 2>&1); then
+                printf '%s\n' "$lock_output"
+                if grep -Eq 'state=(drag|hold|still_detect|release)' <<<"$lock_output"; then
+                    return 0
+                fi
+            else
+                printf '%s\n' "$lock_output" >&2
+            fi
+        elif lock_output=$("$CLI" teach clutch lock 2>&1); then
+            printf '%s\n' "$lock_output"
+            if grep -Eq 'state=(drag|hold|still_detect|release)' <<<"$lock_output"; then
+                return 0
+            fi
+        else
+            printf '%s\n' "$lock_output" >&2
+        fi
+        sleep 0.75
+    done
+    echo "error: teach 在 15s 内未进入可锁定状态；请检查 SAFE_HOLD、armd 日志和 E-stop" >&2
+    return 1
+}
+
 # ---------------------------------------------------------------- 阶段 0
 step "阶段 0：前置检查（只读，不运动）"
 "$CLI" daemon status --json | python3 -c '
@@ -77,9 +105,7 @@ confirm
 
 # ---------------------------------------------------------------- 阶段 3
 step "阶段 3：切阻尼锁（录制/动作开始时显式切入）"
-"$CLI" teach start --manual-clutch
-sleep 0.5
-"$CLI" teach clutch lock
+teach_start_lock
 confirm
 
 # ---------------------------------------------------------------- 阶段 4
