@@ -16,7 +16,9 @@ from panthera_arm import camera_pb2, camera_pb2_grpc
 from armd.backend import SimBackend
 from armd.camera.backend import (
     CameraDeviceInfo,
+    CameraFrameSnapshot,
     CameraPixelFormat,
+    CameraStatusSnapshot,
     CameraTimestampQuality,
     CameraTimestampSource,
     CameraProfileInfo,
@@ -31,6 +33,7 @@ from armd.camera.backend import (
 from armd.camera.service import CameraService
 from armd.hardware_loop import HardwareLoop
 from armd.server import ArmdServer
+from armd.state_tap import StateTap
 
 
 def test_camera_worker_keeps_latest_depth_and_color_frames() -> None:
@@ -323,6 +326,80 @@ async def test_camera_grpc_status_snapshot_and_finite_stream() -> None:
         await channel.close()
         await server.stop()
         hardware_loop.stop()
+
+
+@pytest.mark.asyncio
+async def test_collect_frames_reanchors_on_startup_ring_race(monkeypatch) -> None:
+    """回归：start_at_latest 锚定后首次 read_after 被线程池排队延迟（真机
+    wrist tap 容量 64/30fps，排队 100ms 落后 2-3 帧）时，首帧前允许重锚到
+    当前最新；流中途落后仍 DATA_LOSS 终止。"""
+    import armd.camera.service as camera_service
+
+    tap: StateTap[CameraFrameSnapshot] = StateTap(capacity=4)
+
+    def snapshot(sequence: int) -> CameraFrameSnapshot:
+        return CameraFrameSnapshot(
+            stream=CameraStream.COLOR,
+            pixel_format=CameraPixelFormat.RGB8,
+            sequence=sequence,
+            captured_at_ns=sequence * 1_000_000,
+            device_timestamp_ms=float(sequence),
+            width=4,
+            height=4,
+            stride=12,
+            depth_scale=0.001,
+            data=b"\x00" * 48,
+            stream_instance_id="race-test",
+        )
+
+    for sequence in range(4):
+        tap.publish(snapshot(sequence))
+
+    class FakeWorker:
+        role = CameraRole.WRIST
+
+        def collection_tap(self, stream):
+            del stream
+            return tap
+
+        def status(self) -> CameraStatusSnapshot:
+            return CameraStatusSnapshot(
+                enabled=True,
+                available=True,
+                streaming=True,
+                model="fake",
+            )
+
+    service = CameraService(FakeWorker())  # type: ignore[arg-type]
+    calls = {"count": 0}
+
+    async def racing_to_thread(fn, *args):
+        # 模拟共享线程池排队：锚定后、首次读取前 tap 前进超过容量
+        # （发布 4..9，capacity 4 → oldest 越过 start_at_latest 锚点）；
+        # 重锚后再发布下一帧供读取。
+        calls["count"] += 1
+        if calls["count"] == 1:
+            for sequence in range(4, 10):
+                tap.publish(snapshot(sequence))
+        elif calls["count"] == 2:
+            tap.publish(snapshot(10))
+        return fn(*args)
+
+    monkeypatch.setattr(camera_service.asyncio, "to_thread", racing_to_thread)
+
+    collected = []
+    async for item in service.StreamCollectedFrames(
+        camera_pb2.StreamCollectedFramesRequest(
+            stream=camera_pb2.CAMERA_STREAM_TYPE_COLOR,
+            start_at_latest=True,
+            max_frames=1,
+        ),
+        None,
+    ):
+        collected.append(item)
+    assert len(collected) == 1
+    assert collected[0].frame.sequence == 10
+    assert calls["count"] >= 2
 
 
 @pytest.mark.asyncio

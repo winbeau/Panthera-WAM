@@ -243,6 +243,11 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
         if request.start_at_latest:
             after_sequence = tap.stats().newest_sequence
         sent = 0
+        # 启动锚定竞态防御：start_at_latest 在 tap.stats() 锚定最新序列后，
+        # 首次 read_after 可能被共享线程池排队延迟（真机已见：相机 tap 容量
+        # 64、30fps，排队 100ms 即落后 2-3 帧）。首帧前允许有限次重锚到当前
+        # 最新；流中途落后仍按 DATA_LOSS 终止（真实丢帧不可接受）。
+        reanchor_attempts = 3 if request.start_at_latest else 0
         try:
             while request.max_frames == 0 or sent < request.max_frames:
                 try:
@@ -252,6 +257,10 @@ class CameraService(camera_pb2_grpc.CameraServiceServicer):
                         0.5,
                     )
                 except StateTapDataLoss as exc:
+                    if sent == 0 and reanchor_attempts > 0:
+                        reanchor_attempts -= 1
+                        after_sequence = tap.stats().newest_sequence
+                        continue
                     await context.abort(
                         grpc.StatusCode.DATA_LOSS,
                         str(
