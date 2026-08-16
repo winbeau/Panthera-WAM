@@ -289,9 +289,10 @@ class HoldPositionMotion:
         # 夹爪首次进入目标容差后永久锁存：下一周期不能恢复原始开爪目标，
         # 否则机械止点/反馈抖动会让 J7 反复以速度伺服继续向外顶。
         self._gripper_reached = gripper_position is None
-        # 释放定死锁时的重力补偿交接帧（teach 接管用）：见 request_teach_handoff_cancel。
-        self._handoff: dict[str, object] | None = None
-        self._handoff_step = 0
+        # 双锁接管（teach 挂接）：见 request_attach_teach。挂接后定死锁帧继续
+        # 每周期发送，teach 先影子步进武装 lock，满刚度后才委托 teach 写帧。
+        self._attached_teach: TeachMotion | None = None
+        self._shadowing = False
         self._max_torque = None if max_torque is None else np.asarray(max_torque, dtype=np.float64)
         self.reject_reason = ""
         self._cancel_reason: CancelReason | None = None
@@ -299,103 +300,74 @@ class HoldPositionMotion:
 
     def request_cancel(self, reason: CancelReason) -> None:
         with self._lock:
+            teach = self._attached_teach
+            if teach is not None:
+                # 已挂接 teach：取消转发给 teach（走 SAFE_HOLD 收尾）；定死锁帧
+                # 由本 motion 继续提供，直到 teach 帧接管（见 step）。
+                teach.request_cancel(reason)
+                return
             self._cancel_reason = reason
 
-    def request_teach_handoff_cancel(
-        self,
-        reason: CancelReason,
-        *,
-        fc: np.ndarray,
-        fv: np.ndarray,
-        vel_threshold: float,
-        gravity_scale: float | np.ndarray,
-        gravity_scale_high: float | np.ndarray | None,
-        gravity_breakpoint: float | np.ndarray | None,
-        gravity_segmented: bool,
-        gravity_residual: np.ndarray,
-        tau_limit: np.ndarray,
-        kd_drag: np.ndarray,
-        cycles: int = 80,
-    ) -> None:
-        """释放定死锁前先发 cycles 个重力补偿保持帧（MIT），覆盖 teach 首帧
-        接管前的窗口：无前馈的阻尼帧会在承重关节上瞬间下坠（真机已见）。"""
+    def request_attach_teach(self, teach: TeachMotion) -> None:
+        """双锁接管：定死锁帧保持每周期发送，同时 teach 影子步进武装 HOLD
+        （kp 从 0 爬满 MANUAL_CLUTCH_KP_HOLD，不写任何帧）；武装完成后本
+        motion 委托 teach 写帧——定死锁在 lock 满刚度就位后才卸下，中间
+        没有任何「只有阻尼、没有位置锁」的窗口（真机坠臂根因）。"""
         with self._lock:
-            self._cancel_reason = reason
-            self._handoff = {
-                "fc": np.asarray(fc, dtype=np.float64),
-                "fv": np.asarray(fv, dtype=np.float64),
-                "vel_threshold": float(vel_threshold),
-                "gravity_scale": gravity_scale,
-                "gravity_scale_high": gravity_scale_high,
-                "gravity_breakpoint": gravity_breakpoint,
-                "gravity_segmented": bool(gravity_segmented),
-                "gravity_residual": np.asarray(gravity_residual, dtype=np.float64),
-                "tau_limit": np.asarray(tau_limit, dtype=np.float64),
-                "kd_drag": np.asarray(kd_drag, dtype=np.float64),
-                "cycles": int(cycles),
-            }
-            self._handoff_step = 0
+            self._attached_teach = teach
+            self._shadowing = True
+            # 挂接前残留的取消（如 lease 取消）由 teach 接管处理，不再走
+            # 本 motion 的释放路径。
+            self._cancel_reason = None
+
+    @property
+    def shadowing(self) -> bool:
+        """是否仍在双锁影子阶段（False=已委托 teach 写帧）。"""
+        with self._lock:
+            return self._shadowing
 
     def step(self, backend: Backend, now: float) -> MotionStepResult:
-        del now
         states = backend.read_all()
         if len(states) != 7 or not all(state.valid for state in states):
             backend.stop()
             self.reject_reason = "电机状态无效或连接不完整"
             return MotionStepResult.FAILED
         with self._lock:
+            teach = self._attached_teach
+            shadowing = self._shadowing
             cancel_reason = self._cancel_reason
-            handoff = self._handoff
-            if handoff is not None:
-                self._handoff_step += 1
-                handoff_step = self._handoff_step
-            else:
-                handoff_step = 0
-        if cancel_reason is not None:
-            # ---- 重力补偿交接帧：定死锁释放后、teach 首帧前，臂仍被重力前馈托住 ----
-            if handoff is not None and handoff_step <= int(handoff["cycles"]):
-                current = np.asarray(
-                    [state.position for state in states[:6]], dtype=np.float64
+        if teach is not None:
+            if shadowing:
+                # 双锁阶段：先写定死锁帧（臂刚性保持），再影子步进 teach
+                # 武装 lock。lock 满刚度或 teach 被显式命令带离 HOLD 后，
+                # 卸下定死锁、保留 lock。
+                self._write_hold_frame(backend, states)
+                result = teach.step(backend, now, shadow=True)
+                if result is not MotionStepResult.RUNNING:
+                    self._shadowing = False
+                    self.reject_reason = teach.reject_reason
+                    return result
+                armed = teach.auto_hold_state is not AutoHoldState.HOLD or bool(
+                    np.all(teach.hold_kp >= MANUAL_CLUTCH_KP_HOLD - 1e-9)
                 )
-                torque = backend.compensation_torque(
-                    current,
-                    np.zeros(6),
-                    np.asarray(handoff["fc"]),
-                    np.asarray(handoff["fv"]),
-                    float(handoff["vel_threshold"]),
-                    handoff["gravity_scale"],
-                    handoff["gravity_scale_high"]
-                    if handoff["gravity_segmented"]
-                    else None,
-                    handoff["gravity_breakpoint"]
-                    if handoff["gravity_segmented"]
-                    else None,
-                )
-                torque = np.clip(
-                    torque + np.asarray(handoff["gravity_residual"]),
-                    -np.asarray(handoff["tau_limit"]),
-                    np.asarray(handoff["tau_limit"]),
-                )
-                backend.write_frame(
-                    JointFrame(
-                        mode=FrameMode.POS_VEL_TQE_KP_KD,
-                        arm_position=current,
-                        arm_velocity=np.zeros(6),
-                        arm_torque=torque,
-                        arm_kp=np.zeros(6),
-                        arm_kd=np.asarray(handoff["kd_drag"]),
-                        gripper_position=float(states[6].position),
-                        gripper_velocity=0.0,
-                        gripper_torque=0.0,
-                        gripper_kp=0.0,
-                        gripper_kd=0.0,
-                    )
-                )
+                if armed:
+                    self._shadowing = False
                 return MotionStepResult.RUNNING
+            # 委托阶段：teach 帧直接写出；teach 结束时本 motion 同步结束。
+            result = teach.step(backend, now)
+            if result is not MotionStepResult.RUNNING:
+                self.reject_reason = teach.reject_reason
+            return result
+        if cancel_reason is not None:
             backend.enter_idle_damping()
             backend.maintain_idle()
             self.reject_reason = f"定死锁已释放: {cancel_reason.value}"
             return MotionStepResult.CANCELLED
+        self._write_hold_frame(backend, states)
+        return MotionStepResult.RUNNING
+
+    def _write_hold_frame(self, backend: Backend, states) -> None:
+        """写一帧定死锁保持帧（POS-VEL，夹爪到位持久锁存语义不变）。"""
         gripper = (
             self._gripper_position
             if self._gripper_position is not None
@@ -422,7 +394,6 @@ class HoldPositionMotion:
                 gripper_max_torque=backend.limits.gripper_torque,
             )
         )
-        return MotionStepResult.RUNNING
 
 
 class GripperPositionMotion:
@@ -1084,7 +1055,11 @@ class TeachMotion:
         with self._lock:
             self._cancel_reason = reason
 
-    def step(self, backend: Backend, now: float) -> MotionStepResult:
+    def step(
+        self, backend: Backend, now: float, *, shadow: bool = False
+    ) -> MotionStepResult:
+        """推进 teach 状态机。shadow=True（双锁影子阶段）只推进内部状态与
+        锁位锚定，不写任何帧；由 HoldPositionMotion 继续写定死锁帧。"""
         states = backend.read_all()
         if len(states) != 7 or not all(state.valid for state in states):
             backend.stop()
@@ -1112,7 +1087,10 @@ class TeachMotion:
                     f"cancel -> SAFE_HOLD ({cancel_reason.value}, {self.safe_hold_time_s:g}s)",
                 )
             if not (self._hold_state is AutoHoldState.SAFE_HOLD and now < (self._safe_hold_until or 0.0)):
-                backend.write_frame(idle_damping_frame(backend.limits, positions, states[6].position))
+                if not shadow:
+                    backend.write_frame(
+                        idle_damping_frame(backend.limits, positions, states[6].position)
+                    )
                 self.reject_reason = f"示教已停止: {cancel_reason.value}"
                 return MotionStepResult.CANCELLED
 
@@ -1174,21 +1152,22 @@ class TeachMotion:
                 gripper_kp_cmd = GRIPPER_POSITION_MAX_KP
                 gripper_kd_cmd = GRIPPER_POSITION_MAX_KD
 
-        backend.write_frame(
-            JointFrame(
-                mode=FrameMode.POS_VEL_TQE_KP_KD,
-                arm_position=cmd_positions,
-                arm_velocity=cmd_velocities,
-                arm_torque=torque,
-                arm_kp=kp,
-                arm_kd=kd,
-                gripper_position=gripper_command,
-                gripper_velocity=0.0,
-                gripper_torque=0.0,
-                gripper_kp=gripper_kp_cmd,
-                gripper_kd=gripper_kd_cmd,
+        if not shadow:
+            backend.write_frame(
+                JointFrame(
+                    mode=FrameMode.POS_VEL_TQE_KP_KD,
+                    arm_position=cmd_positions,
+                    arm_velocity=cmd_velocities,
+                    arm_torque=torque,
+                    arm_kp=kp,
+                    arm_kd=kd,
+                    gripper_position=gripper_command,
+                    gripper_velocity=0.0,
+                    gripper_torque=0.0,
+                    gripper_kp=gripper_kp_cmd,
+                    gripper_kd=gripper_kd_cmd,
+                )
             )
-        )
         return MotionStepResult.RUNNING
 
     def _enter_state(self, state: AutoHoldState, now: float, label: str) -> None:

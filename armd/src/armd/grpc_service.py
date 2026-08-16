@@ -33,7 +33,6 @@ from .motion import (
     JointMITMotion,
     JointPositionMotion,
     TEACH_TAU_LIMIT,
-    TEACH_VEL_THRESHOLD_S,
     TeachClutchCommand,
     TeachMotion,
     TeachPlaybackMotion,
@@ -788,6 +787,24 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         await asyncio.wrap_future(accepted)
         self._hold_motion = motion
         self._hold_completion = completion
+        monitor = asyncio.create_task(
+            self._monitor_hold_completion(motion, completion),
+            name="panthera-hold-monitor",
+        )
+        self._gozero_finalize_tasks.add(monitor)
+        monitor.add_done_callback(self._gozero_finalize_tasks.discard)
+
+    async def _monitor_hold_completion(self, motion, completion) -> None:
+        """定死锁 motion 结束（含双锁挂接后 teach 结束）时清理服务端字段。"""
+        try:
+            while not completion.done():
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            return
+        finally:
+            if self._hold_motion is motion:
+                self._hold_motion = None
+                self._hold_completion = None
 
     async def _release_hold_motion(self) -> None:
         """释放定死锁：受控取消保持帧（下一操作或 TeachStart 立即接管）。"""
@@ -1890,20 +1907,25 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
 
     async def TeachStart(self, request, context):
         await self._refresh_teach_motion()
+        if self._teach_motion is not None:
+            return arm_pb2.TeachStartResponse(
+                accepted=False,
+                reject_reason="已有运行中的 teach",
+            )
         if self._hardware_loop.has_active_motion and self._hold_motion is None:
             return arm_pb2.TeachStartResponse(
                 accepted=False,
                 reject_reason="已有运动正在执行",
             )
-        # ---- 先算后放：门控、参数解析与 TeachMotion 构造都在定死锁保持帧还在
-        #      运行时完成；最后才释放 hold。释放时 hold 先发重力补偿交接帧
-        #      （MIT，重力前馈 + 零 kp + 拖动阻尼），teach 首帧无缝接管——
-        #      真机已见：释放后无前馈窗口会让承重关节瞬间下坠。----
+        # ---- 双锁接管（先算后放升级版）：TeachMotion 在定死锁帧仍每周期
+        #      发送时构造完成并挂接到 HoldPositionMotion——hold 继续写定死锁
+        #      帧，teach 影子步进把 lock 武装到满刚度，然后 hold 才卸下定死锁、
+        #      委托 teach 写帧。中间没有任何只有阻尼没有锁的窗口。----
         gate_reason = await self._teach_contract_gate(mit=True)
         if gate_reason:
             return arm_pb2.TeachStartResponse(accepted=False, reject_reason=gate_reason)
-        # 只有从 GoWorkZero/MoveL 的定死锁接管时，teach 才需要首帧直接 HOLD；
-        # 从空闲启动的普通 teach 保持原有 DRAG 语义，避免改变标定工具行为。
+        # 从定死锁接管时 teach 首帧（影子阶段）直接进入 HOLD；从空闲启动的
+        # 普通 teach 保持原有 DRAG 语义，避免改变标定工具行为。
         manual_clutch = bool(request.manual_clutch) or self._teach_manual_clutch
         initial_hold = self._hold_motion is not None and manual_clutch
         try:
@@ -1931,42 +1953,26 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
         token = metadata_value(context.invocation_metadata(), LEASE_METADATA_KEY)
         if not self._leases.heartbeat(token):
             await context.abort(grpc.StatusCode.PERMISSION_DENIED, "控制权 lease 已失效")
-        if self._hold_motion is not None:
-            hold = self._hold_motion
-            self._hold_motion = None
-            self._hold_completion = None
-            hold.request_teach_handoff_cancel(
-                CancelReason.CLIENT,
-                fc=fc,
-                fv=fv,
-                vel_threshold=TEACH_VEL_THRESHOLD_S,
-                gravity_scale=self._teach_gravity_scale,
-                gravity_scale_high=self._teach_gravity_scale_high,
-                gravity_breakpoint=self._teach_gravity_breakpoint,
-                gravity_segmented=self._teach_gravity_segmented,
-                gravity_residual=self._teach_gravity_residual,
-                tau_limit=TEACH_TAU_LIMIT,
-                kd_drag=kd,
-            )
-            deadline = time.monotonic() + 1.5
-            while self._hardware_loop.has_active_motion and time.monotonic() < deadline:
-                await asyncio.sleep(0.02)
-            if self._hardware_loop.has_active_motion:
-                self._hold_motion = hold
+        if self._hold_motion is not None and self._hardware_loop.has_active_motion:
+            # 定死锁保持中：双锁挂接，hold 仍是活动 motion；teach 满刚度接管后
+            # hold 自动卸下定死锁。hold 结束 = teach 结束，复用同一 completion。
+            self._hold_motion.request_attach_teach(motion)
+            self._teach_motion = motion
+            self._teach_completion = self._hold_completion
+        else:
+            if self._hold_motion is not None:
+                # hold 已结束但字段尚未被 monitor 清掉：按空闲路径启动。
+                self._hold_motion = None
                 self._hold_completion = None
-                return arm_pb2.TeachStartResponse(
-                    accepted=False,
-                    reject_reason="定死锁释放超时，teach 未启动",
-                )
-        accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
-        try:
-            await asyncio.wrap_future(accepted)
-        except RuntimeError as exc:
-            return arm_pb2.TeachStartResponse(accepted=False, reject_reason=str(exc))
-        self._teach_motion = motion
-        self._teach_completion = completion
+            accepted, completion = self._hardware_loop.start_motion_with_ack(motion)
+            try:
+                await asyncio.wrap_future(accepted)
+            except RuntimeError as exc:
+                return arm_pb2.TeachStartResponse(accepted=False, reject_reason=str(exc))
+            self._teach_motion = motion
+            self._teach_completion = completion
         self._teach_monitor_task = asyncio.create_task(
-            self._monitor_teach_completion(completion),
+            self._monitor_teach_completion(self._teach_completion),
             name="panthera-teach-monitor",
         )
         return arm_pb2.TeachStartResponse(accepted=True)

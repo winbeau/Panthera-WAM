@@ -254,8 +254,10 @@ teach 模式内有一个 Auto-Hold 状态机，负责「手拖（柔顺）↔ �
   重力残差驱动的慢漂移与真实手推在低速下不可区分，因此自动判定**不保证**任意位形松手即停。
 - **显式离合（推荐采集使用）**：`lock`/`drag` 命令直接驱动 HOLD/RELEASE，**不依赖速度**；
   松手/继续拖由操作员意图决定，锁位可靠。teach-cal.sh 启动时自动带 `--manual-clutch`。
-  从 GoWorkZero/MoveL 的定死锁接管时，首个 teach 控制周期直接锚定 HOLD，**不会先进入
-  DRAG**；从空闲启动的普通 teach 保持 DRAG 语义。采集脚本随后仍显式发送 `lock` 做确认/锁存。
+  从 GoWorkZero/MoveL 的定死锁接管时走**双锁重叠**：定死锁帧每周期继续发送，teach
+  影子步进把 lock 武装到满刚度（约 80ms），随后才卸下定死锁、委托 teach 写帧——
+  中间没有任何「只有阻尼没有锁」的窗口；从空闲启动的普通 teach 保持 DRAG 语义。
+  采集脚本随后仍显式发送 `lock` 做确认/锁存。
 
 ```bash
 ./deploy/teach-cal.sh                  # 启动显式离合 teach（重启 armd + 拉起）

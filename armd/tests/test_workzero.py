@@ -915,17 +915,20 @@ async def test_gozero_hold_then_teachstart_switches_to_damping_lock(workzero_sta
     assert hold is not None and isinstance(hold, HoldPositionMotion)
     assert server.arm_service._teach_motion is None
 
-    # 定死锁 → 阻尼锁：TeachStart 自动释放 hold 并启动 teach
+    # 定死锁 → 阻尼锁：TeachStart 双锁挂接（hold 仍是活动 motion，影子阶段
+    # 武装 lock 满刚度后委托 teach 写帧）。
     response = await stub.TeachStart(
         arm_pb2.TeachStartRequest(manual_clutch=True),
         metadata=metadata,
     )
     assert response.accepted, response.reject_reason
     await asyncio.sleep(0.3)
-    assert server.arm_service._hold_motion is None
+    assert server.arm_service._hold_motion is not None
     assert server.arm_service._teach_motion is not None
     # 从定死锁接管时首个 teach 周期直接进入 HOLD；不得先进入 DRAG。
     assert server.arm_service._teach_motion.auto_hold_state is AutoHoldState.HOLD
+    # 双锁已交接：hold 已卸下定死锁并委托 teach 写帧（不再影子）。
+    assert not server.arm_service._hold_motion.shadowing
     await stub.TeachClutch(
         arm_pb2.TeachClutchRequest(mode=arm_pb2.TEACH_CLUTCH_MODE_LOCK),
         metadata=metadata,

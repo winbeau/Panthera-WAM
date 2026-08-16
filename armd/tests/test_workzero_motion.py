@@ -13,6 +13,7 @@ from armd.motion import (
     AutoHoldConfig,
     AutoHoldState,
     HoldPositionMotion,
+    MANUAL_CLUTCH_KP_HOLD,
     TeachClutchCommand,
     TeachMotion,
 )
@@ -460,37 +461,105 @@ def test_hold_position_motion_latches_gripper_after_first_reach() -> None:
     assert second.gripper_velocity == pytest.approx(0.0)
 
 
-def test_hold_position_motion_teach_handoff_holds_with_gravity_frames() -> None:
+def test_hold_attach_teach_shadows_dead_lock_then_delegates_lock() -> None:
     clock = FakeClock()
     backend = RecordingSimBackend(clock=clock)
-    motion = HoldPositionMotion(arm_position=np.zeros(6), gripper_position=None)
-    motion.request_teach_handoff_cancel(
-        CancelReason.CLIENT,
+    hold = HoldPositionMotion(arm_position=np.zeros(6), gripper_position=None)
+    teach = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
         fc=np.zeros(6),
         fv=np.zeros(6),
-        vel_threshold=0.02,
-        gravity_scale=np.ones(6),
-        gravity_scale_high=None,
-        gravity_breakpoint=None,
-        gravity_segmented=False,
-        gravity_residual=np.zeros(6),
-        tau_limit=np.full(6, 10.0),
-        kd_drag=np.full(6, 0.4),
-        cycles=4,
+        auto_hold=AutoHoldConfig(),
+        manual_clutch=True,
+        initial_hold=True,
+        safe_hold_time_s=0.2,
     )
-    for _ in range(4):
-        assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
-    frames = backend.frames[-4:]
-    for frame in frames:
-        # 交接帧是重力前馈 MIT：零 kp + 拖动阻尼，不进入无前馈阻尼帧
-        assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
-        assert np.all(frame.arm_kp == 0.0)
-        assert np.all(frame.arm_kd == 0.4)
-        assert np.all(np.isfinite(frame.arm_torque))
-        assert frame.gripper_kp == 0.0
-        assert frame.gripper_kd == 0.0
-    # 交接窗口结束后才正常释放（阻尼 + CANCELLED）
-    assert motion.step(backend, clock.now) is MotionStepResult.CANCELLED
+    hold.request_attach_teach(teach)
+
+    # 双锁影子阶段：定死锁帧继续写（POS_VEL_TQE），teach 不写帧。
+    for _ in range(16):  # 80ms = MANUAL_CLUTCH_HOLD_RAMP_TIME_S
+        clock.advance(0.005)
+        assert hold.step(backend, clock.now) is MotionStepResult.RUNNING
+        assert backend.frames[-1].mode is FrameMode.POS_VEL_TQE
+    assert hold.shadowing
+    assert teach.auto_hold_state is AutoHoldState.HOLD
+
+    # kp 爬满的那一周期仍写定死锁帧，随后才卸定死锁。
+    clock.advance(0.005)
+    assert hold.step(backend, clock.now) is MotionStepResult.RUNNING
+    assert not hold.shadowing
+    assert backend.frames[-1].mode is FrameMode.POS_VEL_TQE
+
+    # 卸定死锁后：teach 满刚度 lock 帧接管（MIT）。
+    clock.advance(0.005)
+    assert hold.step(backend, clock.now) is MotionStepResult.RUNNING
+    frame = backend.frames[-1]
+    assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+    assert frame.arm_kp == pytest.approx(MANUAL_CLUTCH_KP_HOLD)
+    assert frame.arm_position == pytest.approx(np.zeros(6))
+
+    # teach 取消 → SAFE_HOLD → 结束；hold 同步结束（不再是定死锁帧）。
+    teach.request_cancel(CancelReason.CLIENT)
+    result = MotionStepResult.RUNNING
+    for _ in range(200):
+        clock.advance(0.005)
+        result = hold.step(backend, clock.now)
+        if result is not MotionStepResult.RUNNING:
+            break
+    assert result is MotionStepResult.CANCELLED
+    assert hold.reject_reason == teach.reject_reason
+
+
+def test_hold_attach_teach_explicit_drag_delegates_immediately() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    hold = HoldPositionMotion(arm_position=np.zeros(6), gripper_position=None)
+    teach = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        auto_hold=AutoHoldConfig(),
+        manual_clutch=True,
+        initial_hold=True,
+        safe_hold_time_s=0.2,
+    )
+    hold.request_attach_teach(teach)
+    teach.request_clutch(TeachClutchCommand.DRAG)
+    clock.advance(0.005)
+    assert hold.step(backend, clock.now) is MotionStepResult.RUNNING
+    # 显式 DRAG 优先于初始 HOLD → 本周期写定死锁帧，下一周期即委托 teach。
+    assert not hold.shadowing
+    assert teach.auto_hold_state is AutoHoldState.DRAG
+    clock.advance(0.005)
+    assert hold.step(backend, clock.now) is MotionStepResult.RUNNING
+    frame = backend.frames[-1]
+    assert frame.mode is FrameMode.POS_VEL_TQE_KP_KD
+    assert np.all(frame.arm_kp == 0.0)
+
+
+def test_hold_attach_teach_cancel_during_shadow_enters_safe_hold() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    hold = HoldPositionMotion(arm_position=np.zeros(6), gripper_position=None)
+    teach = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        auto_hold=AutoHoldConfig(),
+        manual_clutch=True,
+        initial_hold=True,
+        safe_hold_time_s=0.2,
+    )
+    hold.request_attach_teach(teach)
+    teach.request_cancel(CancelReason.CLIENT)
+    clock.advance(0.005)
+    assert hold.step(backend, clock.now) is MotionStepResult.RUNNING
+    # SAFE_HOLD ≠ HOLD → 立即卸定死锁委托 teach，由 SAFE_HOLD 帧接管收尾。
+    assert teach.auto_hold_state is AutoHoldState.SAFE_HOLD
+    assert not hold.shadowing
 
 
 def test_hold_position_motion_cancel_releases_to_idle_damping() -> None:

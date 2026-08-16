@@ -566,6 +566,24 @@ def _drag_until_still_holds(clock, backend, motion, *, drag_steps: int = 5) -> N
         assert motion.step(backend, clock.now) is MotionStepResult.RUNNING
 
 
+def test_teach_shadow_step_advances_hold_without_writing_frames() -> None:
+    clock = FakeClock()
+    backend = RecordingSimBackend(clock=clock)
+    motion = TeachMotion(
+        kp=np.zeros(6),
+        kd=np.zeros(6),
+        fc=np.zeros(6),
+        fv=np.zeros(6),
+        manual_clutch=True,
+        initial_hold=True,
+    )
+    clock.advance(0.005)
+    assert motion.step(backend, clock.now, shadow=True) is MotionStepResult.RUNNING
+    assert motion.auto_hold_state is AutoHoldState.HOLD
+    assert motion.hold_position == pytest.approx([0.0] * 6)
+    assert backend.frames == []
+
+
 def test_manual_clutch_initial_hold_then_explicit_lock_samples_current_position() -> None:
     clock = FakeClock()
     backend = RecordingSimBackend(clock=clock)

@@ -58,7 +58,7 @@ systemctl --user is-active armd.service            # 必须 active
 | 步骤 | 终端 | 一行命令 | 说明 |
 |---|---|---|---|
 | 1 | 任一 | `gozero` | MoveL 回工作0位 → 定死锁 + 开爪 90% |
-| 2 | A | `start-record color-block 021` | 定死锁→阻尼锁（teach start 首帧直接 HOLD，再发 lock；**不自动 drag**），后台开始 preview 录制 |
+| 2 | A | `start-record color-block 021` | 定死锁→阻尼锁（**双锁重叠**：定死锁帧继续发送，teach lock 影子武装满刚度后才卸定死锁；不自动 drag），后台开始 preview 录制 |
 | 3 | B | `drag` / `lock --gripper 0.2` | 手拖动作；抓取/放置位闭爪 10% + 阻尼锁 |
 | 4 | A | `end-record` | SIGTERM 优雅结束（**变长**，窗口=实际动作）→ 阻尼锁 + 开爪 90% |
 | 5 | 任一 | `rezero` | 开爪松方块 → MoveL 回工作0位 → 定死锁 |
