@@ -267,12 +267,13 @@ def test_run_record_replays_and_directly_rezeros_without_recording(tmp_path):
     assert rezero_call(calls) in calls
     # 只动臂：完全不碰 recordctl（无录制、无写盘、不造数据）
     assert not any("recordctl" in line for line in calls)
-    # 全程不闭爪：不允许出现 --gripper 的 end-lock（只有步骤 1 的无参数 lock）
+    # 全程不闭爪：不允许出现 --gripper 的 end-lock（只有无参数 teach lock）
     assert not any("--gripper" in line for line in calls)
     assert any(line == "panthera teach clutch lock" for line in calls)
-    # 回放完成后再 rezero（直接 rezero，无中间 teach 操作）
+    # 回放完成 → teach HOLD 交接（无夹爪参数）→ 直接 rezero
     play_index = next(i for i, l in enumerate(calls) if l.startswith("panthera teach play"))
-    assert play_index < calls.index(rezero_call(calls))
+    lock_index = max(i for i, l in enumerate(calls) if l == "panthera teach clutch lock")
+    assert play_index < lock_index < calls.index(rezero_call(calls))
 
 
 def test_run_record_play_fail_restores_damped_lock(tmp_path):

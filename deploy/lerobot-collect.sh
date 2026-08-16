@@ -3,13 +3,14 @@
 #
 # 术语：定死锁 = MoveL 终止态（掰不动）；阻尼锁 = teach lock（掰一下复位）。
 #
-# 五条一行命令（preview 流程）：
+# 六条一行命令（preview 流程）：
 #   ./deploy/lerobot-collect.sh gozero                     # 1. 回工作0位（定死锁+开爪）
 #   ./deploy/lerobot-collect.sh start-record color-block 021 [--force]  # 2. 终端A：阻尼锁+开始录制（后台；--force 先删旧目录再录）
 #   ./deploy/lerobot-collect.sh drag                       # 3. 终端B：恢复手拖
+#   ./deploy/lerobot-collect.sh grip                       # 3. 终端B：拖拽中闭爪到 0.2（保持 drag，闭爪动作录入 preview）
 #   ./deploy/lerobot-collect.sh lock --gripper 0.2         # 3. 终端B：闭爪+阻尼锁
-#   ./deploy/lerobot-collect.sh end-record [--force]       # 4. 结束录制（变长）→阻尼锁+开爪（--force 跳过已死录制进程收尾）
-#   ./deploy/lerobot-collect.sh rezero                     # 5. rezero 回工作0位（定死锁）
+#   ./deploy/lerobot-collect.sh end-record [--force]       # 4. 结束录制（变长）→阻尼锁+维持夹爪 0.2（--force 跳过已死录制进程收尾）
+#   ./deploy/lerobot-collect.sh rezero                     # 5. rezero 开爪松方块回工作0位（定死锁）
 #
 # 正式录制（把录制的动作用机械臂自己来一遍，开始/结束都 lock；结束自动 rezero）：
 #   ./deploy/lerobot-collect.sh record-formal color-block-000011 \
@@ -51,7 +52,7 @@ formal_abort() {
 }
 
 usage() {
-    sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -192,13 +193,22 @@ start_record() {
     kill -0 "$(cat "$pidf")" 2>/dev/null || die "录制进程未存活，看日志: $log"
     echo "==> 录制已启动 pid=$(cat "$pidf")（阻尼锁已锁定）"
     echo "==> 日志: $log"
-    echo "==> 终端 B（开始任务动作时才操作）: ./deploy/lerobot-collect.sh drag / lock [--gripper 0.2]"
+    echo "==> 终端 B（开始任务动作时才操作）: ./deploy/lerobot-collect.sh drag / grip / lock [--gripper 0.2]"
     echo "==> 动作完成后: ./deploy/lerobot-collect.sh end-record"
 }
 
 drag() {
     ensure_cli
     "$CLI" teach clutch drag
+}
+
+grip() {
+    # 与 drag/lock 平级的抓取动作：保持 drag 模式不变，只把夹爪伺服到闭爪 10%。
+    # 走 teach 帧内 request_gripper（同帧 MIT 阻抗），不打断手拖；状态流连续录入
+    # preview trajectory（gripper_pos 每帧都有），闭爪过程进入 replay_trajectory。
+    ensure_cli
+    "$CLI" teach clutch drag --gripper "$CLOSE_GRIPPER"
+    echo "==> drag 保持，夹爪伺服到 ${CLOSE_GRIPPER}（10%）；闭爪过程已录入 preview"
 }
 
 lock() {
@@ -260,13 +270,13 @@ PY
     else
         die "没有进行中的预览录制（强制收尾: end-record --force）"
     fi
-    # 阻尼锁 + 开爪 90%（脚本开爪，动作指令到此为止）
-    "$CLI" teach clutch lock --gripper "$OPEN_GRIPPER"
-    echo "==> 已进入阻尼锁 + 开爪 ${OPEN_GRIPPER}（90%）"
+    # 阻尼锁 + 维持夹爪 10%（抓取状态保持到最后；开爪松方块留给 rezero）
+    "$CLI" teach clutch lock --gripper "$CLOSE_GRIPPER"
+    echo "==> 已进入阻尼锁 + 夹爪 ${CLOSE_GRIPPER}（10%，维持夹住状态）"
     if [[ -n "$session" ]]; then
         ((preview_ok)) || die "preview.json 验收失败，看日志: $log"
     fi
-    echo "==> 下一步: ./deploy/lerobot-collect.sh rezero（回工作0位，定死锁）"
+    echo "==> 下一步: ./deploy/lerobot-collect.sh rezero（开爪松方块，回工作0位定死锁）"
 }
 
 # rezero 动作本体：只执行 CLI 命令并返回其退出码（不打印 banner/状态），
@@ -468,8 +478,13 @@ run_record() {
     "$CLI" teach play "$play_file" --mode posvel --hold-on-done \
         --kp "$kp" --kd "$kd" --fc "$fc" --fv "$fv" \
         || formal_abort "teach play 失败（若提示已有运动，说明 SAFE_HOLD 未结束，稍后重试本命令）"
-    # 3) 不结束 lock、不闭爪：直接 rezero。hold-on-done 已留下定死锁 hold，
-    #    GoWorkZero post_action 支持从 hold 定死锁直接接管（重试语义已真机验证）。
+    # 3) 切换到 rezero 的交接：先做一次无夹爪参数的 teach lock（定死锁→
+    #    teach HOLD，夹爪保持现状不闭合）。真机实测：跳过此步直接 rezero
+    #    时，post_action 会复用 hold-on-done 的定死锁 hold（夹爪目标仍是
+    #    握持位），开爪命令永不下发，8s 后报"夹爪未打开，拒绝回位"。
+    #    经 teach HOLD 交接后走 record-formal 已验证的 rezero 路径。
+    teach_start_lock
+    # 4) 不结束 lock、不闭爪：直接 rezero（开爪松方块 → MoveL 回工作0位 → 定死锁）
     step "自动 rezero：开爪松方块 → MoveL 回工作0位 → 定死锁"
     if ! do_rezero; then
         formal_abort "自动 rezero 失败（臂可能仍在动作完成位，阻尼锁已恢复）；人工确认后重试 ./deploy/lerobot-collect.sh rezero"
@@ -513,6 +528,7 @@ case "$command" in
     zero-home) zero_home ;;
     start-record) start_record "$@" ;;
     drag) drag ;;
+    grip) grip ;;
     lock) lock "$@" ;;
     end-record) end_record ;;
     rezero) rezero ;;
