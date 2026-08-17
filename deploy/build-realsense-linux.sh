@@ -39,7 +39,13 @@ cmake -S "$source_dir" -B "$build_dir" \
     -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build_dir" --target pyrealsense2 -j"$jobs"
 
-extension=$(find -L "$build_dir/Release" -maxdepth 1 -type f -name 'pyrealsense2*.so' -print -quit)
+py_version=$(
+    "$python" -c 'import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")'
+)
+# 只选当前 Python 版本的 .so：Release 目录里可能残留旧版本的
+# pyrealsense2.cpython-XXX.so（find 先命中旧文件会装错版本，腕摄起不来）。
+extension=$(find -L "$build_dir/Release" -maxdepth 1 -type f \
+    -name "pyrealsense2.cpython-${py_version}*.so" -print -quit)
 if [[ -z "$extension" ]]; then
     echo "pyrealsense2 build output was not found under $build_dir/Release" >&2
     exit 1
@@ -52,6 +58,9 @@ package_dir="$site_packages/pyrealsense2"
 install -d "$package_dir"
 install -m 0644 "$source_dir/wrappers/python/pyrealsense2/__init__.py" "$package_dir/__init__.py"
 install -m 0755 "$extension" "$package_dir/$(basename "$extension")"
+# 清掉旧版本 .so，避免同包内残留 cpython-311 等旧文件。
+find "$package_dir" -maxdepth 1 -type f -name 'pyrealsense2.cpython-*.so' \
+    ! -name "$(basename "$extension")" -delete
 
 "$python" - <<'PY'
 import pyrealsense2 as rs
