@@ -725,7 +725,23 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             # 重试时 hold 已在运行（首次尝试的残留），直接复用不重复启动。
             # 开爪速度 0.6：全速 1.0 的伺服噪声大（用户反馈“嗡嗡”），方向
             # 感知锁存已保证到位后不再加力。
-            if self._hold_motion is None:
+            if self._hold_motion is not None and self._hardware_loop.has_active_motion:
+                # 复用运行中的定死锁 hold（重试语义）：臂保持帧不中断，仅把
+                # 夹爪重新伺服到开爪目标。不重伺服则旧握持位目标永不下发开爪
+                # 命令（真机卡死「夹爪未打开，拒绝回位」）。
+                try:
+                    self._hold_motion.set_gripper_target(gripper_target, 0.6)
+                except ValueError as exc:
+                    await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+            else:
+                # hold 已结束但字段尚未被 monitor 清理的竞态窗口（TeachStart
+                # 同款守卫）：回放 hold 双锁挂接 teach 后两者同生命周期，teach
+                # 刚退出时 has_active_motion=False 但 _hold_motion 仍指向死
+                # hold——若误走复用分支，set_gripper_target 打在死 hold 上，
+                # 夹爪永不开爪，8s 后假失败「夹爪未打开，拒绝回位」
+                # （2026-08-17 真机 rr 024 偶发）。
+                self._hold_motion = None
+                self._hold_completion = None
                 try:
                     await self._start_hold_motion(
                         arm_position=np.array(
@@ -735,14 +751,6 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
                         gripper_velocity=0.6,
                     )
                 except RuntimeError as exc:
-                    await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
-            else:
-                # 复用运行中的定死锁 hold（重试语义）：臂保持帧不中断，仅把
-                # 夹爪重新伺服到开爪目标。不重伺服则旧握持位目标永不下发开爪
-                # 命令（真机卡死「夹爪未打开，拒绝回位」）。
-                try:
-                    self._hold_motion.set_gripper_target(gripper_target, 0.6)
-                except ValueError as exc:
                     await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
             # 轨迹规划（plan_task）已与夹爪开爪并行进行；这里只等开爪到位。
             # 方向感知：开爪（target>当前）越过 target-0.02 即视为到位，过冲也算。
@@ -760,7 +768,7 @@ class ArmService(arm_pb2_grpc.ArmServiceServicer):
             if not released:
                 await context.abort(
                     grpc.StatusCode.FAILED_PRECONDITION,
-                    "夹爪未在 4s 内打开到工作零位姿态；拒绝回位（可能仍抓着物体）",
+                    "夹爪未在 8s 内打开到工作零位姿态；拒绝回位（可能仍抓着物体）",
                 )
 
         # rezero 交接后位形可能因 SAFE_HOLD/保持切换发生微小漂移：用新 hold

@@ -22,6 +22,7 @@ from armd.hardware_loop import HardwareLoop
 from armd.motion import (
     AutoHoldConfig,
     AutoHoldState,
+    HoldPositionMotion,
     TeachClutchCommand,
     TeachLockSnapshot,
     TeachMotion,
@@ -859,6 +860,11 @@ def _close_gripper_sim(backend) -> None:
     backend._positions[6] = 0.03
 
 
+def _open_gripper_sim(backend) -> None:
+    """模拟开爪：夹爪摆到工作零位开度（与录制保存位一致）。"""
+    backend._positions[6] = 1.8
+
+
 @pytest.mark.asyncio
 async def test_rezero_retry_with_active_hold_succeeds(workzero_stack) -> None:
     """rezero 中途失败后的重试：teach 已退出、定死锁 hold 仍在运行，
@@ -888,6 +894,58 @@ async def test_rezero_retry_with_active_hold_succeeds(workzero_stack) -> None:
     )
     assert loop.has_active_motion
     # 重试 rezero 必须成功
+    accepted = await stub.GoWorkZero(
+        arm_pb2.GoWorkZeroRequest(confirm=True, reason="post_action"),
+        metadata=metadata,
+    )
+    final = None
+    async for status in stub.StreamExecution(
+        arm_pb2.StreamExecutionRequest(execution_id=accepted.execution_id)
+    ):
+        final = status
+        if status.state in (
+            arm_pb2.EXEC_STATE_DONE,
+            arm_pb2.EXEC_STATE_FAILED,
+            arm_pb2.EXEC_STATE_CANCELLED,
+        ):
+            break
+    assert final is not None and final.state == arm_pb2.EXEC_STATE_DONE
+
+
+@pytest.mark.asyncio
+async def test_rezero_with_stale_hold_reference_starts_fresh_hold(workzero_stack) -> None:
+    """回归（2026-08-17 真机 rr 024 偶发失败）：回放 hold 双锁挂接 teach 后
+    两者同生命周期——teach 退出时 hold 已死，但 _hold_motion 字段尚未被
+    _monitor_hold_completion（0.05s 轮询）清理。rezero 若误走复用分支，
+    set_gripper_target 打在死 hold 上，夹爪永不开爪，8s 后假失败
+    「夹爪未打开，拒绝回位」。修复后：字段存在但无活动 motion 时清引用并
+    启动新 hold，rezero 必须成功。"""
+    loop, stub, metadata, server, _ = workzero_stack
+    await _start_teach(stub, metadata, manual_clutch=True)
+    loop.submit(_move_sim_arm).result(timeout=2.0)
+    loop.submit(_open_gripper_sim).result(timeout=2.0)
+    saved = await stub.SetWorkZero(arm_pb2.SetWorkZeroRequest(confirm=True), metadata=metadata)
+    assert saved.accepted
+    assert saved.pose.gripper >= 1.0  # 工作零位保存为开爪；确保开爪目标与闭合当前值有差距
+    await stub.TeachStop(arm_pb2.Empty(), metadata=metadata)
+    await asyncio.sleep(0.9)
+    assert not loop.has_active_motion
+    # 模拟动作完成位：夹爪闭合持物、臂在非工作零位形
+    loop.submit(_close_gripper_sim).result(timeout=2.0)
+    loop.submit(_move_sim_arm_elsewhere).result(timeout=2.0)
+    # 伪造竞态：_hold_motion 指向从未启动的死 hold（monitor 尚未清理字段）
+    cached = loop.latest_state()
+    dead_hold = HoldPositionMotion(
+        arm_position=np.array(
+            [motor.position for motor in cached.motors[:6]], dtype=np.float64
+        ),
+        gripper_position=0.03,
+        gripper_velocity=0.6,
+    )
+    service = server.arm_service
+    service._hold_motion = dead_hold
+    service._hold_completion = None
+    # rezero 必须走「清引用 + 启动新 hold」路径并成功
     accepted = await stub.GoWorkZero(
         arm_pb2.GoWorkZeroRequest(confirm=True, reason="post_action"),
         metadata=metadata,
